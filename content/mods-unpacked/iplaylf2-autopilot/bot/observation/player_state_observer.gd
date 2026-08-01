@@ -1,7 +1,7 @@
 extends Reference
 
-# Observes transparent player-owned facts as exact values and normalized mechanics,
-# while keeping content IDs and scene objects out of the public observation.
+# Observes transparent player-owned state and compiles mechanics while keeping
+# content IDs and scene objects out of the public observation.
 
 const PlayerMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/mechanics/player_mechanic_compiler.gd"
@@ -111,6 +111,7 @@ func _observe_weapons(player_index: int, player: Node, attacks_allowed_while_mov
 			"nominal_attack_cycle_seconds": stats.get_cooldown_value(player_index, 1.0),
 			"cooldown_ready": weapon._current_cooldown <= 0.0,
 			"automatic_attack_active": weapon._is_shooting,
+			"automatic_attacks_allowed_while_moving": attacks_allowed_while_moving,
 			"movement_permits_automatic_attack":
 			attacks_allowed_while_moving or player._current_movement == Vector2.ZERO,
 			"reloads_on_material_pickup":

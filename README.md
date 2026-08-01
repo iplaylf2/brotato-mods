@@ -12,6 +12,7 @@ content/
     └── iplaylf2-autopilot/
         ├── README.md
         ├── bot/
+        ├── docs/               # 架构与玩家权限边界
         ├── extensions/
         ├── manifest.json
         └── mod_main.gd
@@ -24,13 +25,17 @@ content/
 
 ## Autopilot
 
-`iplaylf2-autopilot` 的目标是让 bot 依据玩家可见的外部战场信息、精确的自身状态、局内战斗记忆
-和预置机制知识，自主完成战斗移动。当前开发先完成信息采集与建模，确认观察契约后再进入移动控制。
+`iplaylf2-autopilot` 依据玩家可见的外部战场信息、自身状态、局内观察记忆和预置机制知识进行滚动
+轨迹规划，并自动控制战斗移动。它的唯一控制输出是 `MovementBehavior.get_movement()` 返回的移动
+方向，不调用瞄准、攻击或武器方法。
 
 实现通过 `extensions/` 中的 script extension 接入原版主场景；`mod_main.gd` 注册扩展并管理
 Mod Options 配置。
-架构、观察接口、建模原则和当前覆盖范围见
-[Autopilot 开发说明](content/mods-unpacked/iplaylf2-autopilot/README.md)。
+安装、启用方式和当前状态见 [Autopilot README](content/mods-unpacked/iplaylf2-autopilot/README.md)；
+玩家可用信息和控制权限见
+[玩家权限边界](content/mods-unpacked/iplaylf2-autopilot/docs/fair-play.md)；
+观察契约、规划模型和模块责任见
+[Autopilot 架构](content/mods-unpacked/iplaylf2-autopilot/docs/architecture.md)。
 
 修改原版行为前，先以目标游戏版本的恢复工程确认控制点。优先使用 Mod Loader script extension，
 避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。

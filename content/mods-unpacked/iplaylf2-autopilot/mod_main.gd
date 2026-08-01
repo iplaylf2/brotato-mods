@@ -25,18 +25,18 @@ func _ready() -> void:
 		"current_config_changed", self, "_on_current_config_changed"
 	)
 	if current_config_error != OK:
-		ModLoaderLog.error("Could not observe config changes.", MOD_ID)
+		ModLoaderLog.error("Could not subscribe to ModLoader config changes.", MOD_ID)
 
 	_mod_options = get_node_or_null(MOD_OPTIONS_PATH)
 	if not is_instance_valid(_mod_options):
-		ModLoaderLog.error("Mod Options interface was not found.", MOD_ID)
+		ModLoaderLog.error("Required Mod Options interface was not found.", MOD_ID)
 		return
 
 	var setting_error := _mod_options.connect(
 		"setting_changed", self, "_on_mod_options_setting_changed"
 	)
 	if setting_error != OK:
-		ModLoaderLog.error("Could not observe Mod Options changes.", MOD_ID)
+		ModLoaderLog.error("Could not subscribe to Mod Options setting changes.", MOD_ID)
 
 
 func is_enabled() -> bool:

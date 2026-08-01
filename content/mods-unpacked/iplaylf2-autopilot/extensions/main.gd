@@ -4,8 +4,12 @@ const MOD_ID := "iplaylf2-autopilot"
 const ObservationService := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/observation_service.gd"
 )
+const AutopilotController := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/control/autopilot_controller.gd"
+)
 
 var autopilot_observation_service: Node = null
+var autopilot_controller: Node = null
 var _autopilot_mod: Node = null
 
 
@@ -14,26 +18,31 @@ func _ready() -> void:
 
 	_autopilot_mod = get_node_or_null("/root/ModLoader/%s" % MOD_ID)
 	if not is_instance_valid(_autopilot_mod):
-		ModLoaderLog.error("Mod entrypoint was not found.", MOD_ID)
+		ModLoaderLog.error("Autopilot mod entrypoint was not found; runtime disabled.", MOD_ID)
 		return
 
 	var connect_error := _autopilot_mod.connect(
 		"enabled_changed", self, "_on_autopilot_enabled_changed"
 	)
 	if connect_error != OK:
-		ModLoaderLog.error("Could not observe the Autopilot setting.", MOD_ID)
+		ModLoaderLog.error("Could not subscribe to Autopilot enabled changes.", MOD_ID)
 
 
 func _on_EntitySpawner_players_spawned(players: Array) -> void:
 	._on_EntitySpawner_players_spawned(players)
-	_sync_autopilot_service(players)
+	_sync_autopilot_runtime(players)
 
 
 func _on_autopilot_enabled_changed(_enabled: bool) -> void:
-	_sync_autopilot_service(_players)
+	_sync_autopilot_runtime(_players)
 
 
-func _sync_autopilot_service(players: Array) -> void:
+func _sync_autopilot_runtime(players: Array) -> void:
+	if is_instance_valid(autopilot_controller):
+		autopilot_controller.shutdown()
+		autopilot_controller.queue_free()
+		autopilot_controller = null
+
 	if is_instance_valid(autopilot_observation_service):
 		autopilot_observation_service.queue_free()
 		autopilot_observation_service = null
@@ -45,3 +54,8 @@ func _sync_autopilot_service(players: Array) -> void:
 	autopilot_observation_service.name = "AutopilotObservationService"
 	add_child(autopilot_observation_service)
 	autopilot_observation_service.initialize(self, players)
+
+	autopilot_controller = AutopilotController.new()
+	autopilot_controller.name = "AutopilotController"
+	add_child(autopilot_controller)
+	autopilot_controller.initialize(autopilot_observation_service, players)

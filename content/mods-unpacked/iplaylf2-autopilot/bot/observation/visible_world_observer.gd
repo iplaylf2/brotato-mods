@@ -1,7 +1,7 @@
 extends Reference
 
-# Reads only the camera- and fog-visible world. Scene objects in enemy_observations are
-# private continuity tokens for battle memory and never enter the public observation.
+# Reads only the camera- and fog-visible world. Scene objects in enemy_observations
+# are private continuity tokens for observed world memory and never become public.
 
 const DEFAULT_ENTITY_VISUAL_RADIUS := 32.0
 const PROJECTILE_ORIGIN_INFERENCE_DISTANCE := 120.0
@@ -25,7 +25,7 @@ func observe(player_index: int, player: Node2D) -> Dictionary:
 		enemy.features.ranged_attack_inferred = ranged_attack_sources.has(enemy._source)
 
 	return {
-		# Internal inputs for battle memory; never return these through the service.
+		# Internal inputs for observed world memory; never expose them through the service.
 		"enemy_observations": enemies,
 		"visible_edges": _observe_visible_edges(origin, visible_rect),
 		"visibility":
@@ -36,8 +36,7 @@ func observe(player_index: int, player: Node2D) -> Dictionary:
 		},
 		"visible_world":
 		{
-			"neutrals":
-			_observe_nodes(_main._entity_spawner.neutrals, origin, visible_rect, "neutral"),
+			"trees": _observe_nodes(_main._entity_spawner.neutrals, origin, visible_rect, "tree"),
 			"allies": _observe_allies(player_index, origin, visible_rect),
 			"materials":
 			_observe_children(_main._materials_container, origin, visible_rect, "material"),
@@ -68,14 +67,26 @@ func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 				"velocity": enemy_velocity,
 				"features":
 				{
-					"footprint_radius": _get_visual_radius(enemy),
+					"visual_radius": _get_visual_radius(enemy),
 					"observed_speed": enemy_velocity.length(),
 					"closing_speed": closing_speed,
 					"ranged_attack_inferred": false,
+					"loot_reward_known": enemy.is_loot,
+					"enemy_production_known": _can_spawn_enemies(enemy),
 				},
 			}
 		)
 	return observations
+
+
+func _can_spawn_enemies(enemy: Node) -> bool:
+	if "enemy_to_spawn" in enemy:
+		return true
+	if "_all_attack_behaviors" in enemy:
+		for behavior in enemy._all_attack_behaviors:
+			if behavior is SpawningAttackBehavior:
+				return true
+	return false
 
 
 func _observe_enemy_projectiles(origin: Vector2, visible_rect: Rect2) -> Array:
@@ -187,7 +198,7 @@ func _make_entity_observation(node: Node2D, origin: Vector2, kind: String) -> Di
 		"kind": kind,
 		"relative_position": node.global_position - origin,
 		"velocity": _get_velocity(node),
-		"footprint_radius": _get_visual_radius(node),
+		"visual_radius": _get_visual_radius(node),
 	}
 
 

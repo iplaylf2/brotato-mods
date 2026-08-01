@@ -1,6 +1,6 @@
 extends Reference
 
-# Defines the shared semantic names used by player observations and mechanic rules.
+# Defines stat names shared by mechanic rules and player-owned weapon observations.
 
 
 func get_name(stat_hash: int) -> String:

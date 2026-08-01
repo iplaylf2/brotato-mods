@@ -1,8 +1,7 @@
 extends Reference
 
-# Fixed, hand-authored prior experience. It adds semantic hypotheses to exact
-# observable measurements; it never replaces those measurements with buckets and never
-# depends on content IDs or per-run learning.
+# Fixed, hand-authored prior knowledge. It adds semantic hypotheses to observed
+# evidence without hiding the underlying measurements or using content IDs.
 
 const STATIONARY_SPEED := 5.0
 const FAST_CLOSING_SPEED := 90.0
@@ -14,16 +13,21 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 			"peak_observed_speed": measurement.observed_speed,
 			"peak_closing_speed": measurement.closing_speed,
 			"ranged_attack_inferred": measurement.ranged_attack_inferred,
+			"loot_reward_known": measurement.loot_reward_known,
+			"enemy_production_known": measurement.enemy_production_known,
 		}
 	return {
 		"peak_observed_speed": max(previous.peak_observed_speed, measurement.observed_speed),
 		"peak_closing_speed": max(previous.peak_closing_speed, measurement.closing_speed),
 		"ranged_attack_inferred":
 		previous.ranged_attack_inferred or measurement.ranged_attack_inferred,
+		"loot_reward_known": previous.loot_reward_known or measurement.loot_reward_known,
+		"enemy_production_known":
+		previous.enemy_production_known or measurement.enemy_production_known,
 	}
 
 
-func classify(evidence: Dictionary) -> Dictionary:
+func build_profile(evidence: Dictionary) -> Dictionary:
 	return {
 		"attack_behavior":
 		{
@@ -32,6 +36,11 @@ func classify(evidence: Dictionary) -> Dictionary:
 			"confidence": 0.9 if evidence.ranged_attack_inferred else 0.5,
 		},
 		"movement_behavior": _classify_movement(evidence),
+		"strategic_roles":
+		{
+			"loot_reward_target": evidence.loot_reward_known,
+			"enemy_producer": evidence.enemy_production_known,
+		},
 	}
 
 
