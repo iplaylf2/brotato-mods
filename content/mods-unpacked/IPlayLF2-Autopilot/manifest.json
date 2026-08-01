@@ -1,8 +1,8 @@
 {
-  "name": "Demo",
+  "name": "Autopilot",
   "namespace": "IPlayLF2",
-  "version_number": "0.1.0",
-  "description": "Minimal lifecycle demo for verifying that Godot Mod Loader loads the mod.",
+  "version_number": "0.0.0",
+  "description": "Development scaffold for automated combat movement and local bot players.",
   "website_url": "",
   "dependencies": [],
   "extra": {
