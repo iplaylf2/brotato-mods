@@ -1,0 +1,21 @@
+name: Static checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+      - name: Install locked development tools
+        run: uv sync --locked
+      - name: Run static checks
+        run: uv run --locked tools/tasks.py lint

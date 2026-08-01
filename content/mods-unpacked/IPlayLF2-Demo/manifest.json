@@ -1,0 +1,28 @@
+{
+  "name": "Demo",
+  "namespace": "IPlayLF2",
+  "version_number": "0.1.0",
+  "description": "Minimal lifecycle demo for verifying that Godot Mod Loader loads the mod.",
+  "website_url": "",
+  "dependencies": [],
+  "extra": {
+    "godot": {
+      "authors": [
+        "IPlayLF2"
+      ],
+      "optional_dependencies": [],
+      "compatible_game_version": [
+        "1.1.15.4"
+      ],
+      "compatible_mod_loader_version": [
+        "6.3.0"
+      ],
+      "incompatibilities": [],
+      "load_before": [],
+      "tags": [],
+      "config_schema": {},
+      "description_rich": "",
+      "image": null
+    }
+  }
+}
