@@ -14,6 +14,7 @@ const MotionPredictor := preload(
 const PLAYER_RADIUS := 24.0
 const HAZARD_DISTANCE := 150.0
 const PROJECTILE_HAZARD_DISTANCE := 100.0
+const RANGED_SOURCE_PRESSURE_DISTANCE := 650.0
 const EDGE_MARGIN := 56.0
 const ROAMING_DISTANCE := 600.0
 
@@ -33,12 +34,15 @@ func predict(
 		"expected_enemy_damage": 0.0,
 		"expected_producer_damage": 0.0,
 		"expected_loot_target_damage": 0.0,
+		"ranged_source_suppression_value": 0.0,
 		"producer_approach_progress": 0.0,
 		"loot_target_approach_progress": 0.0,
+		"ranged_source_engagement_progress": 0.0,
 		"targets_in_weapon_range": 0.0,
 		"tree_attack_opportunity": 0.0,
 		"hazard_exposure": 0.0,
 		"contact_pressure": 0.0,
+		"ranged_source_pressure": 0.0,
 		"roaming_progress": 0.0,
 		"standing_seconds": 0.0,
 		"moving_seconds": 0.0,
@@ -59,6 +63,7 @@ func _predict_trajectory_outcomes(
 	var step_seconds: float = trajectory.horizon_seconds / float(samples.size())
 	for sample in samples:
 		_predict_sample_hazards(observation, sample, step_seconds, outcome)
+	_predict_projectile_hazards(observation, samples, step_seconds, outcome)
 
 	outcome.material_pickup_value = _collection_value(
 		observation.visible_world.materials, samples, observation.player_state.pickup
@@ -75,6 +80,9 @@ func _predict_trajectory_outcomes(
 	)
 	outcome.loot_target_approach_progress = _target_approach_progress(
 		observation.enemy_tracks, samples, "loot_reward_target"
+	)
+	outcome.ranged_source_engagement_progress = _ranged_source_engagement_progress(
+		observation, trajectory
 	)
 	outcome.targets_in_weapon_range = _targets_in_weapon_range(observation, trajectory)
 
@@ -100,18 +108,6 @@ func _predict_sample_hazards(
 		)
 		_accumulate_hazard(position.length() - radius, HAZARD_DISTANCE, step_seconds, outcome)
 
-	for projectile in observation.visible_world.enemy_projectiles:
-		var position: Vector2 = _motion_predictor.predict_position(
-			projectile.relative_position,
-			projectile.velocity,
-			projectile.acceleration,
-			projectile.motion_confidence,
-			sample.time
-		)
-		position -= sample.displacement
-		var clearance := position.length() - PLAYER_RADIUS - projectile.visual_radius
-		_accumulate_hazard(clearance, PROJECTILE_HAZARD_DISTANCE, step_seconds, outcome)
-
 	for warning in observation.visible_world.spawn_warnings:
 		if warning.disposition != "hostile":
 			continue
@@ -121,6 +117,71 @@ func _predict_sample_hazards(
 	_accumulate_edge_hazard(
 		observation.localization.map_bounds, sample.displacement, step_seconds, outcome
 	)
+	_accumulate_ranged_source_pressure(observation.enemy_tracks, sample, step_seconds, outcome)
+
+
+# Uses the closest point on every predicted projectile segment. Fast Brotato
+# projectiles can cross hundreds of pixels between trajectory samples, so
+# endpoint-only proximity checks would miss direct intersections.
+func _predict_projectile_hazards(
+	observation: Dictionary, samples: Array, step_seconds: float, outcome: Dictionary
+) -> void:
+	for projectile in observation.visible_world.enemy_projectiles:
+		var previous_position: Vector2 = projectile.relative_position
+		for sample in samples:
+			var position: Vector2 = _motion_predictor.predict_position(
+				projectile.relative_position,
+				projectile.velocity,
+				projectile.acceleration,
+				projectile.motion_confidence,
+				sample.time
+			)
+			position -= sample.displacement
+			var closest_position := _closest_point_to_origin(previous_position, position)
+			var clearance := closest_position.length() - PLAYER_RADIUS - projectile.visual_radius
+			_accumulate_hazard(clearance, PROJECTILE_HAZARD_DISTANCE, step_seconds, outcome)
+			previous_position = position
+
+
+func _closest_point_to_origin(segment_start: Vector2, segment_end: Vector2) -> Vector2:
+	var segment := segment_end - segment_start
+	var length_squared := segment.length_squared()
+	if length_squared <= 0.0:
+		return segment_start
+	var fraction := clamp(-segment_start.dot(segment) / length_squared, 0.0, 1.0)
+	return segment_start + segment * fraction
+
+
+func _accumulate_ranged_source_pressure(
+	tracks: Array, sample: Dictionary, step_seconds: float, outcome: Dictionary
+) -> void:
+	for track in tracks:
+		if not track.behavior_profile.strategic_roles.ranged_pressure_source:
+			continue
+		var position := _predict_track_position(track, sample.time) - sample.displacement
+		var pressure_distance: float = track.behavior_profile.attack_behavior.get(
+			"maximum_range", RANGED_SOURCE_PRESSURE_DISTANCE
+		)
+		pressure_distance = max(1.0, pressure_distance)
+		var minimum_pressure_distance: float = track.behavior_profile.attack_behavior.get(
+			"minimum_range", 0.0
+		)
+		var clearance: float = (
+			position.length()
+			- track.last_measurement.visual_radius
+			- track.uncertainty_radius
+		)
+		var proximity := clamp((pressure_distance - clearance) / pressure_distance, 0.0, 1.0)
+		if minimum_pressure_distance > 0.0:
+			proximity *= clamp(position.length() / minimum_pressure_distance, 0.0, 1.0)
+		outcome.ranged_source_pressure += (
+			proximity
+			* proximity
+			* step_seconds
+			* track.recency_confidence
+			* track.behavior_profile.attack_behavior.confidence
+			* track.behavior_profile.attack_behavior.pressure_intensity
+		)
 
 
 func _accumulate_hazard(
@@ -205,6 +266,34 @@ func _target_approach_progress(tracks: Array, samples: Array, role: String) -> f
 	return progress
 
 
+func _ranged_source_engagement_progress(observation: Dictionary, trajectory: Dictionary) -> float:
+	# Movement can prepare a later stationary attack, so this strategic coarse
+	# estimate considers owned weapon reach even when movement suppresses attacks.
+	var maximum_range := _maximum_weapon_range(observation.player_state.weapons)
+	if maximum_range <= 0.0:
+		return 0.0
+	var final_sample: Dictionary = trajectory.samples.back()
+	var progress := 0.0
+	for track in observation.enemy_tracks:
+		if not track.behavior_profile.strategic_roles.ranged_pressure_source:
+			continue
+		var attack_range := maximum_range + track.last_measurement.visual_radius
+		var initial_distance: float = track.relative_position.length()
+		var initial_gap := max(0.0, initial_distance - attack_range)
+		if initial_gap <= 0.0:
+			continue
+		var predicted_position := _predict_track_position(track, final_sample.time)
+		var final_distance: float = (predicted_position - final_sample.displacement).length()
+		var final_gap := max(0.0, final_distance - attack_range)
+		progress += (
+			clamp((initial_gap - final_gap) / initial_distance, -1.0, 1.0)
+			* track.recency_confidence
+			* track.behavior_profile.attack_behavior.confidence
+			* track.behavior_profile.attack_behavior.pressure_intensity
+		)
+	return progress
+
+
 func _targets_in_weapon_range(observation: Dictionary, trajectory: Dictionary) -> float:
 	var maximum_range := _usable_weapon_range(
 		observation.player_state.weapons, trajectory.movement != Vector2.ZERO
@@ -238,6 +327,13 @@ func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:
 	for weapon in weapons:
 		if is_moving and not weapon.automatic_attacks_allowed_while_moving:
 			continue
+		result = max(result, float(weapon.maximum_range))
+	return result
+
+
+func _maximum_weapon_range(weapons: Array) -> float:
+	var result := 0.0
+	for weapon in weapons:
 		result = max(result, float(weapon.maximum_range))
 	return result
 

@@ -8,10 +8,14 @@ const PROJECTILE_ORIGIN_INFERENCE_DISTANCE := 120.0
 const ObservedMotionEstimator := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/observed_motion_estimator.gd"
 )
+const EnemyMechanicCompiler := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_mechanic_compiler.gd"
+)
 
 var _main: Node
 var _players: Array
 var _motion_estimators := []
+var _enemy_mechanic_compiler: Reference = EnemyMechanicCompiler.new()
 
 
 func _init(main: Node, players: Array) -> void:
@@ -25,7 +29,7 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	var visible_rect := _get_visible_rect()
 	var origin: Vector2 = player.global_position
 	var enemies := _observe_enemies(player, visible_rect)
-	var enemy_projectiles := _observe_enemy_projectiles(origin, visible_rect)
+	var enemy_projectiles := _observe_enemy_projectiles(origin, visible_rect, enemies)
 	var moving_observations := []
 	moving_observations.append_array(enemies)
 	moving_observations.append_array(enemy_projectiles)
@@ -79,6 +83,7 @@ func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 					"visual_radius": _get_visual_radius(enemy),
 					"observed_speed": enemy_velocity.length(),
 					"closing_speed": 0.0,
+					"stable_mechanic_profile": _enemy_mechanic_compiler.compile(enemy),
 					"ranged_attack_inferred": false,
 					"loot_reward_known": enemy.is_loot,
 					"enemy_production_known": _can_spawn_enemies(enemy),
@@ -108,9 +113,13 @@ func _can_spawn_enemies(enemy: Node) -> bool:
 	return false
 
 
-func _observe_enemy_projectiles(origin: Vector2, visible_rect: Rect2) -> Array:
+func _observe_enemy_projectiles(origin: Vector2, visible_rect: Rect2, enemies: Array) -> Array:
 	var projectiles := []
 	_append_visible_projectiles(projectiles, _main._enemy_projectiles, origin, visible_rect)
+	# Some vanilla hazards (for example Corrupted Tree and Predator orbitals) are
+	# enemy children rather than children of Main.EnemyProjectiles.
+	for enemy in enemies:
+		_append_visible_projectiles(projectiles, enemy._source, origin, visible_rect)
 	return projectiles
 
 

@@ -1,7 +1,7 @@
 extends Reference
 
-# Fixed, hand-authored prior knowledge. It adds semantic hypotheses to observed
-# evidence without hiding the underlying measurements or using content IDs.
+# Combines versioned enemy mechanics with battle-local observed evidence. Stable
+# content identity stays inside the compiler cache and never enters this profile.
 
 const STATIONARY_SPEED := 5.0
 const FAST_CLOSING_SPEED := 90.0
@@ -12,6 +12,7 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 		return {
 			"peak_observed_speed": measurement.observed_speed,
 			"peak_closing_speed": measurement.closing_speed,
+			"stable_mechanic_profile": measurement.stable_mechanic_profile.duplicate(true),
 			"ranged_attack_inferred": measurement.ranged_attack_inferred,
 			"loot_reward_known": measurement.loot_reward_known,
 			"enemy_production_known": measurement.enemy_production_known,
@@ -19,6 +20,7 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 	return {
 		"peak_observed_speed": max(previous.peak_observed_speed, measurement.observed_speed),
 		"peak_closing_speed": max(previous.peak_closing_speed, measurement.closing_speed),
+		"stable_mechanic_profile": measurement.stable_mechanic_profile.duplicate(true),
 		"ranged_attack_inferred":
 		previous.ranged_attack_inferred or measurement.ranged_attack_inferred,
 		"loot_reward_known": previous.loot_reward_known or measurement.loot_reward_known,
@@ -28,18 +30,29 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 
 
 func build_profile(evidence: Dictionary) -> Dictionary:
+	var attack_profile: Dictionary = evidence.stable_mechanic_profile.attack_behavior.duplicate(
+		true
+	)
+	if attack_profile.kind == "unconfirmed" and evidence.ranged_attack_inferred:
+		attack_profile = {
+			"kind": "ranged_projectile_inferred",
+			"confidence": 0.9,
+			"knowledge_source": "observed_emission",
+			"creates_projectile_pressure": true,
+			"maximum_range": 650.0,
+			"pressure_intensity": 1.0,
+			"delivery_modes": ["observed_projectile"],
+		}
+	var is_ranged_source: bool = attack_profile.get("creates_projectile_pressure", false)
 	return {
-		"attack_behavior":
-		{
-			"kind":
-			"ranged_projectile_inferred" if evidence.ranged_attack_inferred else "unconfirmed",
-			"confidence": 0.9 if evidence.ranged_attack_inferred else 0.5,
-		},
+		"attack_behavior": attack_profile,
+		"durability": evidence.stable_mechanic_profile.durability.duplicate(true),
 		"movement_behavior": _classify_movement(evidence),
 		"strategic_roles":
 		{
 			"loot_reward_target": evidence.loot_reward_known,
 			"enemy_producer": evidence.enemy_production_known,
+			"ranged_pressure_source": is_ranged_source,
 		},
 	}
 

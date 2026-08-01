@@ -14,10 +14,19 @@ func build_context(observation: Dictionary) -> Dictionary:
 	var wave_progress := 1.0 - wave_time_remaining_ratio
 	var loot_target_count := _count_role(observation.enemy_tracks, "loot_reward_target")
 	var enemy_producer_count := _count_role(observation.enemy_tracks, "enemy_producer")
+	var ranged_source_count := _count_role(observation.enemy_tracks, "ranged_pressure_source")
 	var loot_target_multiplier := 1.0 + 0.15 * min(3, max(0, loot_target_count - 1))
 	var producer_multiplier := 1.0 + 0.35 * min(3, max(0, enemy_producer_count - 1))
+	var ranged_source_multiplier := 1.0 + 0.2 * min(5, max(0, ranged_source_count - 1))
 	var survivability_credit := _survivability_credit(observation)
 	var risk_tolerance := clamp((health_ratio - 0.25) / 0.75 + survivability_credit, 0.0, 1.0)
+	var projectile_density := clamp(
+		observation.visible_world.enemy_projectiles.size() / 12.0, 0.0, 1.0
+	)
+	var ranged_engagement_appetite := (
+		lerp(0.25, 1.0, risk_tolerance)
+		* lerp(1.0, 0.35, projectile_density)
+	)
 	var mechanic_weights := _mechanic_weights(observation)
 
 	return {
@@ -28,12 +37,22 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"expected_enemy_damage": 0.018 * _enemy_damage_multiplier(observation, wave_progress),
 			"expected_producer_damage": 0.045 * wave_time_remaining_ratio * producer_multiplier,
 			"expected_loot_target_damage": 0.055 * (1.0 + wave_progress) * loot_target_multiplier,
+			"ranged_source_suppression_value":
+			10.0 * wave_time_remaining_ratio * ranged_source_multiplier,
 			"producer_approach_progress": 5.0 * wave_time_remaining_ratio * producer_multiplier,
 			"loot_target_approach_progress": 4.0 * (1.0 + wave_progress) * loot_target_multiplier,
+			"ranged_source_engagement_progress":
+			6.0 * wave_time_remaining_ratio * ranged_source_multiplier * ranged_engagement_appetite,
 			"targets_in_weapon_range": 0.15,
 			"tree_attack_opportunity": _tree_weight(observation, wave_progress),
 			"hazard_exposure": -lerp(30.0, 6.0, risk_tolerance) * lerp(1.0, 0.65, wave_progress),
 			"contact_pressure": -lerp(120.0, 35.0, risk_tolerance) * lerp(1.0, 0.65, wave_progress),
+			"ranged_source_pressure":
+			(
+				-lerp(18.0, 4.0, risk_tolerance)
+				* lerp(1.0, 1.75, projectile_density)
+				* ranged_source_multiplier
+			),
 			"roaming_progress": 1.2 * wave_time_remaining_ratio,
 			"standing_seconds": mechanic_weights.standing,
 			"moving_seconds": mechanic_weights.moving,
@@ -49,8 +68,12 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"risk_tolerance": risk_tolerance,
 			"loot_target_count": loot_target_count,
 			"enemy_producer_count": enemy_producer_count,
+			"ranged_source_count": ranged_source_count,
 			"loot_target_multiplier": loot_target_multiplier,
 			"producer_multiplier": producer_multiplier,
+			"ranged_source_multiplier": ranged_source_multiplier,
+			"projectile_density": projectile_density,
+			"ranged_engagement_appetite": ranged_engagement_appetite,
 		},
 	}
 

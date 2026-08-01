@@ -12,7 +12,7 @@ content/
     └── iplaylf2-autopilot/
         ├── README.md
         ├── bot/
-        ├── docs/               # 架构与玩家权限边界
+        ├── docs/               # 架构、玩家权限边界与原版机制审计
         ├── extensions/
         ├── manifest.json
         └── mod_main.gd
@@ -30,12 +30,16 @@ content/
 方向，不调用瞄准、攻击或武器方法。
 
 实现通过 `extensions/` 中的 script extension 接入原版主场景；`mod_main.gd` 注册扩展并管理
-Mod Options 配置。
-安装、启用方式和当前状态见 [Autopilot README](content/mods-unpacked/iplaylf2-autopilot/README.md)；
-玩家可用信息和控制权限见
-[玩家权限边界](content/mods-unpacked/iplaylf2-autopilot/docs/fair-play.md)；
-观察契约、规划模型和模块责任见
-[Autopilot 架构](content/mods-unpacked/iplaylf2-autopilot/docs/architecture.md)。
+Mod Options 配置。相关文档按读者任务划分：
+
+- 安装、启用方式和当前状态见
+  [Autopilot README](content/mods-unpacked/iplaylf2-autopilot/README.md)；
+- 玩家可用信息和控制权限见
+  [玩家权限边界](content/mods-unpacked/iplaylf2-autopilot/docs/fair-play.md)；
+- 观察契约、规划模型和模块责任见
+  [Autopilot 架构](content/mods-unpacked/iplaylf2-autopilot/docs/architecture.md)；
+- 目标版本的敌人与投射物覆盖证据见
+  [原版机制审计](content/mods-unpacked/iplaylf2-autopilot/docs/vanilla-enemy-mechanics.md)。
 
 修改原版行为前，先以目标游戏版本的恢复工程确认控制点。优先使用 Mod Loader script extension，
 避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。

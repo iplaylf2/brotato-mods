@@ -48,6 +48,7 @@ func _accumulate_weapon_attack(
 	outcome.expected_enemy_damage += attack_outcome.expected_damage
 	outcome.expected_producer_damage += attack_outcome.expected_producer_damage
 	outcome.expected_loot_target_damage += attack_outcome.expected_loot_target_damage
+	outcome.ranged_source_suppression_value += attack_outcome.ranged_source_suppression_value
 	outcome.expected_attack_hits += attack_outcome.expected_hits
 
 
@@ -127,6 +128,13 @@ func _accumulate_target_outcome(
 		result.expected_producer_damage += expected_damage
 	if target.loot_reward_target:
 		result.expected_loot_target_damage += expected_damage
+	if target.ranged_pressure_source:
+		result.ranged_source_suppression_value += (
+			expected_damage
+			/ target.maximum_health
+			* target.ranged_pressure_intensity
+			* target.source_removal_relief
+		)
 
 
 func _targets_at_time(tracks: Array, displacement: Vector2, time: float) -> Array:
@@ -141,6 +149,19 @@ func _targets_at_time(tracks: Array, displacement: Vector2, time: float) -> Arra
 				"radius": track.last_measurement.visual_radius,
 				"enemy_producer": track.behavior_profile.strategic_roles.enemy_producer,
 				"loot_reward_target": track.behavior_profile.strategic_roles.loot_reward_target,
+				"ranged_pressure_source":
+				track.behavior_profile.strategic_roles.ranged_pressure_source,
+				"ranged_pressure_intensity":
+				track.behavior_profile.attack_behavior.pressure_intensity,
+				"maximum_health": max(1.0, float(track.behavior_profile.durability.maximum_health)),
+				"source_removal_relief":
+				(
+					1.25
+					if track.behavior_profile.attack_behavior.get(
+						"all_projectiles_removed_on_death", false
+					)
+					else 1.0
+				),
 			}
 		)
 	return targets
@@ -181,5 +202,6 @@ func _empty_attack_outcome() -> Dictionary:
 		"expected_damage": 0.0,
 		"expected_producer_damage": 0.0,
 		"expected_loot_target_damage": 0.0,
+		"ranged_source_suppression_value": 0.0,
 		"expected_hits": 0.0,
 	}

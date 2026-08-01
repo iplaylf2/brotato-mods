@@ -11,7 +11,7 @@ const REACQUISITION_MARGIN := 72.0
 const VISUAL_RADIUS_REACQUISITION_TOLERANCE := 12.0
 const ACCELERATION_DECAY_SECONDS := 0.18
 const EnemyBehaviorProfiler := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemy_behavior_profiler.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_behavior_profiler.gd"
 )
 
 var _elapsed_seconds := 0.0
@@ -97,7 +97,7 @@ func get_enemy_tracks() -> Array:
 				"behavior_profile": track.behavior_profile.duplicate(true),
 				# Latest measurement; stale while the enemy is outside the visible world.
 				"last_measurement": track.last_measurement.duplicate(true),
-				# Evidence accumulated during this battle, never across runs.
+				# Inputs retained for this track: stable mechanics plus battle-local evidence.
 				"behavior_evidence": track.evidence.duplicate(true),
 			}
 		)
