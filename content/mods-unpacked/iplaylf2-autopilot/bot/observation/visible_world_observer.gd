@@ -1,25 +1,36 @@
 extends Reference
 
-# Reads only the camera- and fog-visible world. Scene objects in enemy_observations
-# are private continuity tokens for observed world memory and never become public.
+# Reads only the camera- and fog-visible world. Scene objects in internal enemy
+# and projectile observations are private continuity tokens and never become public.
 
 const DEFAULT_ENTITY_VISUAL_RADIUS := 32.0
 const PROJECTILE_ORIGIN_INFERENCE_DISTANCE := 120.0
+const ObservedMotionEstimator := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/observed_motion_estimator.gd"
+)
 
 var _main: Node
 var _players: Array
+var _motion_estimators := []
 
 
 func _init(main: Node, players: Array) -> void:
 	_main = main
 	_players = players
+	for _player in players:
+		_motion_estimators.push_back(ObservedMotionEstimator.new())
 
 
-func observe(player_index: int, player: Node2D) -> Dictionary:
+func observe(player_index: int, player: Node2D, delta_seconds: float) -> Dictionary:
 	var visible_rect := _get_visible_rect()
 	var origin: Vector2 = player.global_position
 	var enemies := _observe_enemies(player, visible_rect)
 	var enemy_projectiles := _observe_enemy_projectiles(origin, visible_rect)
+	var moving_observations := []
+	moving_observations.append_array(enemies)
+	moving_observations.append_array(enemy_projectiles)
+	_motion_estimators[player_index].update(moving_observations, delta_seconds)
+	_update_enemy_motion_features(enemies, _get_velocity(player))
 	var ranged_attack_sources := _infer_ranged_attacks(enemies, enemy_projectiles)
 	for enemy in enemies:
 		enemy.features.ranged_attack_inferred = ranged_attack_sources.has(enemy._source)
@@ -42,7 +53,7 @@ func observe(player_index: int, player: Node2D) -> Dictionary:
 			_observe_children(_main._materials_container, origin, visible_rect, "material"),
 			"consumables":
 			_observe_children(_main._consumables_container, origin, visible_rect, "consumable"),
-			"enemy_projectiles": enemy_projectiles,
+			"enemy_projectiles": _make_public_motion_observations(enemy_projectiles),
 			"spawn_warnings": _observe_spawn_warnings(origin, visible_rect),
 		},
 	}
@@ -50,26 +61,24 @@ func observe(player_index: int, player: Node2D) -> Dictionary:
 
 func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 	var observations := []
-	var player_velocity := _get_velocity(player)
 	for enemy in _main._entity_spawner.enemies:
 		if not _is_node_visible(enemy, visible_rect):
 			continue
 		var relative_position: Vector2 = enemy.global_position - player.global_position
 		var enemy_velocity := _get_velocity(enemy)
-		var relative_velocity: Vector2 = enemy_velocity - player_velocity
-		var closing_speed := 0.0
-		if relative_position.length_squared() > 0.0:
-			closing_speed = -relative_position.normalized().dot(relative_velocity)
 		observations.push_back(
 			{
 				"_source": enemy,
+				"_world_position": enemy.global_position,
 				"relative_position": relative_position,
 				"velocity": enemy_velocity,
+				"acceleration": Vector2.ZERO,
+				"motion_confidence": 0.0,
 				"features":
 				{
 					"visual_radius": _get_visual_radius(enemy),
 					"observed_speed": enemy_velocity.length(),
-					"closing_speed": closing_speed,
+					"closing_speed": 0.0,
 					"ranged_attack_inferred": false,
 					"loot_reward_known": enemy.is_loot,
 					"enemy_production_known": _can_spawn_enemies(enemy),
@@ -77,6 +86,16 @@ func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 			}
 		)
 	return observations
+
+
+func _update_enemy_motion_features(enemies: Array, player_velocity: Vector2) -> void:
+	for enemy in enemies:
+		var relative_velocity: Vector2 = enemy.velocity - player_velocity
+		var closing_speed := 0.0
+		if enemy.relative_position.length_squared() > 0.0:
+			closing_speed = -enemy.relative_position.normalized().dot(relative_velocity)
+		enemy.features.observed_speed = enemy.velocity.length()
+		enemy.features.closing_speed = closing_speed
 
 
 func _can_spawn_enemies(enemy: Node) -> bool:
@@ -100,8 +119,23 @@ func _append_visible_projectiles(
 ) -> void:
 	for child in parent.get_children():
 		if child is EnemyProjectile and _is_node_visible(child, visible_rect):
-			observations.push_back(_make_entity_observation(child, origin, "enemy_projectile"))
+			var observation := _make_entity_observation(child, origin, "enemy_projectile")
+			observation._source = child
+			observation._world_position = child.global_position
+			observation.acceleration = Vector2.ZERO
+			observation.motion_confidence = 0.0
+			observations.push_back(observation)
 		_append_visible_projectiles(observations, child, origin, visible_rect)
+
+
+func _make_public_motion_observations(observations: Array) -> Array:
+	var result := []
+	for observation in observations:
+		var public_observation: Dictionary = observation.duplicate(true)
+		public_observation.erase("_source")
+		public_observation.erase("_world_position")
+		result.push_back(public_observation)
+	return result
 
 
 func _infer_ranged_attacks(enemies: Array, projectiles: Array) -> Dictionary:

@@ -7,6 +7,9 @@ extends Reference
 const WeaponAttackPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_attack_predictor.gd"
 )
+const MotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion_predictor.gd"
+)
 
 const PLAYER_RADIUS := 24.0
 const HAZARD_DISTANCE := 150.0
@@ -15,6 +18,7 @@ const EDGE_MARGIN := 56.0
 const ROAMING_DISTANCE := 600.0
 
 var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
+var _motion_predictor: Reference = MotionPredictor.new()
 
 
 func predict(
@@ -97,11 +101,14 @@ func _predict_sample_hazards(
 		_accumulate_hazard(position.length() - radius, HAZARD_DISTANCE, step_seconds, outcome)
 
 	for projectile in observation.visible_world.enemy_projectiles:
-		var position: Vector2 = (
-			projectile.relative_position
-			+ projectile.velocity * sample.time
-			- sample.displacement
+		var position: Vector2 = _motion_predictor.predict_position(
+			projectile.relative_position,
+			projectile.velocity,
+			projectile.acceleration,
+			projectile.motion_confidence,
+			sample.time
 		)
+		position -= sample.displacement
 		var clearance := position.length() - PLAYER_RADIUS - projectile.visual_radius
 		_accumulate_hazard(clearance, PROJECTILE_HAZARD_DISTANCE, step_seconds, outcome)
 
@@ -217,7 +224,13 @@ func _targets_in_weapon_range(observation: Dictionary, trajectory: Dictionary) -
 
 
 func _predict_track_position(track: Dictionary, time: float) -> Vector2:
-	return track.relative_position + track.last_observed_velocity * time
+	return _motion_predictor.predict_position(
+		track.relative_position,
+		track.estimated_velocity,
+		track.estimated_acceleration,
+		track.motion_confidence,
+		time
+	)
 
 
 func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:

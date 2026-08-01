@@ -4,6 +4,11 @@ extends Reference
 # It scores movement and must never invoke or mutate weapons, targets, or attacks.
 
 const RAY_BUCKET_COUNT := 8
+const MotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion_predictor.gd"
+)
+
+var _motion_predictor: Reference = MotionPredictor.new()
 
 
 func accumulate_outcome(
@@ -162,7 +167,13 @@ func _sample_displacement(samples: Array, time: float) -> Vector2:
 
 
 func _predict_track_position(track: Dictionary, time: float) -> Vector2:
-	return track.relative_position + track.last_observed_velocity * time
+	return _motion_predictor.predict_position(
+		track.relative_position,
+		track.estimated_velocity,
+		track.estimated_acceleration,
+		track.motion_confidence,
+		time
+	)
 
 
 func _empty_attack_outcome() -> Dictionary:

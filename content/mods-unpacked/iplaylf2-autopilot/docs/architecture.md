@@ -10,13 +10,14 @@
 主场景扩展
 ├── ObservationService
 │   ├── PlayerStateObserver
-│   ├── VisibleWorldObserver
+│   ├── VisibleWorldObserver ──> ObservedMotionEstimator
 │   └── ObservedWorldMemory ──> EnemyBehaviorProfiler
 └── AutopilotController
     ├── MovementPlanner
     │   ├── SearchBudgetPolicy
     │   ├── TrajectoryGenerator
-    │   ├── TrajectoryOutcomePredictor ──> WeaponAttackPredictor
+    │   ├── TrajectoryOutcomePredictor ──> MotionPredictor
+    │   │   └── WeaponAttackPredictor ──> MotionPredictor
     │   ├── UtilityModel
     │   └── TrajectorySelector
     └── AutopilotMovementBehavior
@@ -60,11 +61,44 @@ visible_world
 ```
 
 `visible_world` 只包含当前可见的树木、友方单位、材料、消耗品、敌方弹射物和生成警告。敌人统一由
-`enemy_tracks` 表示：可见时更新测量值，离开视野后根据最后一次速度估计位置，并附带距上次出现的
-时间、置信度和不确定范围。`visual_radius` 通常从精灵尺寸估算，无法读取时使用默认值；它不是碰撞
-形状的精确半径。
+`enemy_tracks` 表示：可见时更新测量值，离开视野后根据最后一次速度与衰减加速度估计位置，并附带距
+上次出现的时间、置信度和不确定范围。`visual_radius` 通常从精灵尺寸估算，无法读取时使用默认值；
+它不是碰撞形状的精确半径。
 
-场景节点只在可见世界观察器与局内记忆之间充当连续性标记，不会进入公共观察。敌人的
+观察器先读取可见实体当前呈现的速度；获得连续可见帧后，再按位置差更新速度，并由速度差估计平滑且
+限幅的加速度。规划器用快速衰减的加速度模型短时外推弯曲或变速趋势；首次看到、观察中断或样本不足
+时自动退化为当前速度或匀速预测。该过程不读取移动目标、攻击目标、随机状态或未来行为。
+
+### 运动观察字段
+
+当前可见的敌方弹射物通过 `visible_world.enemy_projectiles` 公开以下运动字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `relative_position` | 当前相对玩家的位置 |
+| `velocity` | 当前测得的世界坐标速度 |
+| `acceleration` | 由连续可见样本估计并经过平滑、限幅的世界坐标加速度 |
+| `motion_confidence` | 加速度趋势的可信权重，范围为 `0.0–1.0` |
+| `visual_radius` | 从可见外观估计的半径 |
+
+敌人通过 `enemy_tracks` 公开当前估计位置和以下运动状态：
+
+| 字段 | 含义 |
+| --- | --- |
+| `relative_position` | 当前可见位置，或离开视野后的估计位置 |
+| `last_observed_velocity` | 最后一次可见时测得的速度 |
+| `last_observed_acceleration` | 最后一次可见时估计的加速度 |
+| `estimated_velocity` | 将已观察加速度衰减到当前时刻后得到的速度估计 |
+| `estimated_acceleration` | 衰减到当前时刻的加速度估计 |
+| `motion_confidence` | 用于加速度外推的可信权重；离开视野后持续降低 |
+| `seconds_since_seen` | 距最后一次可见的秒数 |
+| `uncertainty_radius` | 离开视野后随时间和速度扩大的位置不确定半径 |
+
+速度和加速度分别使用世界坐标单位/秒与世界坐标单位/秒²。`motion_confidence` 只调节加速度趋势；速度
+仍作为最低阶运动估计。规划层消费 `estimated_velocity` 和 `estimated_acceleration`，而
+`last_observed_*` 字段保留最后一次可见时的测量，供诊断和记忆解释。
+
+场景节点只在观察层内部充当连续性标记，不会进入公共观察。敌人的
 `behavior_profile` 根据已观察证据描述攻击方式、移动方式和战略角色；它不包含内容 ID。
 
 `localization` 从移动里程计开始。看到左侧或上侧地图边界后，才能逐轴确定地图坐标；其他已见边界
@@ -89,7 +123,8 @@ visible_world
 
 1. 预算政策根据当前敌人轨迹和可见敌方弹射物数量选择搜索预算。
 2. 轨迹生成器创建停留轨迹和一组 0.8 秒曲线移动轨迹。
-3. 所有轨迹先预测拾取、接近、危险、跑图和移动机制结果。
+3. 所有轨迹先预测拾取、接近、危险、跑图和移动机制结果；其中敌人与弹射物的位置按已观察速度和
+   短时加速度趋势外推。
 4. 粗评分最高的固定数量轨迹再进行自动武器攻击结果预测。
 5. 效用模型按当前局势生成权重，并输出逐项得分账本。
 6. 选择器从近优轨迹中进行带权随机选择；逐物理帧 seed 使同一帧的选择可复现。
@@ -165,11 +200,14 @@ visible_world
 诊断维度则应明确标注不参与评分。
 
 新增武器几何应留在 `weapon_attack_predictor.gd`，并且只能产生只读预测结果；运动规划器不得读取
-武器实现细节。计算降级策略由 `search_budget_policy.gd` 单独负责。
+武器实现细节。可见运动的跨帧测量由 `observed_motion_estimator.gd` 负责，规划期外推由
+`motion_predictor.gd` 负责。观察层不得反向依赖规划层；规划层只能消费公共运动字段，不得读取观察层
+内部的连续性标记。计算降级策略由 `search_budget_policy.gd` 单独负责。
 
 ## 当前限制
 
 - 接触压力尚未由实际伤害、无敌帧、闪避和治疗机会校准。
 - 拾取机制规则已经编译，但相关效果尚未全部进入结果预测。
+- 运动估计的平滑、限幅和衰减参数尚未完成游戏内校准。
 - 负载等级仍是实体计数启发式，尚未使用 Godot 性能监视器或实测帧时间。
 - 观察、规划和控制尚未完成游戏内加载与行为验证。

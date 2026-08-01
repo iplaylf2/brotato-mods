@@ -65,7 +65,7 @@ func _build_observation(player_index: int, player: Node2D, delta: float) -> Dict
 	var position_delta: Vector2 = player.global_position - _last_player_positions[player_index]
 	_last_player_positions[player_index] = player.global_position
 
-	var world_observation: Dictionary = _visible_world_observer.observe(player_index, player)
+	var world_observation: Dictionary = _visible_world_observer.observe(player_index, player, delta)
 	var world_memory: Reference = _world_memories[player_index]
 	world_memory.update(
 		delta, position_delta, world_observation.visible_edges, world_observation.enemy_observations

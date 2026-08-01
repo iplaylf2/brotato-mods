@@ -9,6 +9,7 @@ const UNCERTAINTY_PER_SECOND := 80.0
 const VELOCITY_UNCERTAINTY_FACTOR := 0.35
 const REACQUISITION_MARGIN := 72.0
 const VISUAL_RADIUS_REACQUISITION_TOLERANCE := 12.0
+const ACCELERATION_DECAY_SECONDS := 0.18
 const EnemyBehaviorProfiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemy_behavior_profiler.gd"
 )
@@ -49,9 +50,26 @@ func get_enemy_tracks() -> Array:
 		var track: Dictionary = _tracks[track_id]
 		var seconds_since_seen: float = _elapsed_seconds - track.last_seen_at_seconds
 		var estimated_odometry_position: Vector2 = track.last_seen_odometry_position
+		var acceleration_decay := exp(-seconds_since_seen / ACCELERATION_DECAY_SECONDS)
+		var estimated_velocity: Vector2 = (
+			track.last_observed_velocity
+			+ (
+				track.last_observed_acceleration
+				* track.motion_confidence
+				* ACCELERATION_DECAY_SECONDS
+				* (1.0 - acceleration_decay)
+			)
+		)
+		var estimated_acceleration: Vector2 = track.last_observed_acceleration * acceleration_decay
 		var uncertainty := 0.0
 		if not track.visible:
-			estimated_odometry_position += track.last_observed_velocity * seconds_since_seen
+			estimated_odometry_position = _predict_observed_position(
+				estimated_odometry_position,
+				track.last_observed_velocity,
+				track.last_observed_acceleration,
+				track.motion_confidence,
+				seconds_since_seen
+			)
 			uncertainty = (
 				BASE_UNCERTAINTY
 				+ UNCERTAINTY_PER_SECOND * seconds_since_seen
@@ -68,6 +86,11 @@ func get_enemy_tracks() -> Array:
 				"visible": track.visible,
 				"relative_position": estimated_odometry_position - _odometry_position,
 				"last_observed_velocity": track.last_observed_velocity,
+				"last_observed_acceleration": track.last_observed_acceleration,
+				"estimated_velocity": estimated_velocity,
+				"estimated_acceleration": estimated_acceleration,
+				"motion_confidence":
+				track.motion_confidence * max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS),
 				"seconds_since_seen": seconds_since_seen,
 				"uncertainty_radius": uncertainty,
 				"recency_confidence": max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS),
@@ -129,9 +152,12 @@ func _find_reacquisition(observation: Dictionary, observed_track_ids: Dictionary
 			> VISUAL_RADIUS_REACQUISITION_TOLERANCE
 		):
 			continue
-		var predicted_position: Vector2 = (
-			track.last_seen_odometry_position
-			+ track.last_observed_velocity * seconds_since_seen
+		var predicted_position: Vector2 = _predict_observed_position(
+			track.last_seen_odometry_position,
+			track.last_observed_velocity,
+			track.last_observed_acceleration,
+			track.motion_confidence,
+			seconds_since_seen
 		)
 		var distance: float = predicted_position.distance_to(observed_odometry_position)
 		var plausible_distance: float = (
@@ -157,10 +183,29 @@ func _update_track(track: Dictionary, observation: Dictionary) -> void:
 	track.last_seen_at_seconds = _elapsed_seconds
 	track.last_seen_odometry_position = _odometry_position + observation.relative_position
 	track.last_observed_velocity = observation.velocity
+	track.last_observed_acceleration = observation.acceleration
+	track.motion_confidence = observation.motion_confidence
 	track.last_measurement = observation.features.duplicate(true)
 	var previous_evidence := track.evidence if track.has("evidence") else {}
 	track.evidence = _enemy_profiler.accumulate_evidence(previous_evidence, track.last_measurement)
 	track.behavior_profile = _enemy_profiler.build_profile(track.evidence)
+
+
+func _predict_observed_position(
+	position: Vector2,
+	velocity: Vector2,
+	acceleration: Vector2,
+	motion_confidence: float,
+	time: float
+) -> Vector2:
+	var decay := ACCELERATION_DECAY_SECONDS
+	var acceleration_displacement := (
+		acceleration
+		* clamp(motion_confidence, 0.0, 1.0)
+		* decay
+		* (time - decay * (1.0 - exp(-time / decay)))
+	)
+	return position + velocity * time + acceleration_displacement
 
 
 func _expire_old_tracks() -> void:
