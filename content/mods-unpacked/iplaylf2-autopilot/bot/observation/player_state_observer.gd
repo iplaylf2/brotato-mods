@@ -4,10 +4,10 @@ extends Reference
 # while keeping content IDs and scene objects out of the public observation.
 
 const PlayerMechanicCompiler := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/knowledge/mechanics/player_mechanic_compiler.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/mechanics/player_mechanic_compiler.gd"
 )
 const StatVocabulary := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/knowledge/stat_vocabulary.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
 )
 
 var _player_mechanic_compiler: Reference = PlayerMechanicCompiler.new()

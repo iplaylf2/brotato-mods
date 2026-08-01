@@ -10,7 +10,7 @@ const VELOCITY_UNCERTAINTY_FACTOR := 0.35
 const REACQUISITION_MARGIN := 72.0
 const FOOTPRINT_REACQUISITION_TOLERANCE := 12.0
 const EnemyBehaviorClassifier := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/knowledge/enemy_behavior_classifier.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemy_behavior_classifier.gd"
 )
 
 var _elapsed := 0.0

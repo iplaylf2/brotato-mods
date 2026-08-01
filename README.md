@@ -9,7 +9,7 @@ mod 内容。恢复工程和原始游戏资源仅用作本地开发参考，不�
 content/
 ├── .import/                    # 仅在 mod 包含自定义资源时存在
 └── mods-unpacked/
-    └── IPlayLF2-Autopilot/
+    └── iplaylf2-autopilot/
         ├── README.md
         ├── bot/
         ├── extensions/
@@ -24,13 +24,13 @@ content/
 
 ## Autopilot
 
-`IPlayLF2-Autopilot` 的目标是让 bot 依据玩家可见的外部战场信息、精确的自身状态、局内战斗记忆
+`iplaylf2-autopilot` 的目标是让 bot 依据玩家可见的外部战场信息、精确的自身状态、局内战斗记忆
 和预置机制知识，自主完成战斗移动。当前开发先完成信息采集与建模，确认观察契约后再进入移动控制。
 
 实现通过 `extensions/` 中的 script extension 接入原版主场景；`mod_main.gd` 注册扩展并管理
 Mod Options 配置。
 架构、观察接口、建模原则和当前覆盖范围见
-[Autopilot 开发说明](content/mods-unpacked/IPlayLF2-Autopilot/README.md)。
+[Autopilot 开发说明](content/mods-unpacked/iplaylf2-autopilot/README.md)。
 
 修改原版行为前，先以目标游戏版本的恢复工程确认控制点。优先使用 Mod Loader script extension，
 避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。
@@ -54,8 +54,8 @@ Brotato 是 Godot 3 项目；当前开发环境使用 GodotSteam 3.6。编辑、
 将本仓库的 mod 目录链接或复制到恢复工程中的对应位置：
 
 ```text
-content/mods-unpacked/IPlayLF2-Autopilot/
-  -> <recovered-project>/mods-unpacked/IPlayLF2-Autopilot/
+content/mods-unpacked/iplaylf2-autopilot/
+  -> <recovered-project>/mods-unpacked/iplaylf2-autopilot/
 ```
 
 然后用 GodotSteam 3.6 打开恢复工程。使用 Mod Tool 维护 manifest 并导出 ZIP；这样

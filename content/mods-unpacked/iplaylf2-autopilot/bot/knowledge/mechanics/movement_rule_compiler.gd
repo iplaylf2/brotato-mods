@@ -1,7 +1,7 @@
 extends Reference
 
 const StatVocabulary := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/knowledge/stat_vocabulary.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
 )
 
 var _stat_vocabulary: Reference = StatVocabulary.new()

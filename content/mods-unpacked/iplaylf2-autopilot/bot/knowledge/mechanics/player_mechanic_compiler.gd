@@ -3,13 +3,13 @@ extends Reference
 # Combines independently changing mechanic families into the player's rule set.
 
 const MovementRuleCompiler := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/knowledge/mechanics/movement_rule_compiler.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/mechanics/movement_rule_compiler.gd"
 )
 const PickupRuleCompiler := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/knowledge/mechanics/pickup_rule_compiler.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/mechanics/pickup_rule_compiler.gd"
 )
 const WaveRewardRuleCompiler := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/knowledge/mechanics/wave_reward_rule_compiler.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/mechanics/wave_reward_rule_compiler.gd"
 )
 
 var _movement_rules: Reference = MovementRuleCompiler.new()

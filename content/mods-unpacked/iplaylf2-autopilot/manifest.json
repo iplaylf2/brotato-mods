@@ -1,6 +1,6 @@
 {
-  "name": "Autopilot",
-  "namespace": "IPlayLF2",
+  "name": "autopilot",
+  "namespace": "iplaylf2",
   "version_number": "0.0.0",
   "description": "Observation and battle modeling for autonomous movement using player-available information.",
   "website_url": "",
@@ -10,7 +10,7 @@
   "extra": {
     "godot": {
       "authors": [
-        "IPlayLF2"
+        "iplaylf2"
       ],
       "optional_dependencies": [],
       "compatible_game_version": [

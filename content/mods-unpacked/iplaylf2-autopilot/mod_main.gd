@@ -2,8 +2,8 @@ extends Node
 
 signal enabled_changed(enabled)
 
-const MOD_ID := "IPlayLF2-Autopilot"
-const MAIN_EXTENSION := "res://mods-unpacked/IPlayLF2-Autopilot/extensions/main.gd"
+const MOD_ID := "iplaylf2-autopilot"
+const MAIN_EXTENSION := "res://mods-unpacked/iplaylf2-autopilot/extensions/main.gd"
 const MOD_OPTIONS_PATH := "/root/ModLoader/dami-ModOptions/ModsConfigInterface"
 const CUSTOM_CONFIG_NAME := "custom"
 const ENABLED_SETTING := "enabled"

@@ -4,13 +4,13 @@ extends Node
 # and player-owned state.
 
 const BattleMemory := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/knowledge/battle_memory.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/battle_memory.gd"
 )
 const PlayerStateObserver := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/observation/player_state_observer.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/player_state_observer.gd"
 )
 const VisibleWorldObserver := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/observation/visible_world_observer.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/visible_world_observer.gd"
 )
 
 var _main: Node

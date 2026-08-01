@@ -1,8 +1,8 @@
 extends "res://main.gd"
 
-const MOD_ID := "IPlayLF2-Autopilot"
+const MOD_ID := "iplaylf2-autopilot"
 const ObservationService := preload(
-	"res://mods-unpacked/IPlayLF2-Autopilot/bot/observation/observation_service.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/observation_service.gd"
 )
 
 var autopilot_observation_service: Node = null
