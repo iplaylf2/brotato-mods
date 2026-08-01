@@ -10,6 +10,9 @@ content/
 ├── .import/                    # 仅在 mod 包含自定义资源时存在
 └── mods-unpacked/
     └── IPlayLF2-Autopilot/
+        ├── README.md
+        ├── bot/
+        ├── extensions/
         ├── manifest.json
         └── mod_main.gd
 ```
@@ -21,9 +24,12 @@ content/
 
 ## Autopilot
 
-`IPlayLF2-Autopilot` 是自动战斗移动和本地 bot 玩家的开发槽位。目前仅包含 `manifest.json` 和
-最小入口脚本，用于验证 Mod Loader 加载。后续行为通过 `extensions/` 中的 script extension
-实现；`mod_main.gd` 只负责注册扩展和其他启动期集成。
+`IPlayLF2-Autopilot` 的目标是让 bot 依据玩家可见的外部战场信息、精确的自身状态、局内战斗记忆
+和预置机制知识，自主完成战斗移动。当前开发先完成信息采集与建模，确认观察契约后再进入移动控制。
+
+实现通过 `extensions/` 中的 script extension 接入原版主场景；`mod_main.gd` 只负责注册扩展。
+架构、观察接口、建模原则和当前覆盖范围见
+[Autopilot 开发说明](content/mods-unpacked/IPlayLF2-Autopilot/README.md)。
 
 修改原版行为前，先以目标游戏版本的恢复工程确认控制点。优先使用 Mod Loader script extension，
 避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。

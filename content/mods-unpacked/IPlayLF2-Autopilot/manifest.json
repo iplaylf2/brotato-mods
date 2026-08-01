@@ -2,7 +2,7 @@
   "name": "Autopilot",
   "namespace": "IPlayLF2",
   "version_number": "0.0.0",
-  "description": "Development scaffold for automated combat movement and local bot players.",
+  "description": "Observation and battle modeling for autonomous movement using player-available information.",
   "website_url": "",
   "dependencies": [],
   "extra": {
