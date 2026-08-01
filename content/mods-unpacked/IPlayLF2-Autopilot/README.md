@@ -8,6 +8,9 @@ Autopilot 的目标是让 bot 依据玩家可见的外部战场信息、精确�
 当前开发先完成信息采集与建模；观察契约完成并经过游戏内验证后，再进入移动控制。本文记录该契约、
 建模原则及实现边界，供维护和扩展 Autopilot 使用。
 
+Autopilot 默认关闭。订阅前置 [Mod Options](https://steamcommunity.com/sharedfiles/filedetails/?id=2944608034)
+后，可在游戏的 `设置 → Mods → Autopilot` 中开启；设置会立即作用于当前战斗，后续战斗也会沿用。
+
 ## 建模原则
 
 - 外部世界只能通过摄像机范围和战争迷雾内的可见信息进入观察。
@@ -19,7 +22,7 @@ Autopilot 的目标是让 bot 依据玩家可见的外部战场信息、精确�
 
 ## 观察接口
 
-主场景扩展在玩家生成后创建 `autopilot_observation_service`。调用：
+启用 Autopilot 后，主场景扩展在玩家生成后创建 `autopilot_observation_service`。调用：
 
 ```gdscript
 var observation = main.autopilot_observation_service.get_observation(player_index)
@@ -80,7 +83,8 @@ bot/
 ```
 
 依赖方向由观察层指向知识层。`observation_service.gd` 是唯一公共读取入口；知识层不依赖观察服务，
-机制族之间也不互相调用。
+机制族之间也不互相调用。`mod_main.gd` 持久化 Mod Options 配置并公开当前启用状态，主场景扩展只
+消费该状态来管理观察服务的生命周期。
 
 ## 当前验证状态
 

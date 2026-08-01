@@ -27,7 +27,8 @@ content/
 `IPlayLF2-Autopilot` 的目标是让 bot 依据玩家可见的外部战场信息、精确的自身状态、局内战斗记忆
 和预置机制知识，自主完成战斗移动。当前开发先完成信息采集与建模，确认观察契约后再进入移动控制。
 
-实现通过 `extensions/` 中的 script extension 接入原版主场景；`mod_main.gd` 只负责注册扩展。
+实现通过 `extensions/` 中的 script extension 接入原版主场景；`mod_main.gd` 注册扩展并管理
+Mod Options 配置。
 架构、观察接口、建模原则和当前覆盖范围见
 [Autopilot 开发说明](content/mods-unpacked/IPlayLF2-Autopilot/README.md)。
 

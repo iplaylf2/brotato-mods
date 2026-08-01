@@ -4,7 +4,9 @@
   "version_number": "0.0.0",
   "description": "Observation and battle modeling for autonomous movement using player-available information.",
   "website_url": "",
-  "dependencies": [],
+  "dependencies": [
+    "dami-ModOptions"
+  ],
   "extra": {
     "godot": {
       "authors": [
@@ -20,7 +22,19 @@
       "incompatibilities": [],
       "load_before": [],
       "tags": [],
-      "config_schema": {},
+      "config_schema": {
+        "title": "Autopilot",
+        "description": "Configure Autopilot.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "title": "Enable Autopilot",
+            "description": "Enable Autopilot for battle runs.",
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
       "description_rich": "",
       "image": null
     }
