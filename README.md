@@ -3,49 +3,23 @@
 面向 Brotato 的 Godot Mod Loader 多 mod 仓库。`content/` 保存可放入 Godot 项目或发行包的
 mod 内容。恢复工程和原始游戏资源仅用作本地开发参考，不属于仓库内容。
 
-## 仓库结构
+## 仓库约定
 
-```text
-content/
-├── .import/                    # 仅在 mod 包含自定义资源时存在
-└── mods-unpacked/
-    └── iplaylf2-autopilot/
-        ├── README.md
-        ├── bot/
-        ├── docs/               # 架构、玩家权限边界与原版机制审计
-        ├── extensions/
-        ├── manifest.json
-        └── mod_main.gd
-```
+`content/mods-unpacked/` 是 mod 源码入口。其下每个直接子目录都是一个可独立发行的
+mod，目录名必须与 `manifest.json` 中的 `{namespace}-{name}` 一致，并包含
+`mod_main.gd`。这些规则由仓库静态检查验证。
 
-每个 `content/mods-unpacked/{Namespace}-{ModName}` 目录都是一个独立 mod。新增 mod 时增加同级
-目录；`namespace` 与 `name` 组成的 ID 必须和目录名一致。`content/.import/` 只能包含本仓库 mod
-自定义资源对应的 Godot 3 导入产物，不能混入原版游戏资源。发行单个 mod 时，只包含该 mod 及其
-对应的导入产物。
+`content/.import/` 只用于本仓库 mod 自定义资源的 Godot 3 导入产物。发行单个 mod 时，
+只包含该 mod 及其对应的导入产物；本地恢复工程和原版游戏资源始终排除在仓库与发行包之外。
 
-## Autopilot
+## Mods
 
-`iplaylf2-autopilot` 依据玩家可见的外部战场信息、自身状态、局内观察记忆和预置机制知识进行滚动
-轨迹规划，并自动控制战斗移动。它的唯一控制输出是 `MovementBehavior.get_movement()` 返回的移动
-方向，不调用瞄准、攻击或武器方法。
-
-实现通过 `extensions/` 中的 script extension 接入原版主场景；`mod_main.gd` 注册扩展并管理
-Mod Options 配置。相关文档按读者任务划分：
-
-- 安装、启用方式和当前状态见
-  [Autopilot README](content/mods-unpacked/iplaylf2-autopilot/README.md)；
-- 玩家可用信息和控制权限见
-  [玩家权限边界](content/mods-unpacked/iplaylf2-autopilot/docs/fair-play.md)；
-- 观察契约、规划模型和模块责任见
-  [Autopilot 架构](content/mods-unpacked/iplaylf2-autopilot/docs/architecture.md)；
-- 目标版本的敌人与投射物覆盖证据见
-  [原版机制审计](content/mods-unpacked/iplaylf2-autopilot/docs/vanilla-enemy-mechanics.md)。
+- [Autopilot](content/mods-unpacked/iplaylf2-autopilot/README.md) — 根据玩家可合法获得的信息规划并控制战斗
+  移动；其 README 统一提供安装、当前状态与维护文档入口。
 
 修改原版行为前，先以目标游戏版本的恢复工程确认控制点。优先使用 Mod Loader script extension，
-避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。
-
-当前 manifest 以 PC 版 Brotato `1.1.15.4` 和 Godot 3 Mod Loader `6.3.0` 为目标。
-游戏更新后必须先验证兼容性，再修改对应版本字段。
+避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。具体目标版本和兼容状态由各
+mod 的 README 和 manifest 负责。
 
 ## 开发环境
 
