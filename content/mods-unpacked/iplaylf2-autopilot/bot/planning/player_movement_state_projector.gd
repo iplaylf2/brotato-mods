@@ -60,6 +60,7 @@ func project_runtime_stats(observation: Dictionary, is_moving: bool) -> Dictiona
 	projected.dodge_chance = clamp(
 		projected.dodge_chance + stat_deltas.get("dodge", 0.0) / 100.0, 0.0, 1.0
 	)
+	projected.move_speed = max(0.0, projected.move_speed + stat_deltas.get("speed", 0.0))
 	return projected
 
 

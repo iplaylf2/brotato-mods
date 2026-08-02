@@ -254,17 +254,41 @@ visible_world
 1. 预算政策根据敌人、投射物，以及友方作用源与它们形成的交互工作量分配搜索预算。
 2. 自适应导航图覆盖当前合法认知到的地图范围。近场径向步长由角色碰撞半径、一次控制周期可达距离和
    伤害加权交战能力共同推导；精细区域半径由预测窗可达距离、拾取范围及有效交战范围共同决定，之后环带
-   随距离逐步变疏。每个节点把当前/未来压力转换成非负通行成本，把材料、治疗、战略目标和节点处预期
-   火力输出转换成终端收益。
+   随距离逐步变疏。每个节点把当前与未来环境暴露转换成非负通行成本，把材料、治疗、战略目标以及
+   节点处的预期火力输出转换成终端收益。
 3. 导航图逐层执行 Bellman 最短路递推，得到累计 `path_cost`、父节点和 `route_value`，因而远场目标
-   必须支付中间压力带的代价。动作生成器离散化本次可提交的移动输入；零向量是不输入移动指令的动作。
+   必须支付中间暴露带的代价。动作生成器离散化本次可提交的移动输入；零向量是不输入移动指令的动作。
 4. 动作只会执行到下一次 0.1 秒重规划。用于风险比较的预测窗由最近敌人或弹道的预计交会时间决定，
-   限制在 0.18–0.7 秒；预测点近时密、远时疏，且只有首个 0.1 秒控制输入会被执行。
-5. 所有动作先预测压力物质导数、拾取、玩家效果规则、接近、跑图和动作状态结果。速度障碍模型直接在
-   速度空间计算玩家与敌人、弹体和队友移动圆盘的 TTC 风险；位置域投射物仍使用扫掠线段，避免高速
-   弹体穿过采样间隙。
-6. 粗评分最高的固定数量动作再进行自动武器攻击结果预测，效用模型输出逐项得分账本。
-7. 选择器从近优动作中带权选择；控制器提交所选移动向量，下一次规划重新读取环境。
+   限制在 0.18–0.7 秒；预测点近时密、远时疏。
+5. 所有动作先预测环境暴露、碰撞、拾取、玩家效果规则、接近、跑图和动作状态结果。碰撞风险取位置域
+   扫掠证据与速度空间 TTC 证据的较大值，同一次交会不会因两个检测器都发现它而相加；位置域投射物
+   使用扫掠线段，避免高速弹体穿过采样间隙。
+6. 筛选评分最高的固定数量动作再进行自动武器攻击结果预测。
+   `targets_in_weapon_range` 只在筛选时代理尚未
+   计算的攻击结果，包含武器预测的评分不再叠加该代理量。
+7. 选择器按候选分数跨度定义近优带并带权选择，因此给所有动作增加同一个常量不会改变选择；控制器提交
+   所选移动向量，下一次规划重新读取环境。
+
+### 决策基底
+
+进入最终动作选择的量按责任而不是按数据来源划分为最小基底：环境暴露、碰撞风险、已经实现的事件结果、
+局部未实现进度、预测窗外的导航终端值，以及控制连续性。一个事实可以被多个预测器观察，但只能由一个
+评分量拥有其决策含义：位置扫掠和 VO 都是碰撞检测证据，合并后才计分；实际拾取消耗品只形成
+`expected_recovery`，未触发拾取的靠近才形成 `recovery_approach_progress`；所有候选都相同的被动恢复只
+影响规划上下文，不进入动作结果；筛选代理量在武器结果出现后退出评分。
+
+效用模型把评分字段唯一分配给六个决策目标：`survival`、`recovery`、`economy`、`combat`、
+`navigation` 和 `control_stability`。运行时断言禁止同一字段进入两个目标；
+`objective_utility_breakdown` 公开目标级效用总账，`field_utility_breakdown` 保留字段级解释。
+敌人角色带来的附加后果都属于同一个 `combat` 目标，不冒充彼此正交的顶层目标。
+移动状态同样不是目标：材料周期收益归入 `economy`，
+护甲、闪避、武器属性和移动速度分别进入拥有其结果的生存、攻击与运动学预测器。
+
+三个时间区间也有唯一所有者：`MovementPlanningTiming` 定义 0.1 秒提交期、最长 0.7 秒局部动作预测期
+和最长 1.2 秒导航预测期。导航图在局部预测可达半径内的终端收益权重为零，只补充动作预测窗外的残余
+价值；局部可达的静态目标完全交给动作预测器，治疗和交战也只能从局部窗口结束后的持续价值开始计入。
+动作集合只离散化方向和零输入，不遗漏独立的“力度”轴：目标版本 `Unit.get_move_input()` 会把任何非零
+移动输入归一化后乘移动速度，非零向量的长度不会产生不同控制结果。
 
 ### 结果与诊断
 
@@ -272,67 +296,72 @@ visible_world
 
 | 字段 | 含义 |
 | --- | --- |
-| `material_pickup_value` | 动作对可见材料的拾取、吸附或接近价值 |
-| `recovery_pickup_value` | 结合缺失生命比例计算的消耗品拾取价值 |
+| `material_acquisition_value` | 动作对可见材料的拾取、吸附或接近形成的折算获取价值 |
+| `recovery_approach_progress` | 尚未触发拾取时，向可恢复消耗品靠近的局部进度；实际拾取不进入此字段 |
 | `expected_weapon_damage` | 自动武器对所有敌人的预期总伤害 |
 | `expected_effect_damage` | 玩家效果规则因拾取、治疗、受击或闪避产生的预期敌人伤害 |
-| `expected_recovery` | 候选动作的实际拾取、生命偷取、事件规则和被动恢复产生的预期恢复量 |
-| `expected_stat_gain_value` | 效果规则产生的永久或临时属性成长的期望归一化价值 |
+| `expected_recovery` | 候选动作的实际拾取、生命偷取和动作相关事件规则产生的预期恢复量 |
+| `expected_stat_change_value` | 效果规则产生的永久或临时属性变化的期望归一化价值 |
 | `expected_material_gain` | 暴击击杀等战斗事件直接产生的预期材料，不含地图上已有材料的拾取 |
-| `movement_survivability_delta` | 候选移动状态相对当前状态造成的护甲与闪避生存价值差量 |
+| `movement_damage_exposure_reduction` | 候选移动状态相对当前状态降低的护甲与闪避伤害暴露，按碰撞风险调制；负值表示暴露增加 |
 | `expected_producer_damage` | 自动武器对生产型敌人的预期伤害 |
 | `expected_loot_target_damage` | 自动武器对战利品目标的预期伤害 |
 | `ranged_source_suppression_value` | 预期伤害占最大生命的比例，再按稳定火力和死亡时清除投射物的收益加权 |
 | `producer_approach_progress` | 对生产型敌人的相对接近进度 |
 | `loot_target_approach_progress` | 对战利品目标的相对接近进度 |
 | `ranged_source_engagement_progress` | 缩短与远程压力源之间超出自有武器射程部分的进度 |
-| `targets_in_weapon_range` | 预测末端进入可用武器范围的敌人权重 |
 | `tree_attack_opportunity` | 进入树木攻击范围或向其接近的价值 |
-| `allied_zone_healing_support` | 动作预测处于友方治疗或治疗增益覆盖内的累计支援价值 |
-| `integrated_survival_pressure` | 敌对压力扣除合法减压后的沿途净生存压力 |
-| `mean_pressure_material_derivative` | 沿候选动作 `P(x(t),t)` 的平均物质导数 |
-| `velocity_obstacle_risk` | 候选速度落入敌人、弹体或队友碰撞锥的有界 TTC 风险 |
+| `integrated_allied_healing_support` | 动作沿途处于友方治疗或治疗增益覆盖内的累计支援暴露 |
+| `integrated_environmental_exposure` | 敌人接近、生成、远程火力、地图边缘和队友阻塞扣除对应减压后的沿途环境暴露；不含碰撞 |
+| `collision_risk` | 位置域峰值碰撞证据与速度空间 TTC 风险的较大值 |
 | `navigation_guidance_alignment` | 移动向量与导航图建议首步方向的一致程度 |
-| `roaming_progress` | 动作预测位移形成的跑图倾向 |
-| `standing_seconds`、`moving_seconds` | 对应移动状态在预测窗口内的持续时间 |
+| `roaming_progress` | 没有导航建议时，动作预测位移形成的探索后备值；存在导航终端时为零 |
+| `standing_seconds`、`moving_seconds` | 对应移动状态在预测窗口内的持续时间，只承载该状态的周期材料收益 |
 | `heading_continuity` | 新旧移动方向的点积 |
 
 诊断字段解释评分来源，但不直接进入动作总分：
 
 | 字段 | 含义 |
 | --- | --- |
-| `enemy_proximity_pressure` | 敌人距离与记忆不确定性形成的有界累计压力 |
-| `projectile_pressure` | 未被先行拦截的敌方投射物扫掠压力 |
-| `spawn_pressure` | 靠近可见敌对生成警告的累计压力 |
-| `edge_pressure` | 靠近已观察地图边缘的累计压力 |
-| `contact_pressure` | 按实体物理半径计算的动作预测峰值接触压力 |
-| `ranged_source_pressure` | 暴露在已确认远程压力源范围内的累计压力 |
-| `allied_body_pressure` | 多人模式下动作与其他玩家实体碰撞产生的阻塞压力 |
-| `allied_zone_pressure_relief` | 构筑物或战斗宠物对相关敌人环境压力的原始减压量 |
-| `allied_projectile_interception` | 友方角色先于玩家截获威胁弹道后形成的累计投射物减压 |
-| `integrated_hostile_pressure` | 相对压力政策加权后的沿途总敌对压力 |
-| `integrated_relief_pressure` | 受对应敌压上限约束的沿途总减压 |
-| `peak_survival_pressure` | 动作预测中任一采样点的峰值净生存压力 |
-| `initial_survival_pressure` | 候选动作起点的净生存压力 |
-| `terminal_survival_pressure` | 候选动作预测终点的净生存压力 |
+| `integrated_enemy_proximity_pressure` | 敌人距离与记忆不确定性形成的有界累计压力 |
+| `integrated_projectile_proximity_pressure` | 敌方投射物位置域扫掠形成的累计邻近压力 |
+| `peak_projectile_contact_risk` | 位置域扫掠确认的峰值投射物接触风险 |
+| `integrated_spawn_pressure` | 靠近可见敌对生成警告的累计压力 |
+| `integrated_edge_pressure` | 靠近已观察地图边缘的累计压力 |
+| `peak_enemy_contact_risk` | 按实体物理半径计算的峰值敌人接触风险 |
+| `integrated_ranged_source_pressure` | 暴露在已确认远程压力源范围内的累计压力 |
+| `integrated_allied_body_pressure` | 多人模式下靠近其他玩家实体形成的累计阻塞压力 |
+| `integrated_allied_pressure_relief` | 构筑物或战斗宠物对相关敌人环境压力的累计原始减压量 |
+| `integrated_projectile_interception_relief` | 友方角色先于玩家截获威胁弹道后形成的累计投射物减压 |
+| `integrated_hostile_exposure` | 按暴露政策加权后的沿途总敌对暴露 |
+| `integrated_exposure_relief` | 受对应敌压上限约束的沿途总减压 |
+| `peak_environmental_pressure` | 动作预测中任一采样点的峰值环境暴露 |
+| `peak_path_collision_risk` | 位置域采样和扫掠得到的峰值碰撞风险 |
+| `initial_environmental_pressure` | 候选动作起点的环境暴露 |
+| `terminal_environmental_pressure` | 候选动作预测终点的环境暴露 |
+| `mean_environmental_pressure_derivative` | 沿候选动作的平均环境暴露物质导数 |
+| `velocity_obstacle_risk` | 候选速度落入敌人、弹体或队友碰撞锥的有界 TTC 证据 |
 | `enemy_velocity_obstacle_risk` | 与敌人交会的 VO 风险 |
 | `projectile_velocity_obstacle_risk` | 与敌方投射物交会的 VO 风险 |
 | `ally_velocity_obstacle_risk` | 与其他玩家交会的 VO 风险 |
 | `minimum_time_to_collision` | 当前候选速度下最早预测交会时间 |
 | `candidate_velocity` | 结合移动输入与推断击退衰减后的候选平均速度 |
-| `pressure_trace` | 每个预测时刻的位置、原始通道、敌压、带负号减压和净压 |
+| `targets_in_weapon_range` | 预测末端进入可用武器范围的敌人权重；只在筛选时作为评分代理，包含武器预测时仅供诊断 |
+| `weapon_prediction_included` | 标明结果是否包含武器攻击预测，决定筛选代理是否有效 |
+| `battlefield_exposure_trace` | 每个预测时刻的位置、原始通道、敌对暴露、减压、环境压力和路径碰撞风险 |
 | `expected_attack_hits` | 武器几何预测得到的预期命中数 |
 | `expected_recovery_events` | 玩家效果规则预测得到的恢复事件数 |
 | `expected_kill_weight` | 预期伤害相对敌人最大生命形成的保守击杀进度 |
 | `expected_critical_kill_weight` | 上述进度按武器暴击率折算的暴击击杀证据 |
 
 这些量是可解释的启发式结果，不都具有相同物理单位。压力通道先在各自语义内归一化和有界叠加，再由
-压力政策转换成统一净压；拾取、伤害、战略接近和移动机制仍作为压力场之外的目标效用。生产者和战利品
-目标伤害是总伤害的重叠子集，并非互斥分类。
+暴露政策分别形成环境暴露与碰撞证据；拾取、伤害、战略接近和移动机制仍作为暴露场之外的目标效用。
+生产者、战利品目标和远程压力源是可重叠后果而不是正交敌人分类：基础伤害只计一次，各角色字段仅表达
+该伤害额外消除的生产、战利品或远程火力后果。因此新增角色必须证明有独立后果，不能只换一个敌人标签。
 
-### 压力与导航价值
+### 暴露与导航价值
 
-底层压力 `P(x,t)` 是位置和时间上的连续启发式运行成本，不声称是物理压力、受伤概率或完整价值函数。
+底层环境暴露 `P(x,t)` 是位置和时间上的连续启发式运行成本，不声称是物理压力、受伤概率或完整价值函数。
 `NavigationValueGraphBuilder` 在其上构造并求解自适应状态成本图。已知四侧边界后，远场环带覆盖整张
 地图；边界尚未发现时，只覆盖可见范围和已观察实体记录形成的认知包络，不把未知区域视为已知安全区。
 
@@ -342,16 +371,18 @@ visible_world
 与伤害，因此走位会比较实际火力收益。
 
 远场角向和径向单元随距离扩大，用于选择大方向而非精确避弹。动作评价仍直接查询连续场，避免远场粗
-网格污染局部碰撞判断。规划结果同时公开推导出的 `near_node_spacing`、`local_detail_radius`、
+网格污染局部碰撞判断。局部预测半径内的节点仍参与路径成本，但其终端收益为零；跨出该半径后终端收益
+才逐步生效。规划结果同时公开推导出的 `near_node_spacing`、`local_detail_radius`、`local_prediction_radius`、
 `control_distance`、`engagement_capacity` 和 `current_engagement_estimate`，便于验证空间尺度是否合理；
 每个节点的 `engagement_estimate` 则记录该位置的预计攻击数、命中数和伤害。
 
-每个固定地图节点保存当前压力、预测压力和近似欧拉导数 `∂P/∂t`。候选动作另外计算
+每个固定地图节点保存当前环境暴露、预测环境暴露和近似欧拉导数 `∂P/∂t`。候选动作另外诊断
 `[P(x(T),T)-P(x(0),0)]/T`，它是沿动作的平均物质导数，对应 `∂P/∂t + v·∇P` 的路径平均。预测时刻
 按节点距离自适应，并最多外推 1.2 秒；这描述场如何变化，不表示角色承诺移动到该节点。各通道的正负
-关系受语义约束：友方火力只能抵消敌人接近、生成和远程火力形成的环境压力；投射物拦截只能抵消
-拦截时刻之后该弹的反事实弹道压力。任何减压都不能消除实体接触、地图边缘或队友阻塞，也不能超过
-当时对应敌压。因此，友方作用区不能产生无上限的正收益。治疗和治疗增益是独立的恢复机会效用，不会
+关系受语义约束：友方火力只能抵消当前敌人接近和远程火力形成的环境暴露，不能抵消尚未生成的警告；
+投射物拦截只能抵消拦截时刻之后该弹的反事实弹道压力。
+任何减压都不能消除实体接触、地图边缘或队友阻塞，也不能超过当时对应敌压。
+因此，友方作用区不能产生无上限的正收益。治疗和治疗增益是独立的恢复机会效用，不会
 抹掉已经预测到的伤害压力。
 
 ### 动态效用
@@ -366,10 +397,10 @@ visible_world
 危险始终另行计入。因而规划器可以在可控时创造自动攻击机会，也可以在接敌成本超过收益时拉开距离或
 选择更安全的侧向动作。
 
-效用模型对 `integrated_survival_pressure` 和 `mean_pressure_material_derivative` 施加平滑运行成本；
-`velocity_obstacle_risk` 表示动态交会的尾部风险，避免同一近碰在峰值压力中重复计分。VO 使用
-连续 TTC 风险而不是硬排除集合，因此高收益且风险可控的主动承伤动作仍可参与比较。原始压力通道和峰值
-压力只保留为诊断账本。
+效用模型只对 `integrated_environmental_exposure` 和统一的 `collision_risk` 施加生存成本。前者不含实体
+或弹体碰撞；后者取位置域 `peak_path_collision_risk` 与速度空间 `velocity_obstacle_risk` 的较大值，而不是相加。
+VO 使用连续 TTC 风险而不是硬排除集合，因此高收益且风险可控的主动承伤动作仍可参与比较。环境暴露
+导数和两个碰撞检测器的原始结果只保留为诊断账本。
 
 友方作用区同样进入公共效用账本，而不切换到独立的“守塔”或“跟宠物”模式。炮塔和战斗宠物只有在
 预测敌人进入其作用范围且仍对玩家形成近身压力时才产生减压价值；猫炮还要求玩家进入其可见激活区。
@@ -391,14 +422,14 @@ visible_world
 + (敌人数 × 友方作用源数 + 投射物数 × 有效拦截区数) / 8
 ```
 
-| 等级 | 规划负载 | 基础方向 | 时间采样 | 详细预测上限 |
+| 等级 | 规划负载 | 基础方向 | 时间采样 | 武器预测上限 |
 | --- | ---: | ---: | ---: | ---: |
 | 正常 | `< 140` | 16 | 6 | 10 |
 | 繁忙 | `140–319` | 12 | 4 | 6 |
 | 极端 | `≥ 320` | 8 | 3 | 4 |
 
-压力场中敌人与友方作用源、投射物与有效拦截区存在交互项，其余粗评成本随动作数、采样数和实体数线性增长；
-详细武器预测只作用于固定短名单。`search_budget` 同时公开原始威胁计数、作用源数、交互负载和总规划
+暴露场中敌人与友方作用源、投射物与有效拦截区存在交互项，其余筛选成本随动作数、采样数和实体数线性增长；
+武器预测只作用于固定短名单。`search_budget` 同时公开原始威胁计数、作用源数、交互负载和总规划
 负载。
 
 基础方向之外加入导航价值图的最优首步方向，并单独加入零移动输入。单步动作空间不需要模拟
@@ -409,10 +440,10 @@ visible_world
 
 ## 模块责任
 
-| 模块 | 责任 | 对外表面 |
+| 模块 | 责任 | 公共边界 |
 | --- | --- | --- |
 | `bot/control` | 安排重规划、保存当前计划，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`AutopilotMovementBehavior` 是唯一控制输出 |
-| `bot/planning` | 管理导航价值图、运动学、速度障碍、动作搜索、效用评分和近优选择 | `MovementPlanner.plan()`；其余模块是规划包内部协作者 |
+| `bot/planning` | 管理导航价值图、运动学、速度障碍风险、动作搜索、效用评分和近优选择 | `MovementPlanner.plan()`；其余模块是规划包内部协作者 |
 | `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.get_observation()` |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
 
@@ -447,11 +478,13 @@ visible_world
 - `bot/knowledge/allies/ally_mechanic_compiler.gd` 与
   `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
 - `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
-  `bot/planning/weapon_engagement_model.gd` 统一定义粗粒度交战能力，
+  `bot/planning/weapon_engagement_model.gd` 统一定义聚合交战能力，
   `bot/planning/weapon_attack_predictor.gd` 负责短名单动作的目标几何。
-- `bot/planning/battlefield_pressure_model.gd` 拥有敌压、位置约束、友方减压、挡弹时序、压力组合和动作压力
-  诊断；`bot/planning/navigation_value_graph_builder.gd` 构造多尺度状态图并求解 Bellman 累计价值。
-- `bot/planning/velocity_obstacle_model.gd` 计算局部速度空间交会风险；
+- `bot/planning/battlefield_exposure_model.gd` 拥有环境暴露、位置域碰撞风险、友方减压、挡弹时序和动作诊断；
+  `bot/planning/navigation_value_graph_builder.gd` 只在局部动作窗外提供终端价值并求解 Bellman 累计价值，
+  三段时间边界由 `bot/planning/movement_planning_timing.gd` 唯一定义。
+- `bot/planning/velocity_obstacle_risk_model.gd` 计算局部速度空间交会风险，最终碰撞风险由动作结果预测器与位置域
+  证据合并；
   `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 - `bot/planning/movement_outcome_predictor.gd` 预测动作结果，`bot/planning/movement_utility_model.gd` 把结果转换为
   效用。`bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何，
@@ -467,10 +500,10 @@ visible_world
 ## 算法依据与适用边界
 
 - Khatib 的人工势场提供了实时局部避障的运行成本思想，但普通吸引/排斥势场存在局部极小值问题，因此
-  本实现不直接沿压力梯度控制。
+  本实现不直接沿暴露梯度控制。
 - Fiorini–Shiller 的 Velocity Obstacle 与原版“输入直接决定平移速度”的一阶动力学匹配，用于动态
   圆盘交会；玩家可主动承伤，所以实现采用 TTC 连续松弛而不是硬禁用所有碰撞锥内速度。
-- Dijkstra/Bellman 最短路原则用于在自适应分层图上累计中途成本，避免只看目标节点压力。
+- Dijkstra/Bellman 最短路原则用于在自适应分层图上累计中途成本，避免只看目标节点的暴露。
 - 滚动时域控制负责组合短期运行成本、战斗收益和导航终端价值；离散动作搜索是受限预算的 MPC
   近似，不提供机器人控制意义上的稳定性或安全证明。
 
@@ -484,7 +517,7 @@ Eikonal/Fast Marching 工作](https://pmc.ncbi.nlm.nih.gov/articles/PMC39986/)�
 
 ## 验证状态
 
-- 压力通道和动态权重尚未由实际伤害、无敌帧与游戏内动作回放完成校准。
+- 原始压力通道、合成暴露和动态权重尚未由实际伤害、无敌帧与游戏内动作回放完成校准。
 - 运动估计的平滑、限幅和衰减参数尚未完成游戏内校准。
 - 负载等级仍是实体计数启发式，尚未使用 Godot 性能监视器或实测帧时间。
 - 观察、规划和控制尚未完成游戏内加载与行为验证。

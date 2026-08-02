@@ -37,7 +37,7 @@ func project(observation: Dictionary) -> Dictionary:
 
 	return {
 		"event_outcome_channels": event_outcome_channels,
-		"movement_state_value_rates": _movement_state_value_rates(rules, observation),
+		"movement_state_economy_rates": _movement_state_economy_rates(rules, observation),
 		"recovery":
 		{
 			"available": _project_recovery(rules, "healing", 1.0) > 0.0,
@@ -74,7 +74,7 @@ func _project_recovery(rules: Array, event: String, base_value: float) -> float:
 	return max(0.0, result)
 
 
-func _movement_state_value_rates(rules: Array, observation: Dictionary) -> Dictionary:
+func _movement_state_economy_rates(rules: Array, observation: Dictionary) -> Dictionary:
 	var result := {"standing": 0.0, "moving": 0.0}
 	for rule in rules:
 		if rule.event != "movement_state" or not rule.condition.has("is_moving"):
@@ -84,8 +84,6 @@ func _movement_state_value_rates(rules: Array, observation: Dictionary) -> Dicti
 			if consequence.target == "materials":
 				var coefficient: float = consequence.get("target_coefficient", 0.0)
 				value += max(1.0, observation.player_state.resources.materials * coefficient)
-			elif consequence.operation == "add":
-				value += max(0.0, consequence.get("value", 0.0)) * 0.04
 		if rule.condition.is_moving:
 			result.moving += value
 		else:

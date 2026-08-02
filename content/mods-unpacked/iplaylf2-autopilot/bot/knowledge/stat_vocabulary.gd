@@ -3,7 +3,7 @@ extends Reference
 # Defines stat names shared by effect rules and player-owned weapon attack models.
 
 
-func get_name(stat_hash: int) -> String:
+func get_stat_name(stat_hash: int) -> String:
 	var names := {
 		Keys.stat_max_hp_hash: "max_health",
 		Keys.stat_damage_hash: "percent_damage",

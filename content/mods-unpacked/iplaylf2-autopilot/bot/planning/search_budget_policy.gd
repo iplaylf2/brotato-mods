@@ -1,6 +1,6 @@
 extends Reference
 
-# Maps estimated pressure/weapon interaction work to a bounded search budget.
+# Maps estimated exposure and weapon-prediction work to a bounded search budget.
 # This count-based policy can later be replaced by measured frame-time feedback.
 
 const DEFAULT_DIRECTION_COUNT := 16
@@ -36,7 +36,7 @@ func allocate(observation: Dictionary) -> Dictionary:
 				"direction_count": REDUCED_DIRECTION_COUNT,
 				"forecast_sample_count": 3,
 				"graph_angular_resolution_scale": 0.5,
-				"detailed_prediction_limit": 4,
+				"weapon_prediction_limit": 4,
 			},
 			diagnostics
 		)
@@ -47,7 +47,7 @@ func allocate(observation: Dictionary) -> Dictionary:
 				"direction_count": BUSY_DIRECTION_COUNT,
 				"forecast_sample_count": 4,
 				"graph_angular_resolution_scale": 0.75,
-				"detailed_prediction_limit": 6,
+				"weapon_prediction_limit": 6,
 			},
 			diagnostics
 		)
@@ -57,7 +57,7 @@ func allocate(observation: Dictionary) -> Dictionary:
 			"direction_count": DEFAULT_DIRECTION_COUNT,
 			"forecast_sample_count": 6,
 			"graph_angular_resolution_scale": 1.0,
-			"detailed_prediction_limit": 10,
+			"weapon_prediction_limit": 10,
 		},
 		diagnostics
 	)

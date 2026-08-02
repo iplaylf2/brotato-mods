@@ -6,6 +6,11 @@ extends Reference
 # Vanilla applies linear_interpolate(Vector2.ZERO, 0.1) once per 60 Hz tick:
 # -60 * ln(0.9) = 6.32163094 per second.
 const KNOCKBACK_DECAY_RATE := 6.32163094
+const PlayerMovementStateProjector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
+)
+
+var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 
 
 func predict_displacement(
@@ -26,10 +31,17 @@ func predict_average_velocity(
 	return predict_displacement(observation, movement, time_seconds) / max(0.01, time_seconds)
 
 
+func predict_command_speed(observation: Dictionary, is_moving: bool) -> float:
+	if not is_moving:
+		return 0.0
+	var projected: Dictionary = _movement_state_projector.project_runtime_stats(observation, true)
+	return projected.move_speed
+
+
 func _command_velocity(observation: Dictionary, movement: Vector2) -> Vector2:
 	if movement == Vector2.ZERO:
 		return Vector2.ZERO
-	return movement.normalized() * observation.player_state.runtime_stats.move_speed
+	return movement.normalized() * predict_command_speed(observation, true)
 
 
 func _observed_disturbance(observation: Dictionary) -> Vector2:

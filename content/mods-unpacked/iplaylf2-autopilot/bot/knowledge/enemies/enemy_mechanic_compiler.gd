@@ -7,32 +7,32 @@ extends Reference
 const FALLBACK_PRESSURE_INTENSITY := 0.5
 const MAX_PRESSURE_INTENSITY := 4.0
 
-var _attack_profiles_by_archetype := {}
+var _attack_behaviors_by_archetype := {}
 
 
 func compile(enemy: Node) -> Dictionary:
 	var archetype := ""
 	if "enemy_id" in enemy:
 		archetype = enemy.enemy_id
-	var attack_profile: Dictionary
-	if not archetype.empty() and _attack_profiles_by_archetype.has(archetype):
-		attack_profile = _attack_profiles_by_archetype[archetype].duplicate(true)
+	var attack_behavior: Dictionary
+	if not archetype.empty() and _attack_behaviors_by_archetype.has(archetype):
+		attack_behavior = _attack_behaviors_by_archetype[archetype].duplicate(true)
 	else:
-		attack_profile = _compile_attack_profile(enemy)
+		attack_behavior = _compile_attack_behavior(enemy)
 		if not archetype.empty():
-			_attack_profiles_by_archetype[archetype] = attack_profile.duplicate(true)
+			_attack_behaviors_by_archetype[archetype] = attack_behavior.duplicate(true)
 	return {
-		"attack_behavior": attack_profile,
+		"attack_behavior": attack_behavior,
 		# Maximum health is a conservative durability prior; current hidden health
 		# is deliberately not read.
 		"durability": {"maximum_health": _get_maximum_health(enemy)},
 	}
 
 
-func _compile_attack_profile(enemy: Node) -> Dictionary:
+func _compile_attack_behavior(enemy: Node) -> Dictionary:
 	if not "_all_attack_behaviors" in enemy:
 		return (
-			_unconfirmed_profile()
+			_unconfirmed_attack_behavior()
 			if not _has_attached_projectiles(enemy)
 			else _compile_attached_projectiles(enemy)
 		)
@@ -146,7 +146,7 @@ func _append_unique(values: Array, value: String) -> void:
 		values.push_back(value)
 
 
-func _unconfirmed_profile() -> Dictionary:
+func _unconfirmed_attack_behavior() -> Dictionary:
 	return {
 		"kind": "unconfirmed",
 		"confidence": 0.0,

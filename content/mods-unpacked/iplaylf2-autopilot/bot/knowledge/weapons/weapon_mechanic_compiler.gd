@@ -248,7 +248,7 @@ func _adapt_scaling(scaling_stats: Array) -> Array:
 	for scaling in scaling_stats:
 		if scaling.size() < 2:
 			continue
-		var stat_name := _stat_vocabulary.get_name(scaling[0])
+		var stat_name := _stat_vocabulary.get_stat_name(scaling[0])
 		if stat_name.empty():
 			continue
 		result.push_back({"stat": stat_name, "coefficient": scaling[1]})

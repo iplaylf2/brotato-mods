@@ -124,7 +124,7 @@ func _append_consumable_rules(rules: Array, effects: Dictionary, player_index: i
 	for entry in effects[Keys.decaying_stats_on_consumable_hash]:
 		if entry.size() < 3:
 			continue
-		var stat_name := _stat_vocabulary.get_name(entry[0])
+		var stat_name := _stat_vocabulary.get_stat_name(entry[0])
 		if stat_name.empty():
 			continue
 		rules.push_back(
@@ -178,7 +178,7 @@ func _append_trait_stat_rules(rules: Array, entries: Array, trait: String) -> vo
 	for entry in entries:
 		if entry.size() < 3:
 			continue
-		var stat_name := _stat_vocabulary.get_name(entry[0])
+		var stat_name := _stat_vocabulary.get_stat_name(entry[0])
 		if stat_name.empty():
 			continue
 		rules.push_back(
@@ -241,7 +241,7 @@ func _enemy_delivery(anchor_on_event_entity: bool, radius: float, capacity: floa
 func _append_consumable_stat_rule(rules: Array, entry: Array, duration_seconds: float) -> void:
 	if entry.size() < 2:
 		return
-	var stat_name := _stat_vocabulary.get_name(entry[0])
+	var stat_name := _stat_vocabulary.get_stat_name(entry[0])
 	if stat_name.empty():
 		return
 	var consequence := {

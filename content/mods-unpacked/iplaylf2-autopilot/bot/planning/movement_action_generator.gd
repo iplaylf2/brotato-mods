@@ -4,11 +4,11 @@ extends Reference
 # Forecast duration follows observed encounter timing; it is not an execution
 # commitment. Zero velocity is the origin of the same action space, not a mode.
 
-const MIN_FORECAST_SECONDS := 0.18
-const DEFAULT_FORECAST_SECONDS := 0.45
-const MAX_FORECAST_SECONDS := 0.7
 const ENCOUNTER_MARGIN := 120.0
 const PLAYER_RADIUS := 24.0
+const MovementPlanningTiming := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
+)
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
@@ -48,7 +48,7 @@ func _make_action(
 	var samples := []
 	for step in range(1, sample_count + 1):
 		# Quadratic spacing is dense near the actually executed 0.1 s interval and
-		# coarse at the speculative end of the forecast.
+		# sparse at the speculative end of the forecast.
 		var fraction: float = pow(float(step) / float(sample_count), 1.55)
 		var time := forecast_seconds * fraction
 		samples.push_back(
@@ -103,8 +103,12 @@ func _forecast_window(observation: Dictionary) -> float:
 			)
 		)
 	if nearest_encounter == INF:
-		return DEFAULT_FORECAST_SECONDS
-	return clamp(nearest_encounter + 0.12, MIN_FORECAST_SECONDS, MAX_FORECAST_SECONDS)
+		return MovementPlanningTiming.LOCAL_FORECAST_DEFAULT_SECONDS
+	return clamp(
+		nearest_encounter + 0.12,
+		MovementPlanningTiming.LOCAL_FORECAST_MIN_SECONDS,
+		MovementPlanningTiming.LOCAL_FORECAST_MAX_SECONDS
+	)
 
 
 func _encounter_time(position: Vector2, velocity: Vector2, threat_radius: float) -> float:

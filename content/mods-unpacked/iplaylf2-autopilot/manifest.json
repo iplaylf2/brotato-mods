@@ -2,7 +2,7 @@
   "name": "autopilot",
   "namespace": "iplaylf2",
   "version_number": "0.0.0",
-  "description": "Automatically controls battle movement using fair-play observations and pressure-aware rolling planning.",
+  "description": "Automatically controls battle movement using fair-play observations and exposure-aware rolling planning.",
   "website_url": "",
   "dependencies": [
     "dami-ModOptions"
@@ -24,7 +24,7 @@
       "tags": [],
       "config_schema": {
         "title": "Autopilot",
-        "description": "Configure automatic battle movement.",
+        "description": "Configure how Autopilot controls battle movement.",
         "type": "object",
         "properties": {
           "enabled": {

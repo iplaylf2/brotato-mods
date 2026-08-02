@@ -30,11 +30,11 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 
 
 func build_profile(evidence: Dictionary) -> Dictionary:
-	var attack_profile: Dictionary = evidence.stable_mechanic_profile.attack_behavior.duplicate(
+	var attack_behavior: Dictionary = evidence.stable_mechanic_profile.attack_behavior.duplicate(
 		true
 	)
-	if attack_profile.kind == "unconfirmed" and evidence.ranged_attack_inferred:
-		attack_profile = {
+	if attack_behavior.kind == "unconfirmed" and evidence.ranged_attack_inferred:
+		attack_behavior = {
 			"kind": "ranged_projectile_inferred",
 			"confidence": 0.9,
 			"knowledge_source": "observed_emission",
@@ -43,9 +43,9 @@ func build_profile(evidence: Dictionary) -> Dictionary:
 			"pressure_intensity": 1.0,
 			"delivery_modes": ["observed_projectile"],
 		}
-	var is_ranged_source: bool = attack_profile.get("creates_projectile_pressure", false)
+	var is_ranged_source: bool = attack_behavior.get("creates_projectile_pressure", false)
 	return {
-		"attack_behavior": attack_profile,
+		"attack_behavior": attack_behavior,
 		"durability": evidence.stable_mechanic_profile.durability.duplicate(true),
 		"movement_behavior": _classify_movement(evidence),
 		"strategic_roles":

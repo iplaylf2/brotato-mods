@@ -103,7 +103,7 @@ func _append_temporary_stat_rules(rules: Array, entries: Array, event: String) -
 	for entry in entries:
 		if entry.size() < 2:
 			continue
-		var stat_name := _stat_vocabulary.get_name(entry[0])
+		var stat_name := _stat_vocabulary.get_stat_name(entry[0])
 		if stat_name.empty():
 			continue
 		rules.push_back(

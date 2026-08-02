@@ -28,10 +28,12 @@ func build_context(observation: Dictionary) -> Dictionary:
 	var survivability_credit := _survivability_credit(observation)
 	var risk_tolerance := clamp((health_ratio - 0.25) / 0.75 + survivability_credit, 0.0, 1.0)
 	var passive_health_loss_rate: float = max(0.0, -player_rule_projection.survival.health_rate)
+	var passive_recovery_rate: float = max(0.0, player_rule_projection.survival.recovery_rate)
 	risk_tolerance = clamp(
 		(
 			risk_tolerance
 			- passive_health_loss_rate / max(1.0, observation.player_state.health.maximum)
+			+ passive_recovery_rate / max(1.0, observation.player_state.health.maximum)
 		),
 		0.0,
 		1.0
@@ -43,7 +45,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 		lerp(0.25, 1.0, risk_tolerance)
 		* lerp(1.0, 0.35, projectile_density)
 	)
-	var movement_state_value_rates: Dictionary = player_rule_projection.movement_state_value_rates
+	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
 	var fatal_on_unprotected_hit := (
 		player_rule_projection.survival.terminal_on_positive_damage
 		and observation.player_state.runtime_stats.hit_protection <= 0
@@ -73,62 +75,85 @@ func build_context(observation: Dictionary) -> Dictionary:
 	)
 
 	return {
-		"weights":
+		"objective_weights":
 		{
-			"material_pickup_value": 1.0 + 1.6 * wave_progress,
-			"recovery_pickup_value":
-			lerp(10.0, 0.8, health_ratio) if recovery_profile.consumable_available else 0.0,
-			"expected_weapon_damage":
-			0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
-			"expected_effect_damage":
-			0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
-			"expected_recovery": lerp(3.0, 0.15, health_ratio),
-			"expected_stat_gain_value": 0.8,
-			"expected_material_gain": 1.0 + 1.6 * wave_progress,
-			"movement_survivability_delta": 20.0,
-			"expected_producer_damage": 0.045 * wave_time_remaining_ratio * producer_multiplier,
-			"expected_loot_target_damage": 0.055 * (1.0 + wave_progress) * loot_target_multiplier,
-			"ranged_source_suppression_value":
-			10.0 * wave_time_remaining_ratio * ranged_source_multiplier,
-			"producer_approach_progress": 5.0 * wave_time_remaining_ratio * producer_multiplier,
-			"loot_target_approach_progress": 4.0 * (1.0 + wave_progress) * loot_target_multiplier,
-			"ranged_source_engagement_progress":
-			6.0 * wave_time_remaining_ratio * ranged_source_multiplier * ranged_engagement_appetite,
-			"targets_in_weapon_range": 0.15,
-			"tree_attack_opportunity": _tree_weight(player_rule_projection, wave_progress),
-			"integrated_survival_pressure":
-			(
-				-lerp(20.0, 5.0 - 2.0 * contact_combat_appetite, risk_tolerance)
-				* lerp(1.0, 0.65, wave_progress)
-			),
-			"mean_pressure_material_derivative": -lerp(5.0, 1.5, risk_tolerance),
-			"velocity_obstacle_risk":
-			(
-				-(160.0 if fatal_on_unprotected_hit else lerp(70.0, 28.0, risk_tolerance))
-				* lerp(1.0, 0.45, contact_combat_appetite)
-				* lerp(1.0, 0.75, wave_progress)
-			),
-			"allied_zone_healing_support":
-			lerp(14.0, 1.5, health_ratio) if recovery_profile.available else 0.0,
-			"roaming_progress": 1.2 * wave_time_remaining_ratio,
-			"standing_seconds": movement_state_value_rates.standing,
-			"moving_seconds": movement_state_value_rates.moving,
-			"heading_continuity": 0.25,
-			"navigation_guidance_alignment": 4.0,
+			"survival":
+			{
+				"integrated_environmental_exposure":
+				(
+					-lerp(20.0, 5.0 - 2.0 * contact_combat_appetite, risk_tolerance)
+					* lerp(1.0, 0.65, wave_progress)
+				),
+				"collision_risk":
+				(
+					-(160.0 if fatal_on_unprotected_hit else lerp(70.0, 28.0, risk_tolerance))
+					* lerp(1.0, 0.45, contact_combat_appetite)
+					* lerp(1.0, 0.75, wave_progress)
+				),
+				"movement_damage_exposure_reduction": 20.0,
+			},
+			"recovery":
+			{
+				"recovery_approach_progress":
+				lerp(10.0, 0.8, health_ratio) if recovery_profile.consumable_available else 0.0,
+				"expected_recovery": lerp(3.0, 0.15, health_ratio),
+				"integrated_allied_healing_support":
+				lerp(14.0, 1.5, health_ratio) if recovery_profile.available else 0.0,
+			},
+			"economy":
+			{
+				"material_acquisition_value": 1.0 + 1.6 * wave_progress,
+				"expected_stat_change_value": 0.8,
+				"expected_material_gain": 1.0 + 1.6 * wave_progress,
+				"tree_attack_opportunity": _tree_weight(player_rule_projection, wave_progress),
+				"standing_seconds": movement_state_economy_rates.standing,
+				"moving_seconds": movement_state_economy_rates.moving,
+			},
+			"combat":
+			{
+				"expected_weapon_damage":
+				0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
+				"expected_effect_damage":
+				0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
+				"expected_producer_damage": 0.045 * wave_time_remaining_ratio * producer_multiplier,
+				"expected_loot_target_damage":
+				0.055 * (1.0 + wave_progress) * loot_target_multiplier,
+				"ranged_source_suppression_value":
+				10.0 * wave_time_remaining_ratio * ranged_source_multiplier,
+				"producer_approach_progress": 5.0 * wave_time_remaining_ratio * producer_multiplier,
+				"loot_target_approach_progress":
+				4.0 * (1.0 + wave_progress) * loot_target_multiplier,
+				"ranged_source_engagement_progress":
+				(
+					6.0
+					* wave_time_remaining_ratio
+					* ranged_source_multiplier
+					* ranged_engagement_appetite
+				),
+			},
+			"navigation":
+			{
+				"roaming_progress": 1.2 * wave_time_remaining_ratio,
+				"navigation_guidance_alignment": 4.0,
+			},
+			"control_stability": {"heading_continuity": 0.25},
 		},
+		# Screening proxies stand in for outcomes omitted before weapon prediction.
+		# They are not additional utility once that prediction supplies them.
+		"screening_proxy_weights": {"combat": {"targets_in_weapon_range": 0.15}},
 		"selection_temperature":
 		lerp(0.03, 0.12, risk_tolerance) * lerp(0.7, 1.2, wave_time_remaining_ratio),
-		"pressure_policy":
+		"exposure_policy":
 		{
 			"enemy_proximity": 0.7,
-			"contact": 2.2,
-			"projectile": 1.4,
-			"spawn": 0.8,
-			"ranged": 0.6 * lerp(1.0, 1.5, projectile_density) * ranged_source_multiplier,
-			"edge": 1.2,
-			"ally_body": 0.8,
-			"allied_suppression": 0.8,
-			"projectile_interception": 1.4,
+			"enemy_contact": 2.2,
+			"projectile_contact": 1.4,
+			"spawn_warning": 0.8,
+			"ranged_source": 0.6 * lerp(1.0, 1.5, projectile_density) * ranged_source_multiplier,
+			"map_edge": 1.2,
+			"allied_body_proximity": 0.8,
+			"allied_pressure_relief": 0.8,
+			"projectile_interception_relief": 1.4,
 		},
 		"navigation_policy":
 		{
@@ -173,20 +198,46 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"recovery_profile": recovery_profile,
 			"contact_combat_appetite": contact_combat_appetite,
 			"passive_health_loss_rate": passive_health_loss_rate,
+			"passive_recovery_rate": passive_recovery_rate,
 		},
 	}
 
 
 func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
-	var breakdown := {}
+	var field_utility_breakdown := {}
+	var objective_utility_breakdown := {}
+	var scored_fields := {}
 	var score := 0.0
-	for name in context.weights:
-		var contribution: float = outcome.get(name, 0.0) * context.weights[name]
-		breakdown[name] = contribution
-		score += contribution
+	for objective_name in context.objective_weights:
+		var objective_score := 0.0
+		for name in context.objective_weights[objective_name]:
+			assert(not scored_fields.has(name))
+			scored_fields[name] = objective_name
+			var contribution: float = (
+				outcome.get(name, 0.0)
+				* context.objective_weights[objective_name][name]
+			)
+			field_utility_breakdown[name] = contribution
+			objective_score += contribution
+		objective_utility_breakdown[objective_name] = objective_score
+		score += objective_score
+	if not outcome.weapon_prediction_included:
+		for objective_name in context.screening_proxy_weights:
+			assert(objective_utility_breakdown.has(objective_name))
+			for name in context.screening_proxy_weights[objective_name]:
+				assert(not scored_fields.has(name))
+				scored_fields[name] = objective_name
+				var contribution: float = (
+					outcome.get(name, 0.0)
+					* context.screening_proxy_weights[objective_name][name]
+				)
+				field_utility_breakdown[name] = contribution
+				objective_utility_breakdown[objective_name] += contribution
+				score += contribution
 	return {
 		"score": score,
-		"breakdown": breakdown,
+		"field_utility_breakdown": field_utility_breakdown,
+		"objective_utility_breakdown": objective_utility_breakdown,
 	}
 
 

@@ -1,6 +1,6 @@
 extends Reference
 
-# Time-horizon velocity-obstacle risk for Brotato's first-order movement model.
+# Time-horizon velocity-obstacle collision risk for Brotato's first-order movement model.
 # A candidate input selects a velocity directly; this module asks whether that
 # velocity enters the collision cone of a moving disk and reports continuous TTC
 # risk instead of inventing a dynamically executed path.

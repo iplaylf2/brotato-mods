@@ -9,7 +9,10 @@ const AutopilotMovementBehavior := preload(
 const MovementPlanner := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planner.gd"
 )
-const REPLAN_INTERVAL_SECONDS := MovementPlanner.CONTROL_INTERVAL_SECONDS
+const MovementPlanningTiming := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
+)
+const REPLAN_INTERVAL_SECONDS := MovementPlanningTiming.CONTROL_INTERVAL_SECONDS
 
 var _observation_service: Node
 var _players: Array = []

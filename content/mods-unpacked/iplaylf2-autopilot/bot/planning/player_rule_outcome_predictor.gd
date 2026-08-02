@@ -63,7 +63,6 @@ func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Di
 				- recovery_before_critical_kills
 			)
 			_apply_event_rules(observation, "healing", healing_event, outcome)
-	_apply_time_rules(observation, action.forecast_seconds, outcome)
 	var missing_health: float = max(
 		0.0, observation.player_state.health.maximum - observation.player_state.health.current
 	)
@@ -74,22 +73,6 @@ func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Di
 		_apply_event_rules(observation, "damage_taken", incoming_hit_event, outcome)
 		incoming_hit_event.event_weight = incoming_hit_event.dodge_probability
 		_apply_event_rules(observation, "attack_dodged", incoming_hit_event, outcome)
-
-
-func _apply_time_rules(
-	observation: Dictionary, elapsed_seconds: float, outcome: Dictionary
-) -> void:
-	for rule in observation.player_state.effect_rules:
-		if rule.event != "time_elapsed" or not rule.condition.empty():
-			continue
-		for consequence in rule.consequences:
-			if consequence.operation != "add":
-				continue
-			if consequence.target == "health_recovery":
-				outcome.expected_recovery += (
-					consequence.get("rate_per_second", 0.0)
-					* elapsed_seconds
-				)
 
 
 func _apply_consumable_event(
@@ -160,14 +143,14 @@ func _apply_consequence(
 		return
 	match consequence.operation:
 		"add":
-			outcome.expected_stat_gain_value += (
+			outcome.expected_stat_change_value += (
 				consequence.get("value", 0.0)
 				* expected_occurrences
 				* _stat_value_multiplier(consequence.target)
 			)
 		"multiply":
 			if consequence.target == "picked_material_value":
-				outcome.material_pickup_value += (
+				outcome.material_acquisition_value += (
 					max(0.0, consequence.get("value", 1.0) - 1.0)
 					* expected_occurrences
 				)

@@ -1,9 +1,9 @@
 extends Reference
 
-# Evaluates a continuous spatiotemporal pressure field along a candidate path.
-# Hostile channels are bounded before combination. Allied suppression can only
-# cancel enemy-derived ambient pressure; it cannot erase contact, edges, body
-# blocking, or a projectile that was not actually intercepted first.
+# Evaluates environmental exposure and position-domain collision evidence along
+# a candidate path. Allied suppression can reduce eligible exposure, while
+# collision evidence is unified with velocity-space risk by
+# MovementOutcomePredictor.
 
 const ObservedMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
@@ -20,11 +20,11 @@ var _motion_predictor: Reference = ObservedMotionPredictor.new()
 
 
 func predict(
-	observation: Dictionary, action_forecast: Dictionary, pressure_policy: Dictionary
+	observation: Dictionary, action_forecast: Dictionary, exposure_policy: Dictionary
 ) -> Dictionary:
 	var result := _empty_result()
-	var initial: Dictionary = sample_point(observation, Vector2.ZERO, 0.0, pressure_policy)
-	result.initial_survival_pressure = initial.net
+	var initial: Dictionary = sample_point(observation, Vector2.ZERO, 0.0, exposure_policy)
+	result.initial_environmental_pressure = initial.environmental_pressure
 	var samples: Array = action_forecast.samples
 	assert(not samples.empty())
 	var sources := _get_influence_sources(observation)
@@ -47,27 +47,27 @@ func predict(
 			interception_samples,
 			previous_projectile_positions
 		)
-		var pressure := _combine_channels(channels, pressure_policy)
-		_accumulate_result(result, channels, pressure, sample, step_seconds)
+		var exposure := _evaluate_channels(channels, exposure_policy)
+		_accumulate_result(result, channels, exposure, sample, step_seconds)
 		previous_time = sample.time
 	var final_sample: Dictionary = samples.back()
 	var terminal: Dictionary = sample_point(
-		observation, final_sample.displacement, final_sample.time, pressure_policy
+		observation, final_sample.displacement, final_sample.time, exposure_policy
 	)
-	result.terminal_survival_pressure = terminal.net
+	result.terminal_environmental_pressure = terminal.environmental_pressure
 	# This endpoint quotient is the mean material derivative of P(x(t), t)
 	# along the candidate velocity, not the Eulerian change at a fixed point.
-	result.mean_pressure_material_derivative = (
-		(result.terminal_survival_pressure - result.initial_survival_pressure)
+	result.mean_environmental_pressure_derivative = (
+		(result.terminal_environmental_pressure - result.initial_environmental_pressure)
 		/ max(0.01, action_forecast.forecast_seconds)
 	)
 	return result
 
 
-# Point queries build the adaptive map. They describe pressure at (position, time),
-# while predict() retains swept-path handling for an action forecast.
+# Point queries build the adaptive map. They describe environmental exposure at
+# (position, time), while predict() retains swept-path handling for a forecast.
 func sample_point(
-	observation: Dictionary, displacement: Vector2, time: float, pressure_policy: Dictionary
+	observation: Dictionary, displacement: Vector2, time: float, exposure_policy: Dictionary
 ) -> Dictionary:
 	var sample := {"time": time, "displacement": displacement, "movement": Vector2.ZERO}
 	var channels := _empty_channels()
@@ -79,11 +79,12 @@ func sample_point(
 	)
 	_sample_projectile_point_pressure(observation.visible_world.enemy_projectiles, sample, channels)
 	_saturate_channels(channels)
-	var pressure := _combine_channels(channels, pressure_policy)
+	var exposure := _evaluate_channels(channels, exposure_policy)
 	return {
-		"hostile": pressure.hostile,
-		"relief": pressure.relief,
-		"net": pressure.net,
+		"hostile_exposure": exposure.hostile_exposure,
+		"exposure_relief": exposure.exposure_relief,
+		"environmental_pressure": exposure.environmental_pressure,
+		"path_collision_risk": exposure.path_collision_risk,
 		"healing_support": channels.healing_support,
 		"channels": channels,
 	}
@@ -322,8 +323,14 @@ func _sample_projectile_pressure(
 		)
 		var projectile_pressure := proximity * proximity
 		channels.projectile += projectile_pressure
+		channels.projectile_contact = max(
+			channels.projectile_contact, clamp(-clearance / max(1.0, PLAYER_RADIUS), 0.0, 1.0)
+		)
 		if interception_sample != null and sample_index >= interception_sample:
 			channels.projectile_interception += projectile_pressure
+			channels.projectile_contact_interception = max(
+				channels.projectile_contact_interception, channels.projectile_contact
+			)
 		previous_positions[projectile_index] = position
 
 
@@ -337,6 +344,9 @@ func _sample_projectile_point_pressure(
 			(PROJECTILE_PRESSURE_DISTANCE - clearance) / PROJECTILE_PRESSURE_DISTANCE, 0.0, 1.0
 		)
 		channels.projectile += proximity * proximity
+		channels.projectile_contact = max(
+			channels.projectile_contact, clamp(-clearance / max(1.0, PLAYER_RADIUS), 0.0, 1.0)
+		)
 
 
 func _find_projectile_interception_samples(observation: Dictionary, samples: Array) -> Dictionary:
@@ -391,59 +401,82 @@ func _find_interception_sample(
 	return null
 
 
-func _combine_channels(channels: Dictionary, policy: Dictionary) -> Dictionary:
-	var immediate := channels.contact * policy.contact + channels.projectile * policy.projectile
-	var enemy_ambient := (
-		channels.enemy_proximity * policy.enemy_proximity
-		+ channels.spawn * policy.spawn
-		+ channels.ranged * policy.ranged
+func _evaluate_channels(channels: Dictionary, policy: Dictionary) -> Dictionary:
+	var collision_hostile := (
+		channels.contact * policy.enemy_contact
+		+ channels.projectile_contact * policy.projectile_contact
 	)
-	var positional := channels.edge * policy.edge + channels.ally_body * policy.ally_body
+	var suppressible_enemy_ambient := (
+		channels.enemy_proximity * policy.enemy_proximity
+		+ channels.ranged * policy.ranged_source
+	)
+	var spawn_exposure := channels.spawn * policy.spawn_warning
+	var positional := (
+		channels.edge * policy.map_edge
+		+ channels.ally_body * policy.allied_body_proximity
+	)
 	var ambient_relief := min(
-		enemy_ambient, channels.allied_suppression * policy.allied_suppression
+		suppressible_enemy_ambient, channels.allied_suppression * policy.allied_pressure_relief
 	)
 	var interception_relief := min(
-		channels.projectile * policy.projectile,
-		channels.projectile_interception * policy.projectile_interception
+		channels.projectile_contact * policy.projectile_contact,
+		channels.projectile_contact_interception * policy.projectile_interception_relief
+	)
+	var collision := _saturate(max(0.0, collision_hostile - interception_relief))
+	var environmental := max(
+		0.0, suppressible_enemy_ambient + spawn_exposure + positional - ambient_relief
 	)
 	var relief := ambient_relief + interception_relief
-	var hostile := immediate + enemy_ambient + positional
+	var hostile := collision_hostile + suppressible_enemy_ambient + spawn_exposure + positional
 	return {
-		"hostile": hostile,
-		"relief": relief,
-		"net": max(0.0, hostile - relief),
+		"hostile_exposure": hostile,
+		"exposure_relief": relief,
+		"environmental_pressure": environmental,
+		"path_collision_risk": collision,
 	}
 
 
 func _accumulate_result(
 	result: Dictionary,
 	channels: Dictionary,
-	pressure: Dictionary,
+	exposure: Dictionary,
 	sample: Dictionary,
 	step_seconds: float
 ) -> void:
-	result.enemy_proximity_pressure += channels.enemy_proximity * step_seconds
-	result.projectile_pressure += channels.projectile * step_seconds
-	result.spawn_pressure += channels.spawn * step_seconds
-	result.ranged_source_pressure += channels.ranged * step_seconds
-	result.edge_pressure += channels.edge * step_seconds
-	result.allied_body_pressure += channels.ally_body * step_seconds
-	result.contact_pressure = max(result.contact_pressure, channels.contact)
-	result.allied_zone_pressure_relief += channels.allied_suppression * step_seconds
-	result.allied_zone_healing_support += channels.healing_support * step_seconds
-	result.allied_projectile_interception += channels.projectile_interception * step_seconds
-	result.integrated_hostile_pressure += pressure.hostile * step_seconds
-	result.integrated_relief_pressure += pressure.relief * step_seconds
-	result.integrated_survival_pressure += pressure.net * step_seconds
-	result.peak_survival_pressure = max(result.peak_survival_pressure, pressure.net)
-	result.pressure_trace.push_back(
+	result.integrated_enemy_proximity_pressure += channels.enemy_proximity * step_seconds
+	result.integrated_projectile_proximity_pressure += channels.projectile * step_seconds
+	result.peak_projectile_contact_risk = max(
+		result.peak_projectile_contact_risk, channels.projectile_contact
+	)
+	result.integrated_spawn_pressure += channels.spawn * step_seconds
+	result.integrated_ranged_source_pressure += channels.ranged * step_seconds
+	result.integrated_edge_pressure += channels.edge * step_seconds
+	result.integrated_allied_body_pressure += channels.ally_body * step_seconds
+	result.peak_enemy_contact_risk = max(result.peak_enemy_contact_risk, channels.contact)
+	result.integrated_allied_pressure_relief += channels.allied_suppression * step_seconds
+	result.integrated_allied_healing_support += channels.healing_support * step_seconds
+	result.integrated_projectile_interception_relief += (
+		channels.projectile_interception
+		* step_seconds
+	)
+	result.integrated_hostile_exposure += exposure.hostile_exposure * step_seconds
+	result.integrated_exposure_relief += exposure.exposure_relief * step_seconds
+	result.integrated_environmental_exposure += exposure.environmental_pressure * step_seconds
+	result.peak_environmental_pressure = max(
+		result.peak_environmental_pressure, exposure.environmental_pressure
+	)
+	result.peak_path_collision_risk = max(
+		result.peak_path_collision_risk, exposure.path_collision_risk
+	)
+	result.battlefield_exposure_trace.push_back(
 		{
 			"time": sample.time,
 			"displacement": sample.displacement,
-			"hostile": pressure.hostile,
-			"relief": pressure.relief,
-			"signed_relief": -pressure.relief,
-			"net": pressure.net,
+			"hostile_exposure": exposure.hostile_exposure,
+			"exposure_relief": exposure.exposure_relief,
+			"signed_exposure_relief": -exposure.exposure_relief,
+			"environmental_pressure": exposure.environmental_pressure,
+			"path_collision_risk": exposure.path_collision_risk,
 			"channels": channels.duplicate(true),
 		}
 	)
@@ -523,24 +556,26 @@ func _add_if_known(value, addition: float):
 
 func _empty_result() -> Dictionary:
 	return {
-		"enemy_proximity_pressure": 0.0,
-		"projectile_pressure": 0.0,
-		"spawn_pressure": 0.0,
-		"ranged_source_pressure": 0.0,
-		"edge_pressure": 0.0,
-		"contact_pressure": 0.0,
-		"allied_body_pressure": 0.0,
-		"allied_zone_pressure_relief": 0.0,
-		"allied_zone_healing_support": 0.0,
-		"allied_projectile_interception": 0.0,
-		"integrated_hostile_pressure": 0.0,
-		"integrated_relief_pressure": 0.0,
-		"integrated_survival_pressure": 0.0,
-		"peak_survival_pressure": 0.0,
-		"initial_survival_pressure": 0.0,
-		"terminal_survival_pressure": 0.0,
-		"mean_pressure_material_derivative": 0.0,
-		"pressure_trace": [],
+		"integrated_enemy_proximity_pressure": 0.0,
+		"integrated_projectile_proximity_pressure": 0.0,
+		"peak_projectile_contact_risk": 0.0,
+		"integrated_spawn_pressure": 0.0,
+		"integrated_ranged_source_pressure": 0.0,
+		"integrated_edge_pressure": 0.0,
+		"peak_enemy_contact_risk": 0.0,
+		"integrated_allied_body_pressure": 0.0,
+		"integrated_allied_pressure_relief": 0.0,
+		"integrated_allied_healing_support": 0.0,
+		"integrated_projectile_interception_relief": 0.0,
+		"integrated_hostile_exposure": 0.0,
+		"integrated_exposure_relief": 0.0,
+		"integrated_environmental_exposure": 0.0,
+		"peak_environmental_pressure": 0.0,
+		"peak_path_collision_risk": 0.0,
+		"initial_environmental_pressure": 0.0,
+		"terminal_environmental_pressure": 0.0,
+		"mean_environmental_pressure_derivative": 0.0,
+		"battlefield_exposure_trace": [],
 	}
 
 
@@ -549,6 +584,8 @@ func _empty_channels() -> Dictionary:
 		"enemy_proximity": 0.0,
 		"contact": 0.0,
 		"projectile": 0.0,
+		"projectile_contact": 0.0,
+		"projectile_contact_interception": 0.0,
 		"spawn": 0.0,
 		"ranged": 0.0,
 		"edge": 0.0,

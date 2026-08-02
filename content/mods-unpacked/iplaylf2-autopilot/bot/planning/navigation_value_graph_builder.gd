@@ -1,26 +1,32 @@
 extends Reference
 
 # Builds a player-centred, adaptive state-cost graph and solves a layered
-# Bellman shortest-path recurrence. Local pressure is a non-negative traversal
-# cost; resources and strategic opportunities are terminal rewards. Exact
-# velocity-space collision checks remain outside this global value model.
+# Bellman shortest-path recurrence. Environmental exposure is a non-negative
+# traversal cost. Resources and strategic opportunities are terminal rewards;
+# exact velocity-space collision checks remain outside this global value model.
 
-const BattlefieldPressureModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_pressure_model.gd"
+const BattlefieldExposureModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_exposure_model.gd"
 )
 const WeaponEngagementModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_engagement_model.gd"
+)
+const MovementPlanningTiming := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
+)
+const PlayerKinematicsModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
 
 const MIN_RING_DIRECTIONS := 8
 const MAX_RING_DIRECTIONS := 32
 const ENGAGEMENT_RADIAL_SAMPLES := 6.0
-const MAX_FORECAST_SECONDS := 1.2
-const MIN_FORECAST_SECONDS := 0.12
+const NAVIGATION_FORECAST_MIN_SECONDS := 0.12
 const FAR_RING_GROWTH := 1.65
 
-var _pressure_model: Reference = BattlefieldPressureModel.new()
+var _exposure_model: Reference = BattlefieldExposureModel.new()
 var _engagement_model: Reference = WeaponEngagementModel.new()
+var _player_kinematics: Reference = PlayerKinematicsModel.new()
 
 
 func build(observation: Dictionary, context: Dictionary, search_budget: Dictionary) -> Dictionary:
@@ -30,7 +36,15 @@ func build(observation: Dictionary, context: Dictionary, search_budget: Dictiona
 		map_extent.radius, spatial_scale.near_node_spacing, spatial_scale.local_detail_radius
 	)
 	var nodes := [
-		_sample_node(observation, context, Vector2.ZERO, 0.0, 0, spatial_scale.near_node_spacing)
+		_sample_node(
+			observation,
+			context,
+			Vector2.ZERO,
+			0.0,
+			0,
+			spatial_scale.near_node_spacing,
+			spatial_scale.local_prediction_radius
+		)
 	]
 	for ring_offset in radii.size():
 		var radius: float = radii[ring_offset]
@@ -47,7 +61,13 @@ func build(observation: Dictionary, context: Dictionary, search_budget: Dictiona
 				continue
 			nodes.push_back(
 				_sample_node(
-					observation, context, position, radius, ring_offset + 1, spatial_resolution
+					observation,
+					context,
+					position,
+					radius,
+					ring_offset + 1,
+					spatial_resolution,
+					spatial_scale.local_prediction_radius
 				)
 			)
 
@@ -63,6 +83,7 @@ func build(observation: Dictionary, context: Dictionary, search_budget: Dictiona
 		"domain": map_extent,
 		"near_node_spacing": spatial_scale.near_node_spacing,
 		"local_detail_radius": spatial_scale.local_detail_radius,
+		"local_prediction_radius": spatial_scale.local_prediction_radius,
 		"control_distance": spatial_scale.control_distance,
 		"engagement_capacity": spatial_scale.engagement_capacity,
 		"current_engagement_estimate": spatial_scale.current_engagement_estimate,
@@ -77,39 +98,60 @@ func _sample_node(
 	position: Vector2,
 	radius: float,
 	ring_index: int,
-	spatial_resolution: float
+	spatial_resolution: float,
+	local_prediction_radius: float
 ) -> Dictionary:
-	var speed: float = max(1.0, observation.player_state.runtime_stats.move_speed)
-	var forecast_seconds := clamp(radius / speed, MIN_FORECAST_SECONDS, MAX_FORECAST_SECONDS)
-	var current: Dictionary = _pressure_model.sample_point(
-		observation, position, 0.0, context.pressure_policy
+	var speed: float = max(1.0, _player_kinematics.predict_command_speed(observation, true))
+	var forecast_seconds := clamp(
+		radius / speed,
+		NAVIGATION_FORECAST_MIN_SECONDS,
+		MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
 	)
-	var forecast: Dictionary = _pressure_model.sample_point(
-		observation, position, forecast_seconds, context.pressure_policy
+	var current: Dictionary = _exposure_model.sample_point(
+		observation, position, 0.0, context.exposure_policy
 	)
-	var eulerian_pressure_derivative: float = (forecast.net - current.net) / forecast_seconds
-	var strategic_value := _strategic_value(observation, context, position, forecast_seconds)
+	var forecast: Dictionary = _exposure_model.sample_point(
+		observation, position, forecast_seconds, context.exposure_policy
+	)
+	var eulerian_pressure_derivative: float = (
+		(forecast.environmental_pressure - current.environmental_pressure)
+		/ forecast_seconds
+	)
+	var strategic_value := _strategic_value(
+		observation, context, position, forecast_seconds, local_prediction_radius
+	)
 	var healing_value: float = forecast.healing_support * context.navigation_policy.healing_support
 	var engagement_estimate: Dictionary = _engagement_model.estimate_at_position(
-		observation, position, forecast_seconds, MAX_FORECAST_SECONDS
+		observation,
+		position,
+		forecast_seconds,
+		MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
 	)
 	var engagement_utility: float = (
 		engagement_estimate.expected_damage
-		* context.weights.expected_weapon_damage
+		* context.objective_weights.combat.expected_weapon_damage
 	)
 	var traversal_cost: float = (
-		0.4 * current.net
-		+ 0.6 * forecast.net
+		0.4 * current.environmental_pressure
+		+ 0.6 * forecast.environmental_pressure
 		+ max(0.0, eulerian_pressure_derivative) * context.navigation_policy.rising_pressure
 	)
-	var terminal_reward: float = strategic_value + healing_value + engagement_utility
+	# Local outcomes own the current forecast interval. The graph contributes only
+	# residual terminal value beyond it.
+	var terminal_horizon_weight := clamp(
+		(radius - local_prediction_radius) / max(1.0, spatial_resolution), 0.0, 1.0
+	)
+	var terminal_reward: float = (
+		(strategic_value + healing_value + engagement_utility)
+		* terminal_horizon_weight
+	)
 	return {
 		"position": position,
 		"ring_index": ring_index,
 		"spatial_resolution": spatial_resolution,
 		"forecast_seconds": forecast_seconds,
-		"current_survival_pressure": current.net,
-		"forecast_survival_pressure": forecast.net,
+		"current_environmental_pressure": current.environmental_pressure,
+		"forecast_environmental_pressure": forecast.environmental_pressure,
 		"eulerian_pressure_derivative": eulerian_pressure_derivative,
 		"strategic_value": strategic_value,
 		"healing_value": healing_value,
@@ -117,6 +159,7 @@ func _sample_node(
 		"engagement_utility": engagement_utility,
 		"traversal_cost": traversal_cost,
 		"terminal_reward": terminal_reward,
+		"terminal_horizon_weight": terminal_horizon_weight,
 		"path_cost": INF,
 		"route_value": -INF,
 		"parent_index": -1,
@@ -124,10 +167,18 @@ func _sample_node(
 
 
 func _strategic_value(
-	observation: Dictionary, context: Dictionary, position: Vector2, time: float
+	observation: Dictionary,
+	context: Dictionary,
+	position: Vector2,
+	time: float,
+	local_prediction_radius: float
 ) -> float:
 	var value := 0.0
 	for remembered_entity in observation.get("remembered_entities", []):
+		# Static goals reachable by the local predictor belong to that predictor.
+		# The graph cannot assume they survive collection or destruction.
+		if remembered_entity.relative_position.length() <= local_prediction_radius:
+			continue
 		var confidence: float = remembered_entity.existence_confidence
 		var distance: float = (remembered_entity.relative_position - position).length()
 		match remembered_entity.kind:
@@ -267,13 +318,13 @@ func _adaptive_radii(
 func _spatial_scale(observation: Dictionary, context: Dictionary) -> Dictionary:
 	var player_state: Dictionary = observation.player_state
 	var player_radius: float = max(1.0, player_state.get("collision_radius", 24.0))
-	var speed: float = max(1.0, player_state.runtime_stats.move_speed)
+	var speed: float = max(1.0, _player_kinematics.predict_command_speed(observation, true))
 	var control_distance: float = speed * context.control_interval_seconds
 	var engagement_capacity: Dictionary = _engagement_model.estimate_capacity(
-		observation, MAX_FORECAST_SECONDS
+		observation, MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
 	)
 	var current_engagement: Dictionary = _engagement_model.estimate_at_position(
-		observation, Vector2.ZERO, 0.0, MAX_FORECAST_SECONDS
+		observation, Vector2.ZERO, 0.0, MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
 	)
 	var effective_range: float = engagement_capacity.damage_weighted_range
 	var engagement_sample_count := (
@@ -302,7 +353,8 @@ func _spatial_scale(observation: Dictionary, context: Dictionary) -> Dictionary:
 		player_radius,
 		player_radius * 4.0
 	)
-	var reachable_radius := speed * MAX_FORECAST_SECONDS
+	var reachable_radius := speed * MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
+	var local_prediction_radius := speed * MovementPlanningTiming.LOCAL_FORECAST_MAX_SECONDS
 	var pickup_radius: float = player_state.pickup.attraction_radius
 	var bounded_engagement_radius := min(effective_range, reachable_radius * 2.0)
 	var local_detail_radius: float = max(
@@ -312,6 +364,7 @@ func _spatial_scale(observation: Dictionary, context: Dictionary) -> Dictionary:
 	return {
 		"near_node_spacing": near_node_spacing,
 		"local_detail_radius": local_detail_radius,
+		"local_prediction_radius": local_prediction_radius,
 		"control_distance": control_distance,
 		"engagement_capacity": engagement_capacity,
 		"current_engagement_estimate": current_engagement,

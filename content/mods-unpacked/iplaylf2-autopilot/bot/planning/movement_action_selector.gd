@@ -3,7 +3,7 @@ extends Reference
 # Samples among near-optimal movement actions. A deterministic per-frame seed makes
 # choices replayable while still breaking stable ties.
 
-const NEAR_OPTIMAL_RELATIVE_BAND := 0.06
+const NEAR_OPTIMAL_SPREAD_BAND := 0.06
 const MINIMUM_SCORE_BAND := 0.5
 
 
@@ -12,7 +12,10 @@ func select(scored_actions: Array, context: Dictionary, seed: int) -> Dictionary
 	# internal planner contract failure, not a recoverable gameplay condition.
 	assert(not scored_actions.empty())
 	var best_score: float = scored_actions[0].score
-	var score_band := max(MINIMUM_SCORE_BAND, abs(best_score) * NEAR_OPTIMAL_RELATIVE_BAND)
+	var worst_score: float = scored_actions.back().score
+	# A value shared by every action must not alter selection temperature or the
+	# near-optimal set. Use the action score spread, which is translation invariant.
+	var score_band := max(MINIMUM_SCORE_BAND, (best_score - worst_score) * NEAR_OPTIMAL_SPREAD_BAND)
 	var near_optimal := []
 	for action in scored_actions:
 		if action.score >= best_score - score_band:

@@ -58,7 +58,7 @@ func _append_conditional_stats(
 			}
 			cadence_seconds = 1.0
 		else:
-			var stat_name := _stat_vocabulary.get_name(entry[0])
+			var stat_name := _stat_vocabulary.get_stat_name(entry[0])
 			if stat_name.empty():
 				continue
 			consequence = {

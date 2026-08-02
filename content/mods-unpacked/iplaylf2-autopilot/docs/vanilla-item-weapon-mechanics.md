@@ -7,7 +7,7 @@
 
 ## 审计范围与方法
 
-本次检查遍历了恢复工程中 `items/all` 的 208 个内容目录，以及 `weapons/melee` 和 `weapons/ranged` 的
+本审计覆盖恢复工程中 `items/all` 的 208 个内容目录，以及 `weapons/melee` 和 `weapons/ranged` 的
 63 个武器族、206 条带 `weapon_` 内容 ID 的武器数据定义。检查同时追踪了道具 `Effect` 的存储方式、
 玩家效果聚合表、武器各阶属性、武器效果资源，以及玩家、单位、投射物和主场景中的实际触发代码。
 
