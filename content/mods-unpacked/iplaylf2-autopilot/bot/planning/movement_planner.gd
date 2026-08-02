@@ -18,8 +18,8 @@ const MovementUtilityModel := preload(
 const MovementActionSelector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_selector.gd"
 )
-const NavigationValueGraphBuilder := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_value_graph_builder.gd"
+const NavigationIntentPlanner := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_intent_planner.gd"
 )
 const MovementPlanningTiming := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
@@ -33,7 +33,7 @@ var _search_budget_policy: Reference = SearchBudgetPolicy.new()
 var _outcome_predictor: Reference = MovementOutcomePredictor.new()
 var _utility_model: Reference = MovementUtilityModel.new()
 var _action_selector: Reference = MovementActionSelector.new()
-var _navigation_graph_builder: Reference = NavigationValueGraphBuilder.new()
+var _navigation_intent_planner: Reference = NavigationIntentPlanner.new()
 var _movement_scale: Reference = MovementScaleModel.new()
 
 
@@ -51,11 +51,11 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 	var context: Dictionary = _utility_model.build_context(observation)
 	context.control_interval_seconds = MovementPlanningTiming.CONTROL_INTERVAL_SECONDS
 	var search_budget: Dictionary = _search_budget_policy.allocate(observation)
-	var navigation_graph: Dictionary = _navigation_graph_builder.build(
+	var navigation_intent: Dictionary = _navigation_intent_planner.plan(
 		observation, context, search_budget
 	)
-	context.navigation_guidance = navigation_graph.navigation_guidance
-	var actions: Array = _action_generator.generate(observation, search_budget, navigation_graph)
+	context.navigation_movement_preference = navigation_intent.movement_preference
+	var actions: Array = _action_generator.generate(observation, search_budget, navigation_intent)
 	var weapon_prediction_limit: int = search_budget.weapon_prediction_limit
 	var screening_shortlist := []
 
@@ -88,16 +88,16 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 	plan.status = "ready"
 	plan.context = context
 	plan.search_budget = search_budget.duplicate(true)
-	plan.navigation_graph = navigation_graph.duplicate(true)
+	plan.navigation_intent = navigation_intent.duplicate(true)
 	plan.action_count = actions.size()
 	plan.weapon_prediction_count = weapon_scored_actions.size()
 	plan.ranked_actions = _summarize_actions(weapon_scored_actions, 5)
-	plan.model = _model_diagnostics(observation, plan, navigation_graph)
+	plan.model = _model_diagnostics(observation, plan, navigation_intent)
 	return plan
 
 
 func _model_diagnostics(
-	observation: Dictionary, plan: Dictionary, navigation_graph: Dictionary
+	observation: Dictionary, plan: Dictionary, navigation_intent: Dictionary
 ) -> Dictionary:
 	var movement_scale: Dictionary = _movement_scale.derive(observation)
 	return {
@@ -114,10 +114,9 @@ func _model_diagnostics(
 		{
 			"movement_scale": movement_scale,
 			"action_forecast_seconds": plan.action.forecast_seconds,
-			"near_node_spacing": navigation_graph.near_node_spacing,
-			"local_detail_radius": navigation_graph.local_detail_radius,
-			"local_prediction_radius": navigation_graph.local_prediction_radius,
-			"control_distance": navigation_graph.control_distance,
+			"local_prediction_radius": navigation_intent.local_prediction_radius,
+			"navigation_sampling_radius": navigation_intent.sampling_radius,
+			"control_distance": navigation_intent.control_distance,
 		},
 	}
 
@@ -158,11 +157,17 @@ func _summarize_actions(entries: Array, limit: int) -> Array:
 				"movement": entry.movement,
 				"forecast_seconds": entry.action.forecast_seconds,
 				"score": entry.score,
-				"outcome": entry.outcome.duplicate(true),
+				"outcome": _summarize_outcome(entry.outcome),
 				"field_utility_breakdown": entry.field_utility_breakdown.duplicate(true),
 				"objective_utility_breakdown": entry.objective_utility_breakdown.duplicate(true),
 			}
 		)
+	return result
+
+
+func _summarize_outcome(outcome: Dictionary) -> Dictionary:
+	var result := outcome.duplicate(false)
+	result.erase("battlefield_exposure_trace")
 	return result
 
 

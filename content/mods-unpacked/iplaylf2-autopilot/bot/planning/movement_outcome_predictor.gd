@@ -58,12 +58,12 @@ func predict(
 		"loot_target_approach_progress": 0.0,
 		"ranged_source_engagement_progress": 0.0,
 		"targets_in_weapon_range": 0.0,
-		"tree_attack_opportunity": 0.0,
+		"tree_engagement_progress": 0.0,
 		"roaming_progress": 0.0,
 		"standing_seconds": 0.0,
 		"moving_seconds": 0.0,
 		"heading_continuity": 0.0,
-		"navigation_guidance_alignment": 0.0,
+		"navigation_preference_alignment": 0.0,
 		"expected_attack_hits": 0.0,
 		"expected_effect_damage": 0.0,
 		"expected_recovery": 0.0,
@@ -81,7 +81,7 @@ func predict(
 	outcome.merge(battlefield_outcome, true)
 	outcome.merge(_velocity_obstacle_risk_model.evaluate(observation, action), true)
 	_predict_action_outcomes(observation, action, previous_movement, outcome)
-	if planning_context.navigation_guidance != Vector2.ZERO:
+	if planning_context.navigation_movement_preference != Vector2.ZERO:
 		# Roaming is an uninformed exploration fallback, not a second reward for
 		# following an already-valued navigation terminal.
 		outcome.roaming_progress = 0.0
@@ -90,8 +90,8 @@ func predict(
 		_movement_damage_exposure_reduction(observation, action)
 		* outcome.collision_risk
 	)
-	outcome.navigation_guidance_alignment = action.movement.dot(
-		planning_context.navigation_guidance
+	outcome.navigation_preference_alignment = action.movement.dot(
+		planning_context.navigation_movement_preference
 	)
 	if include_weapon_prediction:
 		_weapon_attack_predictor.accumulate_outcome(observation, action, outcome)
@@ -108,7 +108,7 @@ func _predict_action_outcomes(
 		observation.visible_world.materials, samples, observation.player_state.pickup
 	)
 	outcome.recovery_approach_progress = _recovery_approach_progress(observation, samples)
-	outcome.tree_attack_opportunity = _tree_attack_opportunity(observation, action)
+	outcome.tree_engagement_progress = _tree_engagement_progress(observation, action)
 	outcome.producer_approach_progress = _target_approach_progress(
 		observation.enemy_tracks, samples, "enemy_producer"
 	)
@@ -188,7 +188,7 @@ func _recovery_approach_progress(observation: Dictionary, samples: Array) -> flo
 	return progress
 
 
-func _tree_attack_opportunity(observation: Dictionary, action: Dictionary) -> float:
+func _tree_engagement_progress(observation: Dictionary, action: Dictionary) -> float:
 	var maximum_range: float = _usable_weapon_range(
 		observation.player_state.weapons, action.movement != Vector2.ZERO
 	)
@@ -204,8 +204,12 @@ func _tree_attack_opportunity(observation: Dictionary, action: Dictionary) -> fl
 			)
 		if closest_distance <= maximum_range:
 			interaction += 1.0
-		elif initial_distance > 0.0:
-			interaction += max(0.0, initial_distance - closest_distance) / initial_distance * 0.3
+		else:
+			# Normalize progress to the remaining gap to attack range. Approaching
+			# a tree is one continuous opportunity, not a weak unrelated bonus.
+			var initial_gap := max(1.0, initial_distance - maximum_range)
+			var closest_gap := max(0.0, closest_distance - maximum_range)
+			interaction += clamp((initial_gap - closest_gap) / initial_gap, 0.0, 1.0)
 	return interaction
 
 

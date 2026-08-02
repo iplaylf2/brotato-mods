@@ -8,7 +8,7 @@
 
 Autopilot 每次启用战斗控制时创建一个采样会话，将 JSON Lines 写入
 `user://logs/mods/iplaylf2-autopilot/`。Mod Loader 日志会报告当前文件的虚拟路径和绝对路径；该目录以
-完整 mod ID 作为诊断产物的归属边界。当前只有决策采样，无需增加采样类型子目录。
+完整 mod ID 作为诊断产物的归属边界。当前唯一的诊断产物是决策采样，文件直接写入该目录。
 控制器启动后也可以调用：
 
 ```gdscript
@@ -33,8 +33,8 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
   完成武器预测的高分候选、选择随机量和实际使用的派生尺度；
 - `part_end` 标记因轮转而正常结束的分片，`session_end` 标记正常结束的完整会话。
 
-为控制体积，采样保留导航图的边界、引导方向、节点数量和派生空间尺度，但省略可由同一观察重新构造的
-全部节点数组。`Vector2` 写成 `{ "x": ..., "y": ... }`，非有限浮点数写成可识别字符串。
+为控制体积，所选动作保留完整暴露轨迹，高分备选只保留标量结果与效用账本；导航意图记录候选位置数、
+移动偏好、价值增益和派生空间尺度。`Vector2` 写成 `{ "x": ..., "y": ... }`，非有限浮点数写成可识别字符串。
 复盘工具应先按 `session_id + player_index + sample_index` 排序，再用
 `decision_index` 和 `physics_frame` 检查缺口。
 
@@ -66,17 +66,18 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 
 `decision.search_budget` 同时记录本轮分配、实测规划耗时和下一轮建议强度。复盘时先检查
 `has_frame_time_sample`；该值为 `false` 表示仍处于冷启动：规划器使用搜索强度 `1`，
-`planning_duration_budget_usec = 0` 标记帧余量尚未可用。
+`planning_duration_budget_usec = 0`，且预算利用率为 `null`。
 
 `planning_duration_budget_utilization` 使用本轮实测耗时除以本轮预算。大于 `1` 表示本轮超出预算；单次
 超出可能来自工作量突变、系统调度或性能监视延迟。连续超出时，应先确认
-`next_search_effort_scale` 是否下降：若已降到最低值 `1`，说明最低搜索量本身超过当前预算；若仍高于
-`1` 且没有下降，再检查成本估计和反馈更新是否按预期工作。`planning_usec_per_effort_ema` 用于观察在线
+`next_search_effort_scale` 是否下降：若已降到最低值 `0.25`，说明最低搜索量本身超过当前预算；若仍高于
+`0.25` 且没有下降，再检查成本估计和反馈更新是否按预期工作。`planning_usec_per_effort_ema` 用于观察在线
 成本估计是否随局面稳定。帧时间、规划耗时和搜索强度字段用于分析预算分配与收敛；
 `threat_entity_count`、`influence_source_count` 和两个 `*_workload_proxy` 用于解释成本变化。
 
-预算为 `0` 时，该利用率没有有限数值意义，JSON Lines 会把它写为字符串 `"Infinity"`；复盘工具应先
-检查 `planning_duration_budget_usec > 0`，再比较利用率或计算分位数。
+存在帧样本但预算为 `0` 时，该利用率没有有限数值意义，JSON Lines 会把它写为字符串 `"Infinity"`；
+没有帧样本时则写为 `null`。复盘工具应先按 `has_frame_time_sample` 区分未知与实测过载，再对正预算样本
+比较利用率或计算分位数。
 
 规划耗时的计量范围从 `MovementPlanner.plan()` 开始，到动作选择完成为止。完整物理帧验证还要覆盖随后的
 采样序列化、文件写入、控制器收尾与游戏帧表现。
@@ -118,7 +119,7 @@ TTC cutoff                    = navigation forecast maximum
 1. `MovementPlanningTiming` 的 `0.18/0.45/0.7/1.2` 秒决定绝大多数空间尺度，是优先级最高的上游参数。
 2. `MovementUtilityModel` 的权重只表达目标间交换率。它们可以由生命、波次进度、弹幕密度等状态派生，
    但端点倍率仍是策略偏好，不应伪装成伤害概率。
-3. `SearchBudgetPolicy` 的搜索强度取值域为 `[1, +∞)`，根据 Godot 实测物理帧基线与规划器
+3. `SearchBudgetPolicy` 的搜索强度取值域为 `[0.25, +∞)`，根据 Godot 实测物理帧基线与规划器
    单调时钟耗时连续估计每轮可持续值。
    基础分辨率、EMA 时间尺度、单次调节范围和非对称响应仍需用不同设备上的预算利用率、掉帧尖峰与行为
    质量共同校准。瞬时截止表现以 `planning_duration_budget_utilization` 的 p95/p99 分位数和

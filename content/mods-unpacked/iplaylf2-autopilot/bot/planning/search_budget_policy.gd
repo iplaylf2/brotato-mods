@@ -5,8 +5,13 @@ extends Reference
 
 const BASE_DIRECTION_COUNT := 8
 const BASE_FORECAST_SAMPLE_COUNT := 3
-const BASE_GRAPH_RESOLUTION_SCALE := 0.5
 const BASE_WEAPON_PREDICTION_LIMIT := 4
+const BASE_NAVIGATION_DIRECTION_COUNT := 12
+const MIN_SEARCH_EFFORT_SCALE := 0.25
+const MIN_DIRECTION_COUNT := 4
+const MIN_FORECAST_SAMPLE_COUNT := 2
+const MIN_WEAPON_PREDICTION_LIMIT := 2
+const MIN_NAVIGATION_DIRECTION_COUNT := 6
 
 # Asymmetric exponents shed effort quickly under overload and restore it gradually
 # when headroom returns.
@@ -44,14 +49,25 @@ func allocate(observation: Dictionary) -> Dictionary:
 	var planning_duration_budget_usec := _planning_duration_budget_usec()
 	_allocated_search_effort_scale = _search_effort_scale
 	var search_resolution_scale := sqrt(_allocated_search_effort_scale)
+	var has_frame_time_sample: bool = _frame_budget_context.get("has_frame_time_sample", false)
 	return {
-		"allocation_mode": "frame_time_feedback",
-		"direction_count": max(1, int(round(BASE_DIRECTION_COUNT * search_resolution_scale))),
+		"direction_count":
+		max(MIN_DIRECTION_COUNT, int(round(BASE_DIRECTION_COUNT * search_resolution_scale))),
 		"forecast_sample_count":
-		max(1, int(round(BASE_FORECAST_SAMPLE_COUNT * search_resolution_scale))),
-		"graph_angular_resolution_scale": BASE_GRAPH_RESOLUTION_SCALE * search_resolution_scale,
+		max(
+			MIN_FORECAST_SAMPLE_COUNT,
+			int(round(BASE_FORECAST_SAMPLE_COUNT * search_resolution_scale))
+		),
 		"weapon_prediction_limit":
-		max(1, int(round(BASE_WEAPON_PREDICTION_LIMIT * search_resolution_scale))),
+		max(
+			MIN_WEAPON_PREDICTION_LIMIT,
+			int(round(BASE_WEAPON_PREDICTION_LIMIT * search_resolution_scale))
+		),
+		"navigation_base_direction_count":
+		max(
+			MIN_NAVIGATION_DIRECTION_COUNT,
+			int(round(BASE_NAVIGATION_DIRECTION_COUNT * search_resolution_scale))
+		),
 		"search_effort_scale": _allocated_search_effort_scale,
 		"planning_duration_budget_usec": planning_duration_budget_usec,
 		"planning_duration_usec_ema": _planning_duration_usec_ema if _has_cost_estimate else null,
@@ -63,7 +79,7 @@ func allocate(observation: Dictionary) -> Dictionary:
 		_frame_budget_context.get("baseline_physics_duration_usec_ema", 0.0),
 		"physics_duration_deviation_usec_ema":
 		_frame_budget_context.get("physics_duration_deviation_usec_ema", 0.0),
-		"has_frame_time_sample": _frame_budget_context.get("has_frame_time_sample", false),
+		"has_frame_time_sample": has_frame_time_sample,
 		"scheduled_planner_count": _frame_budget_context.get("scheduled_planner_count", 1),
 		"threat_entity_count": enemy_count + projectile_count,
 		"influence_source_count": influence_source_count,
@@ -75,7 +91,7 @@ func allocate(observation: Dictionary) -> Dictionary:
 func observe_planning_duration(planning_duration_usec: float) -> Dictionary:
 	var observed_usec_per_effort: float = (
 		planning_duration_usec
-		/ max(1.0, _allocated_search_effort_scale)
+		/ max(MIN_SEARCH_EFFORT_SCALE, _allocated_search_effort_scale)
 	)
 	if not _has_cost_estimate:
 		_planning_duration_usec_ema = planning_duration_usec
@@ -90,11 +106,19 @@ func observe_planning_duration(planning_duration_usec: float) -> Dictionary:
 		)
 
 	var planning_duration_budget_usec := _planning_duration_budget_usec()
-	if planning_duration_budget_usec <= 0.0:
-		_search_effort_scale = 1.0
+	var has_frame_time_sample: bool = _frame_budget_context.get("has_frame_time_sample", false)
+	if not has_frame_time_sample:
+		# Absence of a monitor sample is uncertainty, not overload. Retain the
+		# allocated cold-start fidelity until the monitor can distinguish it.
+		_search_effort_scale = _allocated_search_effort_scale
+	elif planning_duration_budget_usec <= 0.0:
+		# No measured headroom is overload evidence once a cost estimate exists.
+		# Preserve the shape of the search at its explicit minimum fidelity.
+		_search_effort_scale = MIN_SEARCH_EFFORT_SCALE
 	else:
 		var sustainable_effort_scale := max(
-			1.0, planning_duration_budget_usec / max(1.0, _planning_usec_per_effort_ema)
+			MIN_SEARCH_EFFORT_SCALE,
+			planning_duration_budget_usec / max(1.0, _planning_usec_per_effort_ema)
 		)
 		var adjustment_ratio := clamp(
 			sustainable_effort_scale / _allocated_search_effort_scale,
@@ -107,7 +131,8 @@ func observe_planning_duration(planning_duration_usec: float) -> Dictionary:
 			else OVERLOAD_ADJUSTMENT_EXPONENT
 		)
 		_search_effort_scale = max(
-			1.0, _allocated_search_effort_scale * pow(adjustment_ratio, adjustment_exponent)
+			MIN_SEARCH_EFFORT_SCALE,
+			_allocated_search_effort_scale * pow(adjustment_ratio, adjustment_exponent)
 		)
 
 	return {
@@ -117,9 +142,13 @@ func observe_planning_duration(planning_duration_usec: float) -> Dictionary:
 		"next_search_effort_scale": _search_effort_scale,
 		"planning_duration_budget_utilization":
 		(
-			planning_duration_usec / planning_duration_budget_usec
-			if planning_duration_budget_usec > 0.0
-			else INF
+			null
+			if not has_frame_time_sample
+			else (
+				planning_duration_usec / planning_duration_budget_usec
+				if planning_duration_budget_usec > 0.0
+				else INF
+			)
 		),
 	}
 

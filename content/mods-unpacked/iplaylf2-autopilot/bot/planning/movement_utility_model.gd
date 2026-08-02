@@ -73,12 +73,18 @@ func build_context(observation: Dictionary) -> Dictionary:
 		0.0,
 		1.0
 	)
-	var environmental_exposure_cost: float = (
-		lerp(20.0, 5.0 - 2.0 * contact_combat_appetite, risk_tolerance)
-		* lerp(1.0, 0.65, wave_progress)
+	var environmental_exposure_cost: float = lerp(
+		20.0, 5.0 - 2.0 * contact_combat_appetite, risk_tolerance
 	)
+	# The target game restores health between waves, while death remains terminal.
+	# Late-wave health can therefore price a concrete opportunity more aggressively;
+	# candidate-specific exposure and collision evidence still decide the cost.
+	var late_wave_risk_discount: float = risk_tolerance * pow(wave_progress, 4.0)
+	var late_wave_environmental_cost_scale: float = lerp(1.0, 0.35, late_wave_risk_discount)
+	var late_wave_collision_cost_scale: float = lerp(1.0, 0.3, late_wave_risk_discount)
+	environmental_exposure_cost *= late_wave_environmental_cost_scale
 
-	return {
+	var context := {
 		"objective_weights":
 		{
 			"survival":
@@ -88,7 +94,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 				(
 					-(160.0 if fatal_on_unprotected_hit else lerp(70.0, 28.0, risk_tolerance))
 					* lerp(1.0, 0.45, contact_combat_appetite)
-					* lerp(1.0, 0.75, wave_progress)
+					* late_wave_collision_cost_scale
 				),
 				"movement_damage_exposure_reduction": 20.0,
 			},
@@ -105,7 +111,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"material_acquisition_value": 1.0 + 1.6 * wave_progress,
 				"expected_stat_change_value": 0.8,
 				"expected_material_gain": 1.0 + 1.6 * wave_progress,
-				"tree_attack_opportunity": _tree_weight(player_rule_projection, wave_progress),
+				"tree_engagement_progress": _tree_weight(player_rule_projection, wave_progress),
 				"standing_seconds": movement_state_economy_rates.standing,
 				"moving_seconds": movement_state_economy_rates.moving,
 			},
@@ -131,10 +137,12 @@ func build_context(observation: Dictionary) -> Dictionary:
 					* ranged_engagement_appetite
 				),
 			},
+			# Exploration remains useful when no observed goal owns navigation;
+			# local exposure still suppresses it in an uncontrolled battlefield.
 			"navigation":
 			{
-				"roaming_progress": 1.2 * wave_time_remaining_ratio,
-				"navigation_guidance_alignment": 4.0,
+				"roaming_progress": 0.35 * risk_tolerance + 0.85 * wave_time_remaining_ratio,
+				"navigation_preference_alignment": 4.0,
 			},
 			"control_stability": {"heading_continuity": 0.25},
 		},
@@ -202,20 +210,23 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"contact_combat_appetite": contact_combat_appetite,
 			"passive_health_loss_rate": passive_health_loss_rate,
 			"passive_recovery_rate": passive_recovery_rate,
+			"late_wave_risk_discount": late_wave_risk_discount,
+			"late_wave_environmental_cost_scale": late_wave_environmental_cost_scale,
+			"late_wave_collision_cost_scale": late_wave_collision_cost_scale,
 		},
 	}
+	if OS.is_debug_build():
+		_assert_valid_scoring_schema(context)
+	return context
 
 
 func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	var field_utility_breakdown := {}
 	var objective_utility_breakdown := {}
-	var scored_fields := {}
 	var score := 0.0
 	for objective_name in context.objective_weights:
 		var objective_score := 0.0
 		for name in context.objective_weights[objective_name]:
-			assert(not scored_fields.has(name))
-			scored_fields[name] = objective_name
 			var contribution: float = (
 				outcome.get(name, 0.0)
 				* context.objective_weights[objective_name][name]
@@ -226,10 +237,7 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 		score += objective_score
 	if not outcome.weapon_prediction_included:
 		for objective_name in context.screening_proxy_weights:
-			assert(objective_utility_breakdown.has(objective_name))
 			for name in context.screening_proxy_weights[objective_name]:
-				assert(not scored_fields.has(name))
-				scored_fields[name] = objective_name
 				var contribution: float = (
 					outcome.get(name, 0.0)
 					* context.screening_proxy_weights[objective_name][name]
@@ -242,6 +250,19 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 		"field_utility_breakdown": field_utility_breakdown,
 		"objective_utility_breakdown": objective_utility_breakdown,
 	}
+
+
+func _assert_valid_scoring_schema(context: Dictionary) -> void:
+	var field_owners := {}
+	for objective_name in context.objective_weights:
+		for field_name in context.objective_weights[objective_name]:
+			assert(not field_owners.has(field_name))
+			field_owners[field_name] = objective_name
+	for objective_name in context.screening_proxy_weights:
+		assert(context.objective_weights.has(objective_name))
+		for field_name in context.screening_proxy_weights[objective_name]:
+			assert(not field_owners.has(field_name))
+			field_owners[field_name] = objective_name
 
 
 func _survivability_credit(observation: Dictionary) -> float:

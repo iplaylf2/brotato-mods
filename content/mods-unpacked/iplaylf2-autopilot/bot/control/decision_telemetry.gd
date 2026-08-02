@@ -88,7 +88,7 @@ func record_decision(
 			"physics_frame": observation.get("physics_frame"),
 			"previous_movement": previous_movement,
 			"observation": observation,
-			"decision": _compact_plan(plan),
+			"decision": plan.duplicate(true),
 		}
 	)
 	_samples_since_flush += 1
@@ -118,15 +118,6 @@ func close() -> void:
 
 func get_current_path() -> String:
 	return _current_path
-
-
-func _compact_plan(plan: Dictionary) -> Dictionary:
-	var result := plan.duplicate(true)
-	if result.has("navigation_graph"):
-		var graph: Dictionary = result.navigation_graph
-		graph.erase("nodes")
-		result.navigation_graph = graph
-	return result
 
 
 func _rotate(control_interval_seconds: float) -> void:

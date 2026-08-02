@@ -19,11 +19,11 @@ var _movement_scale: Reference = MovementScaleModel.new()
 
 
 func generate(
-	observation: Dictionary, search_budget: Dictionary, navigation_graph: Dictionary
+	observation: Dictionary, search_budget: Dictionary, navigation_intent: Dictionary
 ) -> Array:
 	var forecast_seconds := _forecast_window(observation)
 	var sample_count: int = search_budget.forecast_sample_count
-	var directions := _candidate_directions(search_budget.direction_count, navigation_graph)
+	var directions := _candidate_directions(search_budget.direction_count, navigation_intent)
 	var actions := [
 		_make_action(observation, "no_movement_input", Vector2.ZERO, forecast_seconds, sample_count)
 	]
@@ -69,15 +69,17 @@ func _make_action(
 	}
 
 
-func _candidate_directions(direction_count: int, navigation_graph: Dictionary) -> Array:
+func _candidate_directions(direction_count: int, navigation_intent: Dictionary) -> Array:
 	var result := []
 	for direction_index in direction_count:
 		result.push_back(
 			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))
 		)
-	for preferred in navigation_graph.preferred_directions:
-		if not _has_similar_direction(result, preferred):
-			result.push_back(preferred)
+	var movement_preference: Vector2 = navigation_intent.movement_preference
+	if movement_preference != Vector2.ZERO:
+		var preferred_direction := movement_preference.normalized()
+		if not _has_similar_direction(result, preferred_direction):
+			result.push_back(preferred_direction)
 	return result
 
 

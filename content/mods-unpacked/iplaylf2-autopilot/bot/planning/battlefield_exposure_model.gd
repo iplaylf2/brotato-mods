@@ -65,7 +65,7 @@ func predict(
 	return result
 
 
-# Point queries build the adaptive map. They describe environmental exposure at
+# Point queries support navigation terminal estimates. They describe exposure at
 # (position, time), while predict() retains swept-path handling for a forecast.
 func sample_point(
 	observation: Dictionary, displacement: Vector2, time: float, exposure_policy: Dictionary
