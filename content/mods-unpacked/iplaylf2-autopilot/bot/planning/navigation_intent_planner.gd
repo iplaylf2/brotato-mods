@@ -11,21 +11,24 @@ const BattlefieldExposureModel := preload(
 const WeaponEngagementModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_engagement_model.gd"
 )
-const MovementPlanningTiming := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
+const MovementTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
 )
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
-const MovementScaleModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
+const MovementGeometryModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
+)
+const OpportunityValuationModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_valuation_model.gd"
 )
 
 const MATERIAL_PULL_RADIUS := 420.0
 const CONSUMABLE_PULL_RADIUS := 360.0
 const TREE_PULL_RADIUS := 500.0
 const ENEMY_PRODUCER_PULL_RADIUS := 600.0
-const LOOT_TARGET_PULL_RADIUS := 600.0
+const BONUS_REWARD_TARGET_PULL_RADIUS := 600.0
 const RANGED_SOURCE_PULL_RADIUS := 700.0
 const CONTACT_COMBAT_PULL_RADIUS := 420.0
 const SIMILAR_DIRECTION_DOT := 0.97
@@ -33,19 +36,20 @@ const SIMILAR_DIRECTION_DOT := 0.97
 var _exposure_model: Reference = BattlefieldExposureModel.new()
 var _engagement_model: Reference = WeaponEngagementModel.new()
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
-var _movement_scale: Reference = MovementScaleModel.new()
+var _movement_geometry: Reference = MovementGeometryModel.new()
+var _opportunity_valuation: Reference = OpportunityValuationModel.new()
 
 
-func plan(observation: Dictionary, context: Dictionary, search_budget: Dictionary) -> Dictionary:
+func plan(observation: Dictionary, context: Dictionary, detail_budget: Dictionary) -> Dictionary:
 	var scale: Dictionary = _spatial_scale(observation)
+	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var map_extent: Dictionary = _map_extent(observation)
 	var sampling_radius: float = min(
-		map_extent.radius,
-		scale.command_speed * MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
+		map_extent.radius, scale.command_speed * timing.maximum_navigation_horizon_seconds
 	)
 	var directions := _candidate_directions(
 		observation,
-		int(search_budget.navigation_base_direction_count),
+		int(detail_budget.navigation_base_direction_count),
 		scale.local_prediction_radius
 	)
 	var origin := _evaluate_position(
@@ -65,7 +69,7 @@ func plan(observation: Dictionary, context: Dictionary, search_budget: Dictionar
 		if position.length() <= scale.control_distance:
 			continue
 		var forecast_seconds := min(
-			MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS,
+			timing.maximum_navigation_horizon_seconds,
 			position.length() / max(1.0, scale.command_speed)
 		)
 		var candidate := _evaluate_position(
@@ -115,7 +119,10 @@ func _evaluate_position(
 		observation, context, position, time, local_prediction_radius
 	)
 	var engagement: Dictionary = _engagement_model.estimate_at_position(
-		observation, position, time, MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
+		observation,
+		position,
+		time,
+		MovementTimingModel.derive(observation).maximum_navigation_horizon_seconds
 	)
 	var engagement_value: float = (
 		engagement.expected_damage
@@ -162,16 +169,15 @@ func _strategic_value(
 				value += (
 					_radial_pull(distance, CONSUMABLE_PULL_RADIUS)
 					* confidence
-					* (
-						context.navigation_policy.recovery_pickup
-						+ context.navigation_policy.consumable_event_value
-					)
+					* context.navigation_policy.recovery_pickup
+					* _opportunity_valuation.consumable_recovery_value(observation, entity)
 				)
 			"tree":
 				value += (
 					_radial_pull(distance, TREE_PULL_RADIUS)
 					* confidence
 					* context.navigation_policy.tree
+					* _opportunity_valuation.tree_reward_value(observation, entity)
 				)
 
 	for track in observation.enemy_tracks:
@@ -185,11 +191,13 @@ func _strategic_value(
 				* confidence
 				* context.navigation_policy.enemy_producer
 			)
-		if roles.loot_reward_target:
+		if roles.bonus_reward_target:
 			value += (
-				_radial_pull(distance, LOOT_TARGET_PULL_RADIUS)
+				_radial_pull(distance, BONUS_REWARD_TARGET_PULL_RADIUS)
 				* confidence
-				* context.navigation_policy.loot_target
+				* context.navigation_policy.bonus_reward_target
+				* _opportunity_valuation.bonus_kill_reward_value(observation, track)
+				* _opportunity_valuation.enemy_kill_feasibility(observation, track)
 			)
 		if roles.ranged_pressure_source:
 			value += (
@@ -221,7 +229,7 @@ func _candidate_directions(
 			_append_direction(result, entity.relative_position)
 	for track in observation.enemy_tracks:
 		var roles: Dictionary = track.behavior_profile.strategic_roles
-		if roles.enemy_producer or roles.loot_reward_target or roles.ranged_pressure_source:
+		if roles.enemy_producer or roles.bonus_reward_target or roles.ranged_pressure_source:
 			_append_direction(result, track.relative_position)
 	return result
 
@@ -237,20 +245,20 @@ func _append_direction(directions: Array, displacement: Vector2) -> void:
 
 
 func _spatial_scale(observation: Dictionary) -> Dictionary:
-	var movement_scale: Dictionary = _movement_scale.derive(observation)
-	var command_speed: float = movement_scale.command_speed
+	var movement_geometry: Dictionary = _movement_geometry.derive(observation)
+	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var command_speed: float = movement_geometry.command_speed
 	var engagement_capacity: Dictionary = _engagement_model.estimate_capacity(
-		observation, MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
+		observation, timing.maximum_navigation_horizon_seconds
 	)
 	var current_engagement: Dictionary = _engagement_model.estimate_at_position(
-		observation, Vector2.ZERO, 0.0, MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
+		observation, Vector2.ZERO, 0.0, timing.maximum_navigation_horizon_seconds
 	)
 	return {
 		"command_speed": command_speed,
-		"control_distance": movement_scale.control_distance,
-		"local_prediction_radius":
-		command_speed * MovementPlanningTiming.LOCAL_FORECAST_MAX_SECONDS,
-		"navigation_distance": movement_scale.roaming_distance,
+		"control_distance": movement_geometry.control_distance,
+		"local_prediction_radius": command_speed * timing.maximum_local_horizon_seconds,
+		"navigation_distance": movement_geometry.roaming_distance,
 		"engagement_capacity": engagement_capacity,
 		"current_engagement_estimate": current_engagement,
 	}

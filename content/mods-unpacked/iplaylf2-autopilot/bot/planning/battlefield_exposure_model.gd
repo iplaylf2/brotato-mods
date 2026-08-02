@@ -6,16 +6,20 @@ extends Reference
 # MovementOutcomePredictor.
 
 const ObservedMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
 )
-const MovementScaleModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
+const MovementGeometryModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
+)
+const ProjectileMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
 
 const RANGED_SOURCE_PRESSURE_DISTANCE := 650.0
 
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
-var _movement_scale: Reference = MovementScaleModel.new()
+var _movement_geometry: Reference = MovementGeometryModel.new()
+var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 
 
 func predict(
@@ -27,9 +31,11 @@ func predict(
 	var samples: Array = action_forecast.samples
 	assert(not samples.empty())
 	var sources := _get_influence_sources(observation)
-	var scale: Dictionary = _movement_scale.derive(observation)
+	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var consumed_single_use_sources := {}
-	var interception_samples := _find_projectile_interception_samples(observation, samples, scale)
+	var interception_samples := _find_projectile_interception_samples(
+		observation, samples, geometry
+	)
 	var previous_projectile_positions := []
 	for projectile in observation.visible_world.enemy_projectiles:
 		previous_projectile_positions.push_back(projectile.relative_position)
@@ -46,7 +52,7 @@ func predict(
 			consumed_single_use_sources,
 			interception_samples,
 			previous_projectile_positions,
-			scale
+			geometry
 		)
 		var exposure := _evaluate_channels(channels, exposure_policy)
 		_accumulate_result(result, channels, exposure, sample, step_seconds)
@@ -65,6 +71,40 @@ func predict(
 	return result
 
 
+# The collision-cost pass must retain angular coverage under load without paying for
+# economy, allied influence, healing, or ambient-pressure interactions.
+func predict_collision(
+	observation: Dictionary, action_forecast: Dictionary, exposure_policy: Dictionary
+) -> Dictionary:
+	var peak_path_collision_risk := 0.0
+	var maximum_path_collision_damage := 0.0
+	var samples: Array = action_forecast.samples
+	var geometry: Dictionary = _movement_geometry.derive(observation)
+	var previous_projectile_positions := []
+	for projectile in observation.visible_world.enemy_projectiles:
+		previous_projectile_positions.push_back(projectile.relative_position)
+	for sample_index in samples.size():
+		var sample: Dictionary = samples[sample_index]
+		var channels := _empty_channels()
+		_sample_enemy_pressure(observation.enemy_tracks, sample, channels, geometry)
+		_sample_projectile_pressure(
+			observation.visible_world.enemy_projectiles,
+			sample,
+			sample_index,
+			{},
+			previous_projectile_positions,
+			channels,
+			geometry
+		)
+		var exposure: Dictionary = _evaluate_channels(channels, exposure_policy)
+		peak_path_collision_risk = max(peak_path_collision_risk, exposure.path_collision_risk)
+		maximum_path_collision_damage = max(maximum_path_collision_damage, channels.contact_damage)
+	return {
+		"peak_path_collision_risk": peak_path_collision_risk,
+		"maximum_path_collision_damage": maximum_path_collision_damage,
+	}
+
+
 # Point queries support navigation terminal estimates. They describe exposure at
 # (position, time), while predict() retains swept-path handling for a forecast.
 func sample_point(
@@ -72,15 +112,15 @@ func sample_point(
 ) -> Dictionary:
 	var sample := {"time": time, "displacement": displacement, "movement": Vector2.ZERO}
 	var channels := _empty_channels()
-	var scale: Dictionary = _movement_scale.derive(observation)
-	_sample_enemy_pressure(observation.enemy_tracks, sample, channels, scale)
-	_sample_spawn_pressure(observation.visible_world.spawn_warnings, sample, channels, scale)
-	_sample_edge_pressure(observation.localization.map_bounds, displacement, channels, scale)
+	var geometry: Dictionary = _movement_geometry.derive(observation)
+	_sample_enemy_pressure(observation.enemy_tracks, sample, channels, geometry)
+	_sample_spawn_pressure(observation.visible_world.spawn_warnings, sample, channels, geometry)
+	_sample_edge_pressure(observation.localization.map_bounds, displacement, channels, geometry)
 	_sample_allied_pressure(
-		observation, _get_influence_sources(observation), sample, 0, {}, channels, scale
+		observation, _get_influence_sources(observation), sample, 0, {}, channels, geometry
 	)
 	_sample_projectile_point_pressure(
-		observation.visible_world.enemy_projectiles, sample, channels, scale
+		observation.visible_world.enemy_projectiles, sample, channels, geometry
 	)
 	_saturate_channels(channels)
 	var exposure := _evaluate_channels(channels, exposure_policy)
@@ -102,14 +142,16 @@ func _sample_channels(
 	consumed_single_use_sources: Dictionary,
 	interception_samples: Dictionary,
 	previous_projectile_positions: Array,
-	scale: Dictionary
+	geometry: Dictionary
 ) -> Dictionary:
 	var channels := _empty_channels()
-	_sample_enemy_pressure(observation.enemy_tracks, sample, channels, scale)
-	_sample_spawn_pressure(observation.visible_world.spawn_warnings, sample, channels, scale)
-	_sample_edge_pressure(observation.localization.map_bounds, sample.displacement, channels, scale)
+	_sample_enemy_pressure(observation.enemy_tracks, sample, channels, geometry)
+	_sample_spawn_pressure(observation.visible_world.spawn_warnings, sample, channels, geometry)
+	_sample_edge_pressure(
+		observation.localization.map_bounds, sample.displacement, channels, geometry
+	)
 	_sample_allied_pressure(
-		observation, sources, sample, sample_index, consumed_single_use_sources, channels, scale
+		observation, sources, sample, sample_index, consumed_single_use_sources, channels, geometry
 	)
 	_sample_projectile_pressure(
 		observation.visible_world.enemy_projectiles,
@@ -118,25 +160,28 @@ func _sample_channels(
 		interception_samples,
 		previous_projectile_positions,
 		channels,
-		scale
+		geometry
 	)
 	_saturate_channels(channels)
 	return channels
 
 
 func _sample_enemy_pressure(
-	tracks: Array, sample: Dictionary, channels: Dictionary, scale: Dictionary
+	tracks: Array, sample: Dictionary, channels: Dictionary, geometry: Dictionary
 ) -> void:
 	for track in tracks:
 		var position: Vector2 = _predict_track_position(track, sample.time) - sample.displacement
 		var uncertain_clearance: float = (
 			position.length()
-			- scale.player_radius
+			- geometry.player_radius
 			- track.last_measurement.visual_radius
 			- track.uncertainty_radius
 		)
 		var proximity := clamp(
-			(scale.enemy_pressure_distance - uncertain_clearance) / scale.enemy_pressure_distance,
+			(
+				(geometry.enemy_pressure_distance - uncertain_clearance)
+				/ geometry.enemy_pressure_distance
+			),
 			0.0,
 			1.0
 		)
@@ -144,16 +189,20 @@ func _sample_enemy_pressure(
 
 		var physical_clearance: float = (
 			position.length()
-			- scale.player_radius
+			- geometry.player_radius
 			- track.last_measurement.visual_radius
 		)
-		var contact := clamp(-physical_clearance / scale.player_radius, 0.0, 1.0)
+		var contact := clamp(-physical_clearance / geometry.player_radius, 0.0, 1.0)
 		channels.contact = max(channels.contact, contact * track.recency_confidence)
-		_accumulate_ranged_pressure(track, position, channels)
+		if contact > 0.0:
+			channels.contact_damage = max(
+				channels.contact_damage, track.behavior_profile.get("contact_damage", 1.0)
+			)
+		_accumulate_ranged_pressure(track, position, sample.time, channels)
 
 
 func _accumulate_ranged_pressure(
-	track: Dictionary, position: Vector2, channels: Dictionary
+	track: Dictionary, position: Vector2, sample_time: float, channels: Dictionary
 ) -> void:
 	if not track.behavior_profile.strategic_roles.ranged_pressure_source:
 		return
@@ -170,33 +219,40 @@ func _accumulate_ranged_pressure(
 	var proximity := clamp((pressure_distance - clearance) / pressure_distance, 0.0, 1.0)
 	if minimum_distance > 0.0:
 		proximity *= clamp(position.length() / minimum_distance, 0.0, 1.0)
+	var volley_pressure_factor := 1.0
+	var volley_window: Dictionary = track.behavior_profile.get("next_volley_window", {})
+	if volley_window.get("is_exact", false):
+		volley_pressure_factor = (0.0 if sample_time < volley_window.earliest_seconds else 1.0)
 	channels.ranged += (
 		proximity
 		* proximity
 		* track.recency_confidence
 		* attack.confidence
 		* attack.pressure_intensity
+		* volley_pressure_factor
 	)
 
 
 func _sample_spawn_pressure(
-	warnings: Array, sample: Dictionary, channels: Dictionary, scale: Dictionary
+	warnings: Array, sample: Dictionary, channels: Dictionary, geometry: Dictionary
 ) -> void:
 	for warning in warnings:
 		if warning.disposition != "hostile":
 			continue
 		var clearance: float = (
 			(warning.relative_position - sample.displacement).length()
-			- scale.player_radius
+			- geometry.player_radius
 		)
 		var proximity := clamp(
-			(scale.enemy_pressure_distance - clearance) / scale.enemy_pressure_distance, 0.0, 1.0
+			(geometry.enemy_pressure_distance - clearance) / geometry.enemy_pressure_distance,
+			0.0,
+			1.0
 		)
 		channels.spawn += proximity * proximity
 
 
 func _sample_edge_pressure(
-	bounds: Dictionary, displacement: Vector2, channels: Dictionary, scale: Dictionary
+	bounds: Dictionary, displacement: Vector2, channels: Dictionary, geometry: Dictionary
 ) -> void:
 	var future_distances := [
 		_add_if_known(bounds.distance_to_left, displacement.x),
@@ -205,9 +261,9 @@ func _sample_edge_pressure(
 		_add_if_known(bounds.distance_to_bottom, -displacement.y),
 	]
 	for distance in future_distances:
-		if distance == null or distance >= scale.edge_margin:
+		if distance == null or distance >= geometry.edge_margin:
 			continue
-		var proximity := clamp((scale.edge_margin - distance) / scale.edge_margin, 0.0, 1.0)
+		var proximity := clamp((geometry.edge_margin - distance) / geometry.edge_margin, 0.0, 1.0)
 		channels.edge += proximity * proximity
 
 
@@ -218,7 +274,7 @@ func _sample_allied_pressure(
 	sample_index: int,
 	consumed_single_use_sources: Dictionary,
 	channels: Dictionary,
-	scale: Dictionary
+	geometry: Dictionary
 ) -> void:
 	for source_index in sources.size():
 		var source: Dictionary = sources[source_index]
@@ -226,14 +282,14 @@ func _sample_allied_pressure(
 		if relief.active and relief.radius > 0.0:
 			if not relief.single_use:
 				channels.allied_suppression += _source_suppression(
-					observation.enemy_tracks, source, relief, sample, scale
+					observation.enemy_tracks, source, relief, sample, geometry
 				)
 			elif (
 				not consumed_single_use_sources.has(source_index)
 				and _has_single_use_trigger(observation.enemy_tracks, source, relief, sample)
 			):
 				channels.allied_suppression += _source_suppression(
-					observation.enemy_tracks, source, relief, sample, scale
+					observation.enemy_tracks, source, relief, sample, geometry, true
 				)
 				consumed_single_use_sources[source_index] = sample_index
 
@@ -244,11 +300,16 @@ func _sample_allied_pressure(
 			)
 
 		if source.kind == "player":
-			channels.ally_body += _ally_body_pressure(source, sample, scale)
+			channels.ally_body += _ally_body_pressure(source, sample, geometry)
 
 
 func _source_suppression(
-	tracks: Array, source: Dictionary, relief: Dictionary, sample: Dictionary, scale: Dictionary
+	tracks: Array,
+	source: Dictionary,
+	relief: Dictionary,
+	sample: Dictionary,
+	geometry: Dictionary,
+	require_visible_targets := false
 ) -> float:
 	var source_position := _predict_source_position(source, sample.time)
 	var player_activation_radius: float = relief.get("player_activation_radius", 0.0)
@@ -260,6 +321,8 @@ func _source_suppression(
 	var covered_pressure := 0.0
 	var strongest_relief := 0.0
 	for track in tracks:
+		if require_visible_targets and not track.visible:
+			continue
 		var enemy_position: Vector2 = _predict_track_position(track, sample.time)
 		var support_distance: float = (enemy_position - source_position).length()
 		if support_distance > relief.radius + track.last_measurement.visual_radius:
@@ -267,8 +330,8 @@ func _source_suppression(
 		var player_distance: float = (enemy_position - sample.displacement).length()
 		var pressure: float = clamp(
 			(
-				(scale.enemy_pressure_distance * 2.0 - player_distance)
-				/ (scale.enemy_pressure_distance * 2.0)
+				(geometry.enemy_pressure_distance * 2.0 - player_distance)
+				/ (geometry.enemy_pressure_distance * 2.0)
 			),
 			0.0,
 			1.0
@@ -290,6 +353,10 @@ func _has_single_use_trigger(
 ) -> bool:
 	var source_position := _predict_source_position(source, sample.time)
 	for track in tracks:
+		# A remembered trajectory is useful ambient pressure evidence, but cannot
+		# claim that an irreversible trigger will actually be consumed.
+		if not track.visible:
+			continue
 		var enemy_position := _predict_track_position(track, sample.time)
 		var trigger_radius: float = relief.activation_radius + track.last_measurement.visual_radius
 		if (enemy_position - source_position).length() <= trigger_radius:
@@ -312,15 +379,15 @@ func _source_healing_support(
 	return coverage * healing.intensity * opportunity * source.get("existence_confidence", 1.0)
 
 
-func _ally_body_pressure(ally: Dictionary, sample: Dictionary, scale: Dictionary) -> float:
+func _ally_body_pressure(ally: Dictionary, sample: Dictionary, geometry: Dictionary) -> float:
 	var ally_position: Vector2 = _predict_source_position(ally, sample.time)
 	var clearance: float = (
 		(ally_position - sample.displacement).length()
-		- scale.player_radius
+		- geometry.player_radius
 		- ally.visual_radius
 	)
 	var proximity: float = clamp(
-		(scale.ally_body_margin - clearance) / scale.ally_body_margin, 0.0, 1.0
+		(geometry.ally_body_margin - clearance) / geometry.ally_body_margin, 0.0, 1.0
 	)
 	return proximity * proximity
 
@@ -332,7 +399,7 @@ func _sample_projectile_pressure(
 	interception_samples: Dictionary,
 	previous_positions: Array,
 	channels: Dictionary,
-	scale: Dictionary
+	geometry: Dictionary
 ) -> void:
 	for projectile_index in projectiles.size():
 		var projectile: Dictionary = projectiles[projectile_index]
@@ -346,19 +413,26 @@ func _sample_projectile_pressure(
 		)
 		var clearance: float = (
 			closest_position.length()
-			- scale.player_radius
+			- geometry.player_radius
 			- projectile.visual_radius
 		)
 		var proximity: float = clamp(
-			(scale.projectile_pressure_distance - clearance) / scale.projectile_pressure_distance,
+			(
+				(geometry.projectile_pressure_distance - clearance)
+				/ geometry.projectile_pressure_distance
+			),
 			0.0,
 			1.0
 		)
 		var projectile_pressure: float = proximity * proximity
 		channels.projectile += projectile_pressure
 		channels.projectile_contact = max(
-			channels.projectile_contact, clamp(-clearance / scale.player_radius, 0.0, 1.0)
+			channels.projectile_contact, clamp(-clearance / geometry.player_radius, 0.0, 1.0)
 		)
+		if clearance < 0.0:
+			channels.contact_damage = max(
+				channels.contact_damage, projectile.get("contact_damage", 1.0)
+			)
 		if interception_sample >= 0 and sample_index >= interception_sample:
 			channels.projectile_interception += projectile_pressure
 			channels.projectile_contact_interception = max(
@@ -368,27 +442,34 @@ func _sample_projectile_pressure(
 
 
 func _sample_projectile_point_pressure(
-	projectiles: Array, sample: Dictionary, channels: Dictionary, scale: Dictionary
+	projectiles: Array, sample: Dictionary, channels: Dictionary, geometry: Dictionary
 ) -> void:
 	for projectile in projectiles:
 		var position: Vector2 = (
 			_predict_projectile_position(projectile, sample.time)
 			- sample.displacement
 		)
-		var clearance: float = position.length() - scale.player_radius - projectile.visual_radius
+		var clearance: float = position.length() - geometry.player_radius - projectile.visual_radius
 		var proximity: float = clamp(
-			(scale.projectile_pressure_distance - clearance) / scale.projectile_pressure_distance,
+			(
+				(geometry.projectile_pressure_distance - clearance)
+				/ geometry.projectile_pressure_distance
+			),
 			0.0,
 			1.0
 		)
 		channels.projectile += proximity * proximity
 		channels.projectile_contact = max(
-			channels.projectile_contact, clamp(-clearance / scale.player_radius, 0.0, 1.0)
+			channels.projectile_contact, clamp(-clearance / geometry.player_radius, 0.0, 1.0)
 		)
+		if clearance < 0.0:
+			channels.contact_damage = max(
+				channels.contact_damage, projectile.get("contact_damage", 1.0)
+			)
 
 
 func _find_projectile_interception_samples(
-	observation: Dictionary, samples: Array, scale: Dictionary
+	observation: Dictionary, samples: Array, geometry: Dictionary
 ) -> Dictionary:
 	var result := {}
 	for projectile_index in observation.visible_world.enemy_projectiles.size():
@@ -399,7 +480,7 @@ func _find_projectile_interception_samples(
 			if not interception.active or interception.radius <= 0.0:
 				continue
 			var sample_index: int = _find_interception_sample(
-				ally, interception, projectile, samples, scale
+				ally, interception, projectile, samples, geometry
 			)
 			if sample_index >= 0 and (earliest_sample < 0 or sample_index < earliest_sample):
 				earliest_sample = sample_index
@@ -413,7 +494,7 @@ func _find_interception_sample(
 	interception: Dictionary,
 	projectile: Dictionary,
 	samples: Array,
-	scale: Dictionary
+	geometry: Dictionary
 ) -> int:
 	var previous_projectile: Vector2 = projectile.relative_position
 	var previous_ally: Vector2 = ally.relative_position
@@ -437,7 +518,11 @@ func _find_interception_sample(
 		)
 		var threatens_player: bool = (
 			(previous_player_relative.linear_interpolate(player_relative, player_fraction)).length()
-			<= (scale.projectile_pressure_distance + scale.player_radius + projectile.visual_radius)
+			<= (
+				geometry.projectile_pressure_distance
+				+ geometry.player_radius
+				+ projectile.visual_radius
+			)
 		)
 		if crosses_shield and threatens_player and shield_fraction <= player_fraction:
 			return sample_index
@@ -519,6 +604,9 @@ func _accumulate_result(
 	result.peak_path_collision_risk = max(
 		result.peak_path_collision_risk, exposure.path_collision_risk
 	)
+	result.maximum_path_collision_damage = max(
+		result.maximum_path_collision_damage, channels.contact_damage
+	)
 	result.battlefield_exposure_trace.push_back(
 		{
 			"time": sample.time,
@@ -543,13 +631,7 @@ func _get_influence_sources(observation: Dictionary) -> Array:
 
 
 func _predict_projectile_position(projectile: Dictionary, time: float) -> Vector2:
-	return _motion_predictor.predict_position(
-		projectile.relative_position,
-		projectile.velocity,
-		projectile.acceleration,
-		projectile.motion_confidence,
-		time
-	)
+	return _projectile_motion_predictor.predict_position(projectile, time)
 
 
 func _predict_source_position(source: Dictionary, time: float) -> Vector2:
@@ -623,6 +705,7 @@ func _empty_result() -> Dictionary:
 		"integrated_environmental_exposure": 0.0,
 		"peak_environmental_pressure": 0.0,
 		"peak_path_collision_risk": 0.0,
+		"maximum_path_collision_damage": 0.0,
 		"initial_environmental_pressure": 0.0,
 		"terminal_environmental_pressure": 0.0,
 		"mean_environmental_pressure_derivative": 0.0,
@@ -644,4 +727,5 @@ func _empty_channels() -> Dictionary:
 		"allied_suppression": 0.0,
 		"healing_support": 0.0,
 		"projectile_interception": 0.0,
+		"contact_damage": 0.0,
 	}

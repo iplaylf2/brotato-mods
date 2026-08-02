@@ -4,13 +4,17 @@ extends Reference
 # public observation and candidate path geometry.
 
 const ObservedMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
+)
+const ProjectileMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
 
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 
 
@@ -195,9 +199,8 @@ func _first_incoming_hit_event(observation: Dictionary, samples: Array) -> Dicti
 					"dodge_probability": 1.0 - dodge_failure,
 				}
 		for projectile in observation.visible_world.enemy_projectiles:
-			var projectile_position: Vector2 = (
-				projectile.relative_position
-				+ projectile.velocity * sample.time
+			var projectile_position: Vector2 = _projectile_motion_predictor.predict_position(
+				projectile, sample.time
 			)
 			var collision_radius: float = (
 				observation.player_state.collision_radius

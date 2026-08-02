@@ -5,7 +5,7 @@ extends Reference
 # attacks.
 
 const ObservedMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
 )
 const WeaponEngagementModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_engagement_model.gd"
@@ -13,10 +13,14 @@ const WeaponEngagementModel := preload(
 const PlayerMovementStateProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
 )
+const OpportunityValuationModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_valuation_model.gd"
+)
 
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
 var _engagement_model: Reference = WeaponEngagementModel.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
+var _opportunity_valuation: Reference = OpportunityValuationModel.new()
 
 
 func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
@@ -112,7 +116,7 @@ func _accumulate_weapon_attack(
 	outcome: Dictionary
 ) -> void:
 	var displacement := _sample_displacement(action.samples, shot_time)
-	var targets := _targets_at_time(observation.enemy_tracks, displacement, shot_time)
+	var targets := _targets_at_time(observation, displacement, shot_time)
 	var primary: Dictionary = _nearest_legal_target(
 		targets, attack_model.delivery.minimum_range, attack_model.delivery.maximum_range + 50.0
 	)
@@ -125,7 +129,7 @@ func _accumulate_weapon_attack(
 	)
 	outcome.expected_weapon_damage += attack_outcome.expected_damage
 	outcome.expected_producer_damage += attack_outcome.expected_producer_damage
-	outcome.expected_loot_target_damage += attack_outcome.expected_loot_target_damage
+	outcome.expected_bonus_kill_reward_progress += attack_outcome.expected_bonus_kill_reward_progress
 	outcome.ranged_source_suppression_value += attack_outcome.ranged_source_suppression_value
 	outcome.expected_attack_hits += attack_outcome.expected_hits
 	outcome.expected_kill_weight += attack_outcome.expected_kill_weight
@@ -338,8 +342,10 @@ func _accumulate_target_outcome(
 	result.expected_kill_weight += min(1.0, expected_damage / target.maximum_health)
 	if target.enemy_producer:
 		result.expected_producer_damage += expected_damage
-	if target.loot_reward_target:
-		result.expected_loot_target_damage += expected_damage
+	result.expected_bonus_kill_reward_progress += (
+		min(1.0, expected_damage / target.maximum_health)
+		* target.bonus_kill_reward_value
+	)
 	if target.ranged_pressure_source:
 		result.ranged_source_suppression_value += (
 			expected_damage
@@ -349,9 +355,9 @@ func _accumulate_target_outcome(
 		)
 
 
-func _targets_at_time(tracks: Array, displacement: Vector2, time: float) -> Array:
+func _targets_at_time(observation: Dictionary, displacement: Vector2, time: float) -> Array:
 	var targets := []
-	for track in tracks:
+	for track in observation.enemy_tracks:
 		if not track.visible:
 			continue
 		targets.push_back(
@@ -360,7 +366,8 @@ func _targets_at_time(tracks: Array, displacement: Vector2, time: float) -> Arra
 				"position": _predict_track_position(track, time) - displacement,
 				"radius": track.last_measurement.visual_radius,
 				"enemy_producer": track.behavior_profile.strategic_roles.enemy_producer,
-				"loot_reward_target": track.behavior_profile.strategic_roles.loot_reward_target,
+				"bonus_kill_reward_value":
+				_opportunity_valuation.bonus_kill_reward_value(observation, track),
 				"ranged_pressure_source":
 				track.behavior_profile.strategic_roles.ranged_pressure_source,
 				"ranged_pressure_intensity":
@@ -415,7 +422,7 @@ func _empty_attack_outcome() -> Dictionary:
 	return {
 		"expected_damage": 0.0,
 		"expected_producer_damage": 0.0,
-		"expected_loot_target_damage": 0.0,
+		"expected_bonus_kill_reward_progress": 0.0,
 		"ranged_source_suppression_value": 0.0,
 		"expected_hits": 0.0,
 		"expected_kill_weight": 0.0,

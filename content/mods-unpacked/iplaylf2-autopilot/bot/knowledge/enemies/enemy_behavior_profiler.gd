@@ -14,7 +14,7 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 			"peak_closing_speed": measurement.closing_speed,
 			"stable_mechanic_profile": measurement.stable_mechanic_profile.duplicate(true),
 			"ranged_attack_inferred": measurement.ranged_attack_inferred,
-			"loot_reward_known": measurement.loot_reward_known,
+			"next_volley_window": measurement.next_volley_window.duplicate(true),
 			"enemy_production_known": measurement.enemy_production_known,
 		}
 	return {
@@ -23,7 +23,7 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 		"stable_mechanic_profile": measurement.stable_mechanic_profile.duplicate(true),
 		"ranged_attack_inferred":
 		previous.ranged_attack_inferred or measurement.ranged_attack_inferred,
-		"loot_reward_known": previous.loot_reward_known or measurement.loot_reward_known,
+		"next_volley_window": measurement.next_volley_window.duplicate(true),
 		"enemy_production_known":
 		previous.enemy_production_known or measurement.enemy_production_known,
 	}
@@ -46,11 +46,14 @@ func build_profile(evidence: Dictionary) -> Dictionary:
 	var is_ranged_source: bool = attack_behavior.get("creates_projectile_pressure", false)
 	return {
 		"attack_behavior": attack_behavior,
+		"next_volley_window": evidence.next_volley_window.duplicate(true),
 		"durability": evidence.stable_mechanic_profile.durability.duplicate(true),
+		"contact_damage": evidence.stable_mechanic_profile.contact_damage,
+		"kill_rewards": evidence.stable_mechanic_profile.kill_rewards.duplicate(true),
 		"movement_behavior": _classify_movement(evidence),
 		"strategic_roles":
 		{
-			"loot_reward_target": evidence.loot_reward_known,
+			"bonus_reward_target": evidence.stable_mechanic_profile.kill_rewards.has_bonus_reward,
 			"enemy_producer": evidence.enemy_production_known,
 			"ranged_pressure_source": is_ranged_source,
 		},

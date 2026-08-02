@@ -6,7 +6,7 @@ extends Reference
 # WeaponAttackPredictor.
 
 const ObservedMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
 )
 const PlayerMovementStateProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"

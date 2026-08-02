@@ -26,7 +26,25 @@ func compile(enemy: Node) -> Dictionary:
 		# Maximum health is a conservative durability prior; current hidden health
 		# is deliberately not read.
 		"durability": {"maximum_health": _get_maximum_health(enemy)},
+		"contact_damage": _get_contact_damage(enemy),
+		"kill_rewards": _compile_kill_rewards(enemy, archetype),
 	}
+
+
+func _compile_kill_rewards(enemy: Node, archetype: String) -> Dictionary:
+	var rewards := {
+		"base_materials": 0.0,
+		"consumable_drop_chance": 0.0,
+		"guaranteed_consumable": false,
+		"curse_gain": 1.0 if archetype == "evil_mob" else 0.0,
+		"has_bonus_reward": bool(enemy.is_loot) if "is_loot" in enemy else false,
+	}
+	if "stats" in enemy and enemy.stats != null:
+		rewards.base_materials = max(0.0, float(enemy.stats.value))
+		rewards.consumable_drop_chance = clamp(float(enemy.stats.item_drop_chance), 0.0, 1.0)
+		rewards.guaranteed_consumable = bool(enemy.stats.always_drop_consumables)
+	rewards.has_bonus_reward = rewards.has_bonus_reward or rewards.curse_gain > 0.0
+	return rewards
 
 
 func _compile_attack_behavior(enemy: Node) -> Dictionary:
@@ -70,7 +88,10 @@ func _compile_attack_behavior(enemy: Node) -> Dictionary:
 		maximum_projectiles_per_volley = max(
 			maximum_projectiles_per_volley, int(behavior.number_projectiles)
 		)
-		var cooldown_seconds := max(1.0, float(behavior.cooldown)) / 60.0
+		var cooldown_seconds := (
+			max(1.0, float(behavior.cooldown - behavior.max_cd_randomization))
+			/ 60.0
+		)
 		maximum_projectiles_per_second = max(
 			maximum_projectiles_per_second, float(behavior.number_projectiles) / cooldown_seconds
 		)
@@ -111,6 +132,8 @@ func _compile_attack_behavior(enemy: Node) -> Dictionary:
 		"maximum_projectile_speed": maximum_projectile_speed,
 		"maximum_projectiles_per_volley": maximum_projectiles_per_volley,
 		"maximum_projectiles_per_second": maximum_projectiles_per_second,
+		"volley_interval": _compile_volley_interval(shooting_behaviors),
+		"launch_randomness": _compile_launch_randomness(shooting_behaviors),
 		"pressure_intensity":
 		clamp(
 			sqrt(maximum_projectiles_per_second),
@@ -120,6 +143,55 @@ func _compile_attack_behavior(enemy: Node) -> Dictionary:
 		"delivery_modes": delivery_modes,
 		"has_stationary_hazards": has_stationary_hazards,
 		"all_projectiles_removed_on_death": all_projectiles_removed_on_death,
+	}
+
+
+func _compile_volley_interval(behaviors: Array) -> Dictionary:
+	var minimum_interval := INF
+	var maximum_interval := 0.0
+	var has_random_cooldown := false
+	var has_long_cooldown := false
+	for behavior in behaviors:
+		has_random_cooldown = has_random_cooldown or behavior.max_cd_randomization > 0
+		minimum_interval = min(
+			minimum_interval, max(1.0, behavior.cooldown - behavior.max_cd_randomization) / 60.0
+		)
+		maximum_interval = max(
+			maximum_interval, max(1.0, behavior.cooldown + behavior.max_cd_randomization) / 60.0
+		)
+		if behavior.long_cooldown_every_x_shoots > 0:
+			has_long_cooldown = true
+			maximum_interval = max(maximum_interval, behavior.long_cooldown / 60.0)
+	return {
+		"minimum_seconds": 0.0 if minimum_interval == INF else minimum_interval,
+		"maximum_seconds": maximum_interval,
+		"has_random_cooldown": has_random_cooldown,
+		"has_long_cooldown": has_long_cooldown,
+	}
+
+
+func _compile_launch_randomness(behaviors: Array) -> Dictionary:
+	var has_random_direction := false
+	var has_random_speed := false
+	var has_random_origin := false
+	for behavior in behaviors:
+		has_random_direction = (
+			has_random_direction
+			or behavior.random_direction
+			or behavior.base_direction_randomization > 0.0
+			or (behavior.projectile_spread > 0.0 and not behavior.constant_spread)
+			or behavior.random_rotation > 0.0
+		)
+		has_random_speed = has_random_speed or behavior.projectile_speed_randomization > 0
+		has_random_origin = (
+			has_random_origin
+			or behavior.constant_spread_rand_base_pos > 0.0
+			or (behavior.projectile_spawn_spread > 0 and not behavior.constant_spread)
+		)
+	return {
+		"has_random_direction": has_random_direction,
+		"has_random_speed": has_random_speed,
+		"has_random_origin": has_random_origin,
 	}
 
 
@@ -202,4 +274,12 @@ func _append_attached_projectiles(projectiles: Array, node: Node) -> void:
 func _get_maximum_health(enemy: Node) -> float:
 	if "max_stats" in enemy and enemy.max_stats != null and "health" in enemy.max_stats:
 		return max(1.0, float(enemy.max_stats.health))
+	return 1.0
+
+
+func _get_contact_damage(enemy: Node) -> float:
+	if "_hitbox" in enemy and enemy._hitbox != null:
+		return max(0.0, float(enemy._hitbox.damage))
+	if "current_stats" in enemy and enemy.current_stats != null and "damage" in enemy.current_stats:
+		return max(0.0, float(enemy.current_stats.damage))
 	return 1.0

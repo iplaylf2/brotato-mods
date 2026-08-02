@@ -11,6 +11,9 @@ const ObservedMotionEstimator := preload(
 const EnemyMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_mechanic_compiler.gd"
 )
+const EnemyVolleyObserver := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/enemy_volley_observer.gd"
+)
 const StructureMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/structures/structure_mechanic_compiler.gd"
 )
@@ -20,14 +23,23 @@ const AllyMechanicCompiler := preload(
 const ConsumableProfileAdapter := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/pickups/consumable_profile_adapter.gd"
 )
+const NeutralDestructionCompiler := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/neutrals/neutral_destruction_compiler.gd"
+)
+const ProjectileMotionCompiler := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/projectiles/projectile_motion_compiler.gd"
+)
 
 var _main: Node
 var _players: Array
 var _motion_estimators := []
 var _enemy_mechanic_compiler: Reference = EnemyMechanicCompiler.new()
+var _enemy_volley_observer: Reference = EnemyVolleyObserver.new()
 var _structure_mechanic_compiler: Reference = StructureMechanicCompiler.new()
 var _ally_mechanic_compiler: Reference = AllyMechanicCompiler.new()
 var _consumable_profile_adapter: Reference = ConsumableProfileAdapter.new()
+var _neutral_destruction_compiler: Reference = NeutralDestructionCompiler.new()
+var _projectile_motion_compiler: Reference = ProjectileMotionCompiler.new()
 
 
 func _init(main: Node, players: Array) -> void:
@@ -42,7 +54,7 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	var origin: Vector2 = player.global_position
 	var enemies := _observe_enemies(player, visible_rect)
 	var enemy_projectiles := _observe_enemy_projectiles(origin, visible_rect, enemies)
-	var trees := _observe_nodes(_main._entity_spawner.neutrals, origin, visible_rect, "tree")
+	var trees := _observe_trees(origin, visible_rect)
 	var materials := _observe_children(_main._materials_container, origin, visible_rect, "material")
 	var consumables := _observe_consumables(origin, visible_rect)
 	var structures := _observe_structures(origin, visible_rect)
@@ -103,8 +115,8 @@ func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 					"observed_speed": enemy_velocity.length(),
 					"closing_speed": 0.0,
 					"stable_mechanic_profile": _enemy_mechanic_compiler.compile(enemy),
+					"next_volley_window": _enemy_volley_observer.observe(enemy),
 					"ranged_attack_inferred": false,
-					"loot_reward_known": enemy.is_loot,
 					"enemy_production_known": _can_spawn_enemies(enemy),
 				},
 			}
@@ -152,6 +164,8 @@ func _append_visible_projectiles(
 			observation._world_position = child.global_position
 			observation.acceleration = Vector2.ZERO
 			observation.motion_confidence = 0.0
+			observation.motion_model = _projectile_motion_compiler.compile(child)
+			observation.contact_damage = max(0.0, float(child.get_damage()))
 			observations.push_back(observation)
 		_append_visible_projectiles(observations, child, origin, visible_rect)
 
@@ -268,6 +282,19 @@ func _observe_nodes(nodes: Array, origin: Vector2, visible_rect: Rect2, kind: St
 	var observations := []
 	for node in nodes:
 		_append_observation(observations, node, origin, visible_rect, kind)
+	return observations
+
+
+func _observe_trees(origin: Vector2, visible_rect: Rect2) -> Array:
+	var observations := []
+	for tree in _main._entity_spawner.neutrals:
+		if not _is_node_visible(tree, visible_rect):
+			continue
+		var observation := _make_entity_observation(tree, origin, "tree")
+		observation._source = tree
+		observation._world_position = tree.global_position
+		observation.destructible_profile = _neutral_destruction_compiler.compile(tree)
+		observations.push_back(observation)
 	return observations
 
 

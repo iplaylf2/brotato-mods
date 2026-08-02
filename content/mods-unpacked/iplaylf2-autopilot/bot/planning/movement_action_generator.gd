@@ -4,37 +4,48 @@ extends Reference
 # Forecast duration follows observed encounter timing; it is not an execution
 # commitment. Zero velocity is the origin of the same action space, not a mode.
 
-const MovementPlanningTiming := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
+const MovementTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
 )
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
-const MovementScaleModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
+const MovementGeometryModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
+)
+const ProjectileMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
 
+const STRATEGIC_DIRECTION_COUNT := 8
+const MAX_PROJECTILE_PHASE_STEP := PI / 2.0
+
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
-var _movement_scale: Reference = MovementScaleModel.new()
+var _movement_geometry: Reference = MovementGeometryModel.new()
+var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 
 
-func generate(
-	observation: Dictionary, search_budget: Dictionary, navigation_intent: Dictionary
-) -> Array:
-	var forecast_seconds := _forecast_window(observation)
-	var sample_count: int = search_budget.forecast_sample_count
-	var directions := _candidate_directions(search_budget.direction_count, navigation_intent)
+func generate(observation: Dictionary, navigation_intent: Dictionary) -> Array:
+	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var forecast_seconds := _forecast_window(observation, timing)
+	var sample_count := _forecast_sample_count(observation, forecast_seconds, timing)
+	var direction_count: int = _movement_geometry.derive(observation).direction_count
+	var directions := _candidate_directions(direction_count, navigation_intent)
 	var actions := [
-		_make_action(observation, "no_movement_input", Vector2.ZERO, forecast_seconds, sample_count)
+		_make_action(
+			observation, "no_movement_input", Vector2.ZERO, forecast_seconds, sample_count, true
+		)
 	]
 	for direction_index in directions.size():
+		var direction: Vector2 = directions[direction_index]
 		actions.push_back(
 			_make_action(
 				observation,
 				"movement_input_%s" % direction_index,
-				directions[direction_index],
+				direction,
 				forecast_seconds,
-				sample_count
+				sample_count,
+				_is_strategic_direction(direction, navigation_intent)
 			)
 		)
 	return actions
@@ -45,13 +56,15 @@ func _make_action(
 	action_id: String,
 	movement: Vector2,
 	forecast_seconds: float,
-	sample_count: int
+	sample_count: int,
+	is_strategic_candidate: bool
 ) -> Dictionary:
 	var samples := []
 	for step in range(1, sample_count + 1):
-		# Quadratic spacing is dense near the actually executed 0.1 s interval and
-		# sparse at the speculative end of the forecast.
-		var fraction: float = pow(float(step) / float(sample_count), 1.55)
+		# Equal spacing makes the maximum swept segment explicit: sample_count is
+		# derived so neither player travel nor deterministic curve phase jumps over
+		# its geometric resolution.
+		var fraction: float = float(step) / float(sample_count)
 		var time := forecast_seconds * fraction
 		samples.push_back(
 			{
@@ -66,6 +79,7 @@ func _make_action(
 		"movement": movement,
 		"forecast_seconds": forecast_seconds,
 		"samples": samples,
+		"is_strategic_candidate": is_strategic_candidate,
 	}
 
 
@@ -75,6 +89,15 @@ func _candidate_directions(direction_count: int, navigation_intent: Dictionary) 
 		result.push_back(
 			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))
 		)
+	# The geometry-derived lattice owns escape resolution. The octants own smooth
+	# strategic comparison and are added independently when the two grids do not
+	# share an angle.
+	for strategic_index in STRATEGIC_DIRECTION_COUNT:
+		var strategic_direction := Vector2.RIGHT.rotated(
+			TAU * float(strategic_index) / float(STRATEGIC_DIRECTION_COUNT)
+		)
+		if not _has_similar_direction(result, strategic_direction):
+			result.push_back(strategic_direction)
 	var movement_preference: Vector2 = navigation_intent.movement_preference
 	if movement_preference != Vector2.ZERO:
 		var preferred_direction := movement_preference.normalized()
@@ -83,14 +106,14 @@ func _candidate_directions(direction_count: int, navigation_intent: Dictionary) 
 	return result
 
 
-func _forecast_window(observation: Dictionary) -> float:
+func _forecast_window(observation: Dictionary, timing: Dictionary) -> float:
 	var nearest_encounter := INF
 	var player_velocity: Vector2 = _player_kinematics.predict_average_velocity(
 		observation,
 		observation.player_state.movement.input_vector,
-		MovementPlanningTiming.LOCAL_FORECAST_MIN_SECONDS
+		timing.near_term_horizon_seconds
 	)
-	var scale: Dictionary = _movement_scale.derive(observation)
+	var geometry: Dictionary = _movement_geometry.derive(observation)
 	for track in observation.enemy_tracks:
 		var relative_velocity: Vector2 = track.estimated_velocity - player_velocity
 		nearest_encounter = min(
@@ -98,26 +121,74 @@ func _forecast_window(observation: Dictionary) -> float:
 			_encounter_time(
 				track.relative_position,
 				relative_velocity,
-				scale.player_radius + track.last_measurement.visual_radius + scale.encounter_margin
+				(
+					geometry.player_radius
+					+ track.last_measurement.visual_radius
+					+ geometry.encounter_margin
+				)
 			)
 		)
 	for projectile in observation.visible_world.enemy_projectiles:
-		var relative_velocity: Vector2 = projectile.velocity - player_velocity
+		var projectile_displacement: Vector2 = (
+			_projectile_motion_predictor.predict_position(
+				projectile, timing.default_local_horizon_seconds
+			)
+			- projectile.relative_position
+		)
+		var relative_velocity: Vector2 = (
+			projectile_displacement / timing.default_local_horizon_seconds
+			- player_velocity
+		)
 		nearest_encounter = min(
 			nearest_encounter,
 			_encounter_time(
 				projectile.relative_position,
 				relative_velocity,
-				scale.player_radius + projectile.visual_radius + scale.encounter_margin
+				geometry.player_radius + projectile.visual_radius + geometry.encounter_margin
 			)
 		)
 	if nearest_encounter == INF:
-		return MovementPlanningTiming.LOCAL_FORECAST_DEFAULT_SECONDS
+		return timing.default_local_horizon_seconds
 	return clamp(
-		nearest_encounter + MovementPlanningTiming.CONTROL_INTERVAL_SECONDS,
-		MovementPlanningTiming.LOCAL_FORECAST_MIN_SECONDS,
-		MovementPlanningTiming.LOCAL_FORECAST_MAX_SECONDS
+		nearest_encounter + timing.control_interval_seconds,
+		timing.default_local_horizon_seconds,
+		timing.maximum_local_horizon_seconds
 	)
+
+
+func _forecast_sample_count(
+	observation: Dictionary, forecast_seconds: float, timing: Dictionary
+) -> int:
+	var geometry: Dictionary = _movement_geometry.derive(observation)
+	var collision_diameter: float = max(1.0, geometry.player_radius * 2.0)
+	var spatial_samples := int(ceil(geometry.command_speed * forecast_seconds / collision_diameter))
+	var phase_samples := 1
+	for projectile in observation.visible_world.enemy_projectiles:
+		phase_samples = max(
+			phase_samples,
+			int(
+				ceil(
+					(
+						_projectile_motion_predictor.maximum_angular_velocity(projectile)
+						* forecast_seconds
+						/ MAX_PROJECTILE_PHASE_STEP
+					)
+				)
+			)
+		)
+	# At least one sample per future control commitment keeps temporal events and
+	# spatial sweeps on the same resolution contract.
+	var control_samples := int(ceil(forecast_seconds / timing.control_interval_seconds))
+	return int(max(max(1, spatial_samples), max(phase_samples, control_samples)))
+
+
+func _is_strategic_direction(direction: Vector2, navigation_intent: Dictionary) -> bool:
+	var strategic_step := TAU / float(STRATEGIC_DIRECTION_COUNT)
+	var nearest_strategic_angle := round(direction.angle() / strategic_step) * strategic_step
+	if abs(wrapf(direction.angle() - nearest_strategic_angle, -PI, PI)) <= 0.001:
+		return true
+	var preference: Vector2 = navigation_intent.movement_preference
+	return preference != Vector2.ZERO and direction.dot(preference.normalized()) > 0.999
 
 
 func _encounter_time(position: Vector2, velocity: Vector2, threat_radius: float) -> float:

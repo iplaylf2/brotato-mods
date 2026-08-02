@@ -42,6 +42,7 @@ func project(observation: Dictionary) -> Dictionary:
 		{
 			"available": _project_recovery(rules, "healing", 1.0) > 0.0,
 			"consumable_available": maximum_consumable_recovery > 0.0,
+			"maximum_consumable_recovery": maximum_consumable_recovery,
 		},
 		"survival":
 		{

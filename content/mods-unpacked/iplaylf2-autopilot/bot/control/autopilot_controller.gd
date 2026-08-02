@@ -9,17 +9,15 @@ const AutopilotMovementBehavior := preload(
 const MovementPlanner := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planner.gd"
 )
-const MovementPlanningTiming := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
+const MovementTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
 )
 const DecisionTelemetry := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/control/decision_telemetry.gd"
 )
-const PlanningFrameBudgetMonitor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/control/planning_frame_budget_monitor.gd"
+const PhysicsFrameBudgetMonitor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/control/physics_frame_budget_monitor.gd"
 )
-const REPLAN_INTERVAL_SECONDS := MovementPlanningTiming.CONTROL_INTERVAL_SECONDS
-
 var _observation_service: Node
 var _players: Array = []
 var _actuators: Array = []
@@ -28,13 +26,15 @@ var _movement_planners: Array = []
 var _current_plans: Array = []
 var _previous_movements: Array = []
 var _decision_telemetry: Reference = DecisionTelemetry.new()
-var _planning_frame_budget_monitor: Reference = PlanningFrameBudgetMonitor.new()
+var _physics_frame_budget_monitor: Reference = PhysicsFrameBudgetMonitor.new()
 var _seconds_until_replan := 0.0
 var _shut_down := false
 var _previous_physics_frame_included_planning := false
+var _replan_interval_seconds := 0.0
 
 
 func initialize(observation_service: Node, players: Array) -> void:
+	_replan_interval_seconds = MovementTimingModel.control_interval_seconds()
 	_observation_service = observation_service
 	_players = players
 	for player in players:
@@ -46,21 +46,21 @@ func initialize(observation_service: Node, players: Array) -> void:
 		_current_plans.push_back({})
 		_previous_movements.push_back(Vector2.ZERO)
 		player._current_movement_behavior = actuator
-	_decision_telemetry.start(players.size(), REPLAN_INTERVAL_SECONDS)
+	_decision_telemetry.start(players.size(), _replan_interval_seconds)
 
 
 func _physics_process(delta: float) -> void:
 	if _shut_down or get_tree().paused or not is_instance_valid(_observation_service):
 		return
 
-	_planning_frame_budget_monitor.observe_physics_duration(
+	_physics_frame_budget_monitor.observe_physics_duration(
 		delta, _previous_physics_frame_included_planning
 	)
 	_previous_physics_frame_included_planning = false
 	_seconds_until_replan -= delta
 	if _seconds_until_replan > 0.0:
 		return
-	_seconds_until_replan = REPLAN_INTERVAL_SECONDS
+	_seconds_until_replan = _replan_interval_seconds
 	_replan_all_players()
 	_previous_physics_frame_included_planning = true
 
@@ -97,7 +97,7 @@ func _replan_all_players() -> void:
 	for player in _players:
 		if is_instance_valid(player):
 			scheduled_planner_count += 1
-	var frame_budget_context: Dictionary = _planning_frame_budget_monitor.build_context(
+	var frame_budget_context: Dictionary = _physics_frame_budget_monitor.build_context(
 		scheduled_planner_count
 	)
 	for player_index in _players.size():
@@ -115,7 +115,7 @@ func _replan_all_players() -> void:
 			observation,
 			plan,
 			_previous_movements[player_index],
-			REPLAN_INTERVAL_SECONDS
+			_replan_interval_seconds
 		)
 		var movement: Vector2 = plan.movement
 		_actuators[player_index].set_movement(movement)

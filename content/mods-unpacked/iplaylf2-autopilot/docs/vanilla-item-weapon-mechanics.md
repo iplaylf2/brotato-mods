@@ -32,7 +32,7 @@
 | 可见宠物与构筑物 | 炮塔、地雷、花园、Wandering Bot、Jellyshield 等 | 出现后按可见作用区建模战斗、治疗、减速、拦截和资源作用 |
 | 暴击击杀奖励 | Hunting Trophy、Tentacle | 以伤害占敌人最大生命的保守击杀权重预测材料与恢复，不读取当前生命 |
 | 弹匣式节奏 | Revolver、Chain Gun | 使用当前射击相位、距额外装填的剩余攻击数和装填周期安排攻击 |
-| 交替近战形态 | Fighting Stick、Sword、Vorpal Sword、Excalibur | 观察下一击实际为横扫或突刺，不再永远使用资源中的初始形态 |
+| 交替近战形态 | Fighting Stick、Sword、Vorpal Sword、Excalibur | 按下一击实际的横扫或突刺形态预测 |
 | 穿透、弹射与暴击链 | Bandana、Ricochet、Crossbow、Shuriken | 普通及暴击触发的链数、伤害衰减和当前目标密度共同决定容量 |
 | 命中后二次武器效果 | 爆炸武器、燃烧武器、Cactus Mace、Lightning Shiv、Sniper Gun、Vorpal Sword | 统一描述爆炸、燃烧、派生投射物和斩杀概率，并计入短名单动作的预期伤害 |
 | 动态武器数值 | Stick、Rail Gun、Ghost 武器及属性换算内容 | 直接读取 `current_stats`；已经生效的堆叠、无伤成长、套装和属性换算无需识别内容 ID |
