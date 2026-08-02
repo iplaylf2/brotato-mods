@@ -10,7 +10,7 @@ const BUSY_THREAT_COUNT := 140
 const EXTREME_THREAT_COUNT := 320
 
 
-func build(observation: Dictionary) -> Dictionary:
+func allocate(observation: Dictionary) -> Dictionary:
 	var enemy_count: int = observation.enemy_tracks.size()
 	var projectile_count: int = observation.visible_world.enemy_projectiles.size()
 	var influence_source_count: int = (
@@ -66,7 +66,7 @@ func build(observation: Dictionary) -> Dictionary:
 func _count_projectile_interceptors(observation: Dictionary) -> int:
 	var result := 0
 	for ally in observation.visible_world.get("allied_agents", []):
-		if ally.influence.roles.projectile_interceptor:
+		if ally.influence.projectile_interception.active:
 			result += 1
 	return result
 

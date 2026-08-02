@@ -8,7 +8,7 @@ func adapt(effects: Dictionary) -> Array:
 	var held_material_percent: float = effects[Keys.gain_pct_gold_start_wave_hash]
 	if held_material_percent != 0.0:
 		_append_scalar_rule(
-			rules, "wave_start", "materials", "add_percent_of_current", held_material_percent
+			rules, "wave_start", "materials", 0.0, {}, held_material_percent / 100.0
 		)
 
 	var living_enemy_percent: float = effects[Keys.pacifist_hash]
@@ -17,9 +17,10 @@ func adapt(effects: Dictionary) -> Array:
 			rules,
 			"wave_end",
 			"materials_and_experience_per_living_enemy",
-			"add_percent_of_enemy_material_value",
-			living_enemy_percent,
-			{"enemy_preservation": 1.0}
+			0.0,
+			{"enemy_preservation": 1.0},
+			0.0,
+			living_enemy_percent / 100.0
 		)
 
 	var materials_per_enemy: float = effects[Keys.materials_per_living_enemy_hash]
@@ -28,7 +29,6 @@ func adapt(effects: Dictionary) -> Array:
 			rules,
 			"wave_end",
 			"materials_and_experience_per_living_enemy",
-			"add",
 			materials_per_enemy,
 			{"enemy_preservation": 1.0}
 		)
@@ -39,7 +39,6 @@ func adapt(effects: Dictionary) -> Array:
 			rules,
 			"wave_end",
 			"materials_and_experience_per_living_tree",
-			"add",
 			materials_per_tree,
 			{"tree_preservation": 1.0}
 		)
@@ -50,9 +49,10 @@ func _append_scalar_rule(
 	rules: Array,
 	event: String,
 	target: String,
-	operation: String,
 	value: float,
-	outcome_channels := {}
+	outcome_channels := {},
+	target_coefficient := 0.0,
+	event_value_coefficient := 0.0
 ) -> void:
 	rules.push_back(
 		{
@@ -62,8 +62,10 @@ func _append_scalar_rule(
 			[
 				{
 					"target": target,
-					"operation": operation,
+					"operation": "add",
 					"value": value,
+					"target_coefficient": target_coefficient,
+					"event_value_coefficient": event_value_coefficient,
 					"outcome_channels": outcome_channels,
 				}
 			],

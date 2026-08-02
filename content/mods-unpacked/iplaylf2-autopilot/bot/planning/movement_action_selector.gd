@@ -8,6 +8,8 @@ const MINIMUM_SCORE_BAND := 0.5
 
 
 func select(scored_actions: Array, context: Dictionary, seed: int) -> Dictionary:
+	# The generator always contributes the zero-input action. An empty list is an
+	# internal planner contract failure, not a recoverable gameplay condition.
 	assert(not scored_actions.empty())
 	var best_score: float = scored_actions[0].score
 	var score_band := max(MINIMUM_SCORE_BAND, abs(best_score) * NEAR_OPTIMAL_RELATIVE_BAND)

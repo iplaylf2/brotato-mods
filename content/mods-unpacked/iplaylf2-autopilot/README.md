@@ -43,7 +43,8 @@ Autopilot 从当前可见信息、玩家自身状态、稳定机制知识和先�
 
 - [玩家权限边界](docs/fair-play.md) 定义允许读取的信息和唯一控制面；
 - [架构文档](docs/architecture.md) 定义公共观察、规划结果、决策流程和模块责任；
-- [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 定义目标游戏版本的机制覆盖范围和升级检查清单。
+- [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人攻击与投射物入口；
+- [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。
 
 ## 诊断接口
 

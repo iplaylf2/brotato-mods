@@ -14,11 +14,15 @@ const WaveRuleAdapter := preload(
 const SurvivalRuleAdapter := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/player_effects/survival_rule_adapter.gd"
 )
+const CombatRuleAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/player_effects/combat_rule_adapter.gd"
+)
 
 var _movement_rule_adapter: Reference = MovementRuleAdapter.new()
 var _pickup_rule_adapter: Reference = PickupRuleAdapter.new()
 var _wave_rule_adapter: Reference = WaveRuleAdapter.new()
 var _survival_rule_adapter: Reference = SurvivalRuleAdapter.new()
+var _combat_rule_adapter: Reference = CombatRuleAdapter.new()
 
 
 func adapt(player_index: int, player: Node) -> Dictionary:
@@ -28,6 +32,7 @@ func adapt(player_index: int, player: Node) -> Dictionary:
 	rules.append_array(_pickup_rule_adapter.adapt(effects, player_index))
 	rules.append_array(_wave_rule_adapter.adapt(effects))
 	rules.append_array(_survival_rule_adapter.adapt(effects, player_index))
+	rules.append_array(_combat_rule_adapter.adapt(effects))
 	return {
 		"effect_rules": rules,
 		"automatic_attacks_allowed_while_moving": bool(effects[Keys.can_attack_while_moving_hash]),

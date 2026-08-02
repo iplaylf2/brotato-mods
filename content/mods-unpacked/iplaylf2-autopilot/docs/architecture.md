@@ -6,39 +6,22 @@
 
 按修改对象选择阅读入口：公共数据见“观察契约”，决策行为见“滚动规划”，版本知识见“机制知识”，
 代码归属见“模块责任”。敌人与投射物的目标版本覆盖范围单独保存在
-[原版敌人与投射物机制参考](vanilla-enemy-mechanics.md)。
+[原版敌人与投射物机制参考](vanilla-enemy-mechanics.md)；道具和武器的非常规效果审计见
+[原版道具与武器机制审计](vanilla-item-weapon-mechanics.md)。
 
 ## 运行链路
 
 ```text
 主场景扩展
 ├── ObservationService
-│   ├── PlayerStateObserver
-│   ├── VisibleWorldObserver ──> ObservedMotionEstimator
-│   │                         ├─> EnemyMechanicCompiler
-│   │                         ├─> AllyMechanicCompiler
-│   │                         └─> StructureMechanicCompiler
-│   └── ObservedWorldMemory
-│       ├── EnemyBehaviorProfiler
-│       └── RememberedEntityExistenceModel
+│   ├── 当前观察：PlayerStateObserver、VisibleWorldObserver
+│   ├── 版本知识：bot/knowledge
+│   └── 局内记忆：ObservedWorldMemory
 └── AutopilotController
     ├── MovementPlanner
-    │   ├── SearchBudgetPolicy
-    │   ├── NavigationValueGraph
-    │   │   ├── BattlefieldPressureModel ──> ObservedMotionPredictor
-    │   │   └── WeaponEngagementModel ──> ObservedMotionPredictor
-    │   ├── MovementActionGenerator ──> PlayerKinematicsModel
-    │   ├── MovementOutcomePredictor
-    │   │   ├── BattlefieldPressureModel ──> ObservedMotionPredictor
-    │   │   ├── VelocityObstacleModel ──> PlayerKinematicsModel
-    │   │   ├── PlayerRuleOutcomePredictor ──> PlayerRuleProjection
-    │   │   ├── PlayerMovementStateProjector
-    │   │   └── WeaponAttackPredictor
-    │   │       ├── WeaponEngagementModel ──> PlayerMovementStateProjector
-    │   │       ├── PlayerMovementStateProjector
-    │   │       └── ObservedMotionPredictor
-    │   ├── MovementUtilityModel ──> PlayerRuleProjection
-    │   └── MovementActionSelector
+    │   ├── 搜索预算与导航图
+    │   ├── 动作生成与结果预测
+    │   └── 效用评价与动作选择
     └── AutopilotMovementBehavior
 ```
 
@@ -87,9 +70,8 @@ visible_world
 
 `visible_world` 只包含当前可见的树木、友方角色、构筑物、材料、消耗品、敌方投射物和生成警告。
 敌人统一由 `enemy_tracks` 表示：可见时更新测量值，离开视野后根据最后一次速度与衰减加速度
-估计位置，并附带距
-上次出现的时间、置信度和不确定范围。`visual_radius` 通常从精灵尺寸估算，无法读取时使用默认值；
-它不是碰撞形状的精确半径。
+估计位置，并附带距上次出现的时间、置信度和不确定范围。`visual_radius` 通常从精灵尺寸估算，无法读取
+时使用默认值；它不是碰撞形状的精确半径。
 
 ### 实体记忆与存在信念
 
@@ -148,13 +130,14 @@ visible_world
 
 可见构筑物由 `visible_world.structures` 单独表示，并带有与投射物相同的当前运动字段；这使游走机器人
 一类移动作用区也只能按已观察运动外推。`influence.pressure_relief` 描述炮塔射程、地雷一次性爆炸区或
-减速场，`influence.healing_support` 描述治疗覆盖，均只公开作用类别、半径、相对强度和是否一次性。
-花园标记为资源生产者，但其已经生成的果实仍通过可见消耗品参与规划，不把未知冷却或未来产出提前计分。
+减速场，`influence.healing_support` 描述治疗覆盖；公共画像只公开半径、相对强度、激活约束、是否一次性、
+同时目标容量和是否依赖恢复机会。花园已经生成的果实通过可见消耗品参与规划，不把未知冷却或未来产出
+提前计分。
 
 其他玩家和宠物统一由 `visible_world.allied_agents` 表示，公开 `kind`、归属玩家、与当前玩家的关系、
-可见运动字段和能力画像。能力角色覆盖战斗支援、治疗增益、投射物拦截、资源支援和吸引仇恨；规划器
-目前消费战斗/治疗作用区、水母盾的可见弹道拦截，以及其他玩家实体碰撞压力。其他玩家还标记为
-`coordination_anchor`，但在没有完整且合法的协作状态契约前，不产生额外的靠近收益。
+可见运动字段和作用画像。规划器消费压力减免区、治疗区、投射物拦截区，以及其他玩家实体碰撞压力；
+不接收“战斗支援”“治疗者”“拦截者”等角色标签。没有完整且合法的协作状态契约时，也不产生额外的
+靠近收益。
 
 ### 敌人行为画像
 
@@ -208,35 +191,69 @@ visible_world
 事实，状态变换使用 `target`、`operation` 和参数表达，可比较结果则映射到少量 `outcome_channels`。规则
 支持范围由这些正交轴定义，不以角色、物品、武器或扩展内容的目录衡量。
 
-`PlayerRuleProjection` 沿上述轴投影恢复、生存、动作状态与事件结果通道，结果预测器则把同一规则应用到
-候选路径。两者都不能读取原版字段名或内容 ID。可见消耗品同样只公开基础恢复量和语义特征；实体特征
-由通用条件匹配，
-不以“能否触发某项机制”的布尔字段扩张观察契约。
+`PlayerRuleProjector` 沿上述轴产生恢复、生存、动作状态与事件结果通道的规则投影，结果预测器则把
+同一规则应用到候选路径。两者都不能读取原版字段名或内容 ID。可见消耗品同样只公开基础恢复量和语义
+特征；实体特征由通用条件匹配，不以“能否触发某项机制”的布尔字段扩张观察契约。
+
+### 武器攻击模型
+
+武器由 `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 读取目标版本的运行时状态和效果资源，编译出
+不含节点、内容 ID 或机制名称的 `attack_model`。参与决策的最小契约是三个正交状态轴和一套状态转移语言：
+
+| 轴 | 回答的问题 |
+| --- | --- |
+| `timing` | 何时能攻击，包括当前冷却、普通周期、长装填相位和移动许可 |
+| `delivery` | 能把命中投送给谁，以射程、路径数、角覆盖、走廊宽度、方向误差、路径容量、伤害保留和重定向容量表达 |
+| `impact` | 一次基础命中产生多少伤害、暴击和生命偷取，以及受哪些玩家属性缩放 |
+| `rules` | 状态转移语言：已定义事件如何变换前三轴或产生结果，由事件、条件和状态变换组成 |
+
+暴击增加贯穿、材料重置冷却、持续伤害、邻近目标伤害、重新选目标伤害和按目标耐久补足伤害都只是
+`rules` 中已有轴的组合，不会成为新的决策维度。原版 `Effect` 子类只允许在编译器中决定如何翻译；规划层
+只解释事件、条件、目标、操作、数值来源，以及目标与触发位置间的空间和容量约束。
+
+玩家与武器的 `rules` 使用同一 `consequence` 契约：`probability` 表达发生概率，`target` 与 `operation`
+表达状态转移，`amount` 是常量及已建模状态量的线性组合，`delivery` 只含是否复用或排除事件目标、是否以
+事件实体为锚点、半径和每事件容量。版本知识模块可以识别原版机制来编译这些量，任何规划器都不能据此恢复
+或分派机制类别。
+
+### 攻击模型的当前边界与扩展条件
+
+公共攻击模型尚未覆盖以下三类能力。下表同时规定当前行为、重新设计的条件和责任边界；它们不是按内容
+名称积累的兼容待办：
+
+| 问题 | 当前决策 | 重新打开设计的条件 | 所有者 |
+| --- | --- | --- | --- |
+| 非武器自主伤害源 | 当前攻击时序只调度玩家武器；不把周期弹幕或击杀派生攻击塞进物品规则特例 | 该来源能在当前预测窗改变移动选择，且能从合法状态确定其下一次触发时刻 | 将 `attack_model` 泛化为通用攻击源的 `bot/knowledge` 机制编译器与攻击预测器 |
+| 目标条件伤害 | `impact` 只使用当前公共目标画像可表达的量；敌人当前生命受权限契约排除，因此精确击杀、按当前生命追加伤害和依赖当前状态的连锁不参与预测 | 新增条件是允许观察且能跨内容复用的目标事实 | `bot/observation` 的统一目标响应画像；版本映射模块不得自行读取目标状态 |
+| 命中后的运动反馈 | 当前动作内的敌人轨迹不因尚未发生的击退、减速或扩散效果而改写；下一次重规划使用新观测 | 游戏内回放能校准通用状态转移，并证明它会实质改变动作排序 | 运动观察与动作期状态转移预测器共同拥有，不能由单个效果修补轨迹 |
+
+没有单独列为扩展点的行为已经由现有契约决定：击杀价值只使用最大生命形成的保守进度；一次攻击只对其
+预测时刻已存在的合法目标计分，不猜测返程前可能新入场的实体；预测窗外的周期属性、波间收益和随机升级
+不提前计分，实际生效后由下一次观察和重规划自然接管。
 
 新增能力优先组合已有的事件、条件、状态变换和结果通道。只有共享模型缺少必要表达能力时才扩展正交轴，
-并使现有规则能够自然复用。目标版本字段映射只是局部兼容代码；公共文档描述规则轴、预测语义和已知限制，
-不维护内容覆盖目录。
+并使现有规则能够自然复用。目标版本字段映射只是局部兼容代码；本文只描述规则轴、预测语义和扩展条件，
+按内容核对的版本覆盖分别由两份原版机制参考与审计文档维护。
 
-### 友方角色与构筑物机制
+### 友方与构筑物作用画像
 
-`AllyMechanicCompiler` 编译可见玩家的队伍与协作语义，以及宠物的战斗支援、治疗增益、投射物拦截、
-资源支援和吸引仇恨等能力角色；它不读取友方的当前目标、冷却或生命。
-`StructureMechanicCompiler` 编译可见炮塔、地雷、减速场、治疗构筑物和资源生产者的稳定作用范围及
-相对强度，同样不读取运行时目标或隐藏冷却。
+`AllyMechanicCompiler` 与 `StructureMechanicCompiler` 把可见玩家、宠物和构筑物编译为同一类数值化
+作用区；它们可以在机制编译边界识别原版类型，但规划层只接收几何、强度、激活、容量和恢复机会约束。
+两者都不读取当前目标、冷却、生命或未知的未来产出。
 
 ## 滚动规划
 
-规划器采用针对游戏目标的经济型滚动时域控制近似，而不是纯人工势场控制器。对动作 `u` 的比较可
-概括为：短预测窗内累计运行成本与战斗收益，加上速度障碍碰撞风险，再加全图导航图形成的终端价值。
-每 0.1 秒只执行一次移动输入，然后用新观察重新求解。
+规划器采用针对游戏目标、受计算预算约束的滚动时域控制近似，而不是纯人工势场控制器。对动作 `u` 的
+比较可概括为：短预测窗内累计运行成本与战斗收益，加上速度障碍碰撞风险，再加全图导航图形成的终端
+价值。每次只提交未来 0.1 秒的移动输入，然后用新观察重新求解。
 
 ### 决策流程
 
 每次重规划依次执行以下步骤：
 
-1. 预算政策根据敌人、投射物，以及友方作用源与它们形成的交互工作量选择搜索预算。
+1. 预算政策根据敌人、投射物，以及友方作用源与它们形成的交互工作量分配搜索预算。
 2. 自适应导航图覆盖当前合法认知到的地图范围。近场径向步长由角色碰撞半径、一次控制周期可达距离和
-   伤害加权交战剖面共同推导；精细区域半径由预测窗可达距离、拾取范围及有效交战范围共同决定，之后环带
+   伤害加权交战能力共同推导；精细区域半径由预测窗可达距离、拾取范围及有效交战范围共同决定，之后环带
    随距离逐步变疏。每个节点把当前/未来压力转换成非负通行成本，把材料、治疗、战略目标和节点处预期
    火力输出转换成终端收益。
 3. 导航图逐层执行 Bellman 最短路递推，得到累计 `path_cost`、父节点和 `route_value`，因而远场目标
@@ -259,8 +276,9 @@ visible_world
 | `recovery_pickup_value` | 结合缺失生命比例计算的消耗品拾取价值 |
 | `expected_weapon_damage` | 自动武器对所有敌人的预期总伤害 |
 | `expected_effect_damage` | 玩家效果规则因拾取、治疗、受击或闪避产生的预期敌人伤害 |
-| `expected_recovery` | 候选动作实际拾取或自动武器生命偷取产生的预期恢复量 |
+| `expected_recovery` | 候选动作的实际拾取、生命偷取、事件规则和被动恢复产生的预期恢复量 |
 | `expected_stat_gain_value` | 效果规则产生的永久或临时属性成长的期望归一化价值 |
+| `expected_material_gain` | 暴击击杀等战斗事件直接产生的预期材料，不含地图上已有材料的拾取 |
 | `movement_survivability_delta` | 候选移动状态相对当前状态造成的护甲与闪避生存价值差量 |
 | `expected_producer_damage` | 自动武器对生产型敌人的预期伤害 |
 | `expected_loot_target_damage` | 自动武器对战利品目标的预期伤害 |
@@ -305,6 +323,8 @@ visible_world
 | `pressure_trace` | 每个预测时刻的位置、原始通道、敌压、带负号减压和净压 |
 | `expected_attack_hits` | 武器几何预测得到的预期命中数 |
 | `expected_recovery_events` | 玩家效果规则预测得到的恢复事件数 |
+| `expected_kill_weight` | 预期伤害相对敌人最大生命形成的保守击杀进度 |
+| `expected_critical_kill_weight` | 上述进度按武器暴击率折算的暴击击杀证据 |
 
 这些量是可解释的启发式结果，不都具有相同物理单位。压力通道先在各自语义内归一化和有界叠加，再由
 压力政策转换成统一净压；拾取、伤害、战略接近和移动机制仍作为压力场之外的目标效用。生产者和战利品
@@ -313,12 +333,12 @@ visible_world
 ### 压力与导航价值
 
 底层压力 `P(x,t)` 是位置和时间上的连续启发式运行成本，不声称是物理压力、受伤概率或完整价值函数。
-`NavigationValueGraph` 在其上构造自适应状态成本图。已知四侧边界后，远场环带覆盖整张地图；边界
-尚未发现时，只覆盖可见范围和已观察实体记录形成的认知包络，不把未知区域视为已知安全区。
+`NavigationValueGraphBuilder` 在其上构造并求解自适应状态成本图。已知四侧边界后，远场环带覆盖整张
+地图；边界尚未发现时，只覆盖可见范围和已观察实体记录形成的认知包络，不把未知区域视为已知安全区。
 
-近场分辨率会随实际移动速度、0.1 秒控制周期、角色尺寸和伤害加权交战能力变化。该能力估计综合玩家
-自身武器的冷却、预测窗内攻击次数、弹丸数量、准确度、穿透、弹跳、近战攻击形态、单次伤害和暴击
-期望，而不是把最大射程当成交战能力。每个导航节点还针对届时的敌人数量和距离估算预期攻击数、命中数
+近场分辨率会随实际移动速度、0.1 秒控制周期、角色尺寸和伤害加权交战能力变化。该能力估计综合武器
+`timing`、路径数、方向误差、角覆盖、走廊宽度、路径与重定向容量、伤害保留及 `impact`，而不是把
+最大射程或某种武器类别当成交战能力。每个导航节点还针对届时的敌人数量和距离估算预期攻击数、命中数
 与伤害，因此走位会比较实际火力收益。
 
 远场角向和径向单元随距离扩大，用于选择大方向而非精确避弹。动作评价仍直接查询连续场，避免远场粗
@@ -348,7 +368,7 @@ visible_world
 
 效用模型对 `integrated_survival_pressure` 和 `mean_pressure_material_derivative` 施加平滑运行成本；
 `velocity_obstacle_risk` 表示动态交会的尾部风险，避免同一近碰在峰值压力中重复计分。VO 使用
-连续 TTC 风险而不是硬排除集合，因此高收益且风险可控的卖血动作仍可参与比较。原始压力通道和峰值
+连续 TTC 风险而不是硬排除集合，因此高收益且风险可控的主动承伤动作仍可参与比较。原始压力通道和峰值
 压力只保留为诊断账本。
 
 友方作用区同样进入公共效用账本，而不切换到独立的“守塔”或“跟宠物”模式。炮塔和战斗宠物只有在
@@ -358,9 +378,9 @@ visible_world
 
 ### 武器预测
 
-武器精算考虑玩家自身武器的冷却、移动攻击限制和最近的合法敌人轨迹，并估计远程扩散、多投射物、
-贯穿衰减，以及近战横扫和突刺的覆盖。它是只读预测，只为移动动作提供效用；预测结果不会选择瞄准
-目标、触发攻击或修改武器。
+武器预测读取玩家自身武器的 `timing`、`delivery`、`impact` 和 `rules`，结合最近的合法敌人轨迹计算攻击
+时刻、几何命中与事件结果。原版的装填、扩散、贯穿、弹射、近战形态和命中后效果只在机制编译边界变换成
+这些量，不成为规划分支。预测是只读结果，只为移动动作提供效用，不选择瞄准目标、触发攻击或修改武器。
 
 ### 搜索预算
 
@@ -368,7 +388,7 @@ visible_world
 
 ```text
 敌人轨迹数 + 可见投射物数
-+ (敌人数 × 友方作用源数 + 投射物数 × 拦截者数) / 8
++ (敌人数 × 友方作用源数 + 投射物数 × 有效拦截区数) / 8
 ```
 
 | 等级 | 规划负载 | 基础方向 | 时间采样 | 详细预测上限 |
@@ -377,7 +397,7 @@ visible_world
 | 繁忙 | `140–319` | 12 | 4 | 6 |
 | 极端 | `≥ 320` | 8 | 3 | 4 |
 
-压力场中敌人与友方作用源、投射物与拦截者存在交互项，其余粗评成本随动作数、采样数和实体数线性增长；
+压力场中敌人与友方作用源、投射物与有效拦截区存在交互项，其余粗评成本随动作数、采样数和实体数线性增长；
 详细武器预测只作用于固定短名单。`search_budget` 同时公开原始威胁计数、作用源数、交互负载和总规划
 负载。
 
@@ -389,33 +409,60 @@ visible_world
 
 ## 模块责任
 
-| 模块 | 责任 |
-| --- | --- |
-| `bot/control` | 安排重规划、保存当前计划，并适配原版 `MovementBehavior` |
-| `bot/planning` | 管理导航价值图、运动学、速度障碍、动作搜索、效用评分和近优选择 |
-| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 |
-| `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 |
+| 模块 | 责任 | 对外表面 |
+| --- | --- | --- |
+| `bot/control` | 安排重规划、保存当前计划，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`AutopilotMovementBehavior` 是唯一控制输出 |
+| `bot/planning` | 管理导航价值图、运动学、速度障碍、动作搜索、效用评分和近优选择 | `MovementPlanner.plan()`；其余模块是规划包内部协作者 |
+| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.get_observation()` |
+| `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
+
+目录表达依赖与所有权，文件后缀表达组件角色。统一命名规则如下：
+
+| 后缀 | 稳定语义 | 入口动词 |
+| --- | --- | --- |
+| `Observer` | 读取当前合法状态并形成观察 | `observe` |
+| `Adapter` | 按来源或事件域把目标版本存储契约翻译成规范契约 | `adapt` |
+| `Compiler` | 分析运行时对象及其资源，把多个具体机制降解为正交规划语义 | `compile` |
+| `Profiler` | 融合稳定机制与局内证据形成画像 | `build_profile`、`accumulate_evidence` |
+| `Estimator` | 从既有观察估计不可直接测量的当前量 | `estimate` 或状态化 `update` |
+| `Predictor` | 沿时间或候选动作推演未来结果 | `predict` 或 `accumulate_outcome` |
+| `Projector` | 将同一组已知规则或状态映射到候选表示，不模拟世界演化 | `project` |
+| `Model` | 封装可复用的领域关系或评价规律 | 领域动词 |
+| `Builder` | 构造并求解一个复合数据产物 | `build` |
+| `Policy` | 根据当前负载或状态分配限制 | `allocate` |
+
+数据仍按其产物命名，例如 `attack_model`、`rule_projection`、`behavior_profile` 和 `navigation_graph`；组件名
+则使用上表的角色后缀。这样可以区分“投影结果”与执行投影的 `Projector`，以及“导航图”与构造它的
+`Builder`。`bot/planning` 当前保持单一目录，因为这些协作者共同服务唯一入口 `MovementPlanner`，并存在
+密集的包内依赖；在出现第二个独立规划入口或可单独消费的稳定子协议之前，拆分子目录只会制造未经契约
+支持的结构边界。
 
 所有新增能力必须先满足 [玩家权限边界](fair-play.md)。玩家效果的版本字段映射由
-`bot/knowledge/player_effects` 拥有，消耗品稳定画像由 `bot/knowledge/pickups` 拥有；公共规则轴及其解释权属于规划
-模型，不能随字段数量同步扩张。新增敌人稳定特征或画像规则应放入 `bot/knowledge/enemies`。新增参与评分的
-结果维度必须同时定义预测语义和效用权重；新增诊断维度则应明确标注不参与评分。
+`bot/knowledge/player_effects` 拥有，消耗品稳定画像由 `bot/knowledge/pickups` 拥有；公共规则轴及其解释权
+属于规划模型，不能随字段数量同步扩张。新增敌人稳定特征或画像规则应放入 `bot/knowledge/enemies`。
+新增参与评分的结果维度必须同时定义预测语义和效用权重；新增诊断维度则应明确标注不参与评分。
 
 关键所有权如下：
 
 - `bot/knowledge/allies/ally_mechanic_compiler.gd` 与
-  `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方角色和构筑物的稳定作用画像。
+  `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
+- `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
+  `bot/planning/weapon_engagement_model.gd` 统一定义粗粒度交战能力，
+  `bot/planning/weapon_attack_predictor.gd` 负责短名单动作的目标几何。
 - `bot/planning/battlefield_pressure_model.gd` 拥有敌压、位置约束、友方减压、挡弹时序、压力组合和动作压力
-  诊断；`bot/planning/navigation_value_graph.gd` 拥有多尺度状态图与 Bellman 累计价值。
+  诊断；`bot/planning/navigation_value_graph_builder.gd` 构造多尺度状态图并求解 Bellman 累计价值。
 - `bot/planning/velocity_obstacle_model.gd` 计算局部速度空间交会风险；
   `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 - `bot/planning/movement_outcome_predictor.gd` 预测动作结果，`bot/planning/movement_utility_model.gd` 把结果转换为
   效用。`bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何，
   `bot/planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量，
-  `bot/planning/player_rule_projection.gd` 将规则归约为正交状态与结果通道；这些模块都不能读取场景节点。
+  `bot/planning/player_rule_projector.gd` 将规则归约为正交状态与结果通道；这些模块都不能读取场景节点。
 - `bot/observation/observed_world_memory.gd` 聚合每位玩家的观察记忆；实体存在性由
-  `bot/observation/remembered_entity_existence_model.gd` 推断。观察层只输出语义画像，规划层不读取观察层的
+  `bot/observation/remembered_entity_existence_estimator.gd` 估计。观察层只输出语义画像，规划层不读取观察层的
   场景节点或内部实现细节。
+- `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量，
+  `bot/planning/observed_motion_predictor.gd` 负责规划期外推；观察层不得反向依赖规划层。
+- `bot/planning/search_budget_policy.gd` 单独负责计算降级，便于以后用帧时间反馈替换计数政策。
 
 ## 算法依据与适用边界
 
@@ -424,7 +471,7 @@ visible_world
 - Fiorini–Shiller 的 Velocity Obstacle 与原版“输入直接决定平移速度”的一阶动力学匹配，用于动态
   圆盘交会；玩家可主动承伤，所以实现采用 TTC 连续松弛而不是硬禁用所有碰撞锥内速度。
 - Dijkstra/Bellman 最短路原则用于在自适应分层图上累计中途成本，避免只看目标节点压力。
-- 滚动时域控制负责组合短期运行成本、战斗收益和导航终端价值；离散动作搜索是轻量经济型 MPC
+- 滚动时域控制负责组合短期运行成本、战斗收益和导航终端价值；离散动作搜索是受限预算的 MPC
   近似，不提供机器人控制意义上的稳定性或安全证明。
 
 主要参考：[Khatib, *Real-Time Obstacle Avoidance for Manipulators and Mobile Robots*
@@ -435,16 +482,9 @@ Graphs* (1959)](https://www.cs.yale.edu/homes/lans/readings/routing/dijkstra-rou
 Eikonal/Fast Marching 工作](https://pmc.ncbi.nlm.nih.gov/articles/PMC39986/)。完整 HJ reachability 可以
 给出更强安全集合，但其状态维度和实时求解成本不适合当前逐玩家、逐 0.1 秒规划预算。
 
-武器节奏、攻击数量、伤害和粗空间输出由 `bot/planning/weapon_engagement_model.gd` 统一定义；精确目标几何留在
-`bot/planning/weapon_attack_predictor.gd`。两者只能产生只读预测结果，运动规划器不得读取武器实现细节。可见运动
-的跨帧测量由 `bot/observation/observed_motion_estimator.gd` 负责，规划期外推由 `bot/planning/observed_motion_predictor.gd` 负责。
-观察层不得反向依赖规划层；规划层只能消费公共运动字段，不得读取观察层内部的连续性标记。计算降级
-策略由 `bot/planning/search_budget_policy.gd` 单独负责。
-
-## 已知限制
+## 验证状态
 
 - 压力通道和动态权重尚未由实际伤害、无敌帧与游戏内动作回放完成校准。
-- 击杀、周期成长与短预测窗内跨越生命或波次阈值后的完整状态转移尚未统一建模。
 - 运动估计的平滑、限幅和衰减参数尚未完成游戏内校准。
 - 负载等级仍是实体计数启发式，尚未使用 Godot 性能监视器或实测帧时间。
 - 观察、规划和控制尚未完成游戏内加载与行为验证。

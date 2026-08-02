@@ -18,8 +18,8 @@ const MovementUtilityModel := preload(
 const MovementActionSelector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_selector.gd"
 )
-const NavigationValueGraph := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_value_graph.gd"
+const NavigationValueGraphBuilder := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_value_graph_builder.gd"
 )
 
 const CONTROL_INTERVAL_SECONDS := 0.1
@@ -29,7 +29,7 @@ var _search_budget_policy: Reference = SearchBudgetPolicy.new()
 var _outcome_predictor: Reference = MovementOutcomePredictor.new()
 var _utility_model: Reference = MovementUtilityModel.new()
 var _action_selector: Reference = MovementActionSelector.new()
-var _navigation_graph_builder: Reference = NavigationValueGraph.new()
+var _navigation_graph_builder: Reference = NavigationValueGraphBuilder.new()
 
 
 func plan(observation: Dictionary, previous_movement: Vector2, player_index: int) -> Dictionary:
@@ -40,7 +40,7 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 
 	var context: Dictionary = _utility_model.build_context(observation)
 	context.control_interval_seconds = CONTROL_INTERVAL_SECONDS
-	var search_budget: Dictionary = _search_budget_policy.build(observation)
+	var search_budget: Dictionary = _search_budget_policy.allocate(observation)
 	var navigation_graph: Dictionary = _navigation_graph_builder.build(
 		observation, context, search_budget
 	)

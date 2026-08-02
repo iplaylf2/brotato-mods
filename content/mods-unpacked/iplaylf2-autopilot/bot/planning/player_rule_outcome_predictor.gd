@@ -6,16 +6,16 @@ extends Reference
 const ObservedMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
 )
-const PlayerRuleProjection := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projection.gd"
+const PlayerRuleProjector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
 
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
-var _rule_projection: Reference = PlayerRuleProjection.new()
+var _rule_projector: Reference = PlayerRuleProjector.new()
 
 
 func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
-	outcome.expected_recovery = _rule_projection.project_recovery(
+	outcome.expected_recovery = _rule_projector.project_recovery(
 		observation.player_state.effect_rules, "healing", outcome.expected_recovery
 	)
 	if outcome.expected_recovery <= 0.0:
@@ -47,6 +47,23 @@ func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Di
 			},
 			outcome
 		)
+	if outcome.expected_critical_kill_weight > 0.0:
+		var recovery_before_critical_kills: float = outcome.expected_recovery
+		var critical_kill_event := {
+			"entity": {},
+			"time": action.forecast_seconds,
+			"player_displacement": action.samples.back().displacement,
+			"event_weight": outcome.expected_critical_kill_weight,
+		}
+		_apply_event_rules(observation, "critical_kill", critical_kill_event, outcome)
+		if outcome.expected_recovery > recovery_before_critical_kills:
+			var healing_event: Dictionary = critical_kill_event.duplicate(true)
+			healing_event.event_weight = (
+				outcome.expected_recovery
+				- recovery_before_critical_kills
+			)
+			_apply_event_rules(observation, "healing", healing_event, outcome)
+	_apply_time_rules(observation, action.forecast_seconds, outcome)
 	var missing_health: float = max(
 		0.0, observation.player_state.health.maximum - observation.player_state.health.current
 	)
@@ -59,6 +76,22 @@ func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Di
 		_apply_event_rules(observation, "attack_dodged", incoming_hit_event, outcome)
 
 
+func _apply_time_rules(
+	observation: Dictionary, elapsed_seconds: float, outcome: Dictionary
+) -> void:
+	for rule in observation.player_state.effect_rules:
+		if rule.event != "time_elapsed" or not rule.condition.empty():
+			continue
+		for consequence in rule.consequences:
+			if consequence.operation != "add":
+				continue
+			if consequence.target == "health_recovery":
+				outcome.expected_recovery += (
+					consequence.get("rate_per_second", 0.0)
+					* elapsed_seconds
+				)
+
+
 func _apply_consumable_event(
 	observation: Dictionary, event: Dictionary, outcome: Dictionary
 ) -> void:
@@ -66,7 +99,7 @@ func _apply_consumable_event(
 	var recovery_before: float = outcome.expected_recovery
 	outcome.expected_recovery += profile.get("base_recovery", 0.0)
 	_apply_event_rules(observation, "consumable_pickup", event, outcome)
-	outcome.expected_recovery = _rule_projection.project_recovery(
+	outcome.expected_recovery = _rule_projector.project_recovery(
 		observation.player_state.effect_rules, "healing", outcome.expected_recovery
 	)
 	var missing_health: float = max(
@@ -94,7 +127,7 @@ func _apply_consequence(
 	observation: Dictionary, consequence: Dictionary, event: Dictionary, outcome: Dictionary
 ) -> void:
 	var expected_occurrences := (
-		clamp(consequence.get("chance_percent", 100.0) / 100.0, 0.0, 1.0)
+		clamp(consequence.get("probability", 1.0), 0.0, 1.0)
 		* event.get("event_weight", 1.0)
 	)
 	if consequence.target == "health_recovery":
@@ -103,49 +136,35 @@ func _apply_consequence(
 				outcome.expected_recovery += consequence.get("value", 0.0) * expected_occurrences
 			"multiply":
 				outcome.expected_recovery *= lerp(
-					1.0, consequence.get("value", 1.0), expected_occurrences
+					1.0, consequence.get("value", 1.0), clamp(expected_occurrences, 0.0, 1.0)
 				)
 			"set":
 				outcome.expected_recovery = lerp(
-					outcome.expected_recovery, consequence.get("value", 0.0), expected_occurrences
+					outcome.expected_recovery,
+					consequence.get("value", 0.0),
+					clamp(expected_occurrences, 0.0, 1.0)
 				)
 		return
+	if consequence.target == "materials" and consequence.operation == "add":
+		outcome.expected_material_gain += consequence.get("value", 0.0) * expected_occurrences
+		return
+	if consequence.target == "enemy_health" and consequence.operation == "deal_damage":
+		var applications := _delivered_enemy_weight(
+			observation.enemy_tracks, consequence.delivery, event
+		)
+		outcome.expected_effect_damage += (
+			_rule_damage_amount(consequence.amount)
+			* expected_occurrences
+			* applications
+		)
+		return
 	match consequence.operation:
-		"deal_scaled_damage":
-			if observation.enemy_tracks.empty():
-				return
-			var stat_value: float = observation.player_state.effective_stats.get(
-				consequence.scaling_stat, 0.0
-			)
-			var base_damage := floor(max(1.0, consequence.scaling_percent / 100.0 * stat_value))
-			var damage_multiplier := max(
-				0.0, 1.0 + observation.player_state.effective_stats.percent_damage / 100.0
-			)
-			outcome.expected_effect_damage += (
-				round(base_damage * damage_multiplier)
-				* expected_occurrences
-			)
-		"deal_area_damage":
-			var center: Vector2 = event.player_displacement
-			if consequence.get("center", "player") == "pickup":
-				center = event.entity.relative_position
-			var covered_enemy_weight := _covered_enemy_weight(
-				observation.enemy_tracks, center, event.time, consequence.radius
-			)
-			outcome.expected_effect_damage += (
-				consequence.damage
-				* expected_occurrences
-				* covered_enemy_weight
-			)
-		"add_permanently", "add_temporarily":
+		"add":
 			outcome.expected_stat_gain_value += (
 				consequence.get("value", 0.0)
 				* expected_occurrences
 				* _stat_value_multiplier(consequence.target)
 			)
-		"add_percent":
-			if consequence.target == "picked_material_value":
-				outcome.material_pickup_value += consequence.get("value", 0.0) / 100.0
 		"multiply":
 			if consequence.target == "picked_material_value":
 				outcome.material_pickup_value += (
@@ -212,15 +231,23 @@ func _first_incoming_hit_event(observation: Dictionary, samples: Array):
 	return null
 
 
-func _covered_enemy_weight(tracks: Array, center: Vector2, time: float, radius: float) -> float:
+func _delivered_enemy_weight(tracks: Array, delivery: Dictionary, event: Dictionary) -> float:
+	var center: Vector2 = event.player_displacement
+	if delivery.anchor_on_event_entity:
+		center = event.entity.get("relative_position", center)
+	var radius: float = max(0.0, delivery.radius)
 	var result := 0.0
 	for track in tracks:
 		if not track.visible:
 			continue
-		var enemy_position := _predict_track_position(track, time)
+		var enemy_position := _predict_track_position(track, event.time)
 		if enemy_position.distance_to(center) <= radius + track.last_measurement.visual_radius:
 			result += track.recency_confidence
-	return result
+	return min(result, max(0.0, delivery.capacity_per_event))
+
+
+func _rule_damage_amount(amount: Dictionary) -> float:
+	return max(amount.minimum, amount.constant)
 
 
 func _condition_matches(condition: Dictionary, event: Dictionary, observation: Dictionary) -> bool:

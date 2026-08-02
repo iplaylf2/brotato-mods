@@ -11,7 +11,6 @@ func compile(structure: Node) -> Dictionary:
 	var profile := {
 		"pressure_relief": _empty_zone(),
 		"healing_support": _empty_zone(),
-		"resource_producer": structure is Garden,
 	}
 	if structure is Garden:
 		return profile
@@ -26,7 +25,7 @@ func compile(structure: Node) -> Dictionary:
 			"player_activation_radius": 0.0,
 			"intensity": 0.65,
 			"single_use": false,
-			"effect": "control",
+			"simultaneous_target_capacity": INF,
 		}
 		return profile
 	if not structure is Turret or not "stats" in structure or structure.stats == null:
@@ -44,7 +43,7 @@ func compile(structure: Node) -> Dictionary:
 			"player_activation_radius": 0.0,
 			"intensity": clamp(float(stats.damage) * projectiles / cycle_seconds / 3.0, 0.1, 2.5),
 			"single_use": false,
-			"effect": "healing",
+			"requires_recovery_opportunity": false,
 		}
 	elif radius > 0.0 and stats.damage > 0 and projectiles > 0.0:
 		var expected_output := (
@@ -60,7 +59,7 @@ func compile(structure: Node) -> Dictionary:
 			"player_activation_radius": 0.0,
 			"intensity": clamp(expected_output / 25.0, 0.1, 2.5),
 			"single_use": false,
-			"effect": "damage",
+			"simultaneous_target_capacity": 1.0,
 		}
 	return profile
 
@@ -79,7 +78,7 @@ func _compile_landmine(structure: Node) -> Dictionary:
 		"player_activation_radius": 0.0,
 		"intensity": clamp(damage / 30.0, 0.2, 2.5),
 		"single_use": true,
-		"effect": "damage",
+		"simultaneous_target_capacity": INF,
 	}
 
 
@@ -121,5 +120,6 @@ func _empty_zone() -> Dictionary:
 		"player_activation_radius": 0.0,
 		"intensity": 0.0,
 		"single_use": false,
-		"effect": "none",
+		"simultaneous_target_capacity": 0.0,
+		"requires_recovery_opportunity": false,
 	}

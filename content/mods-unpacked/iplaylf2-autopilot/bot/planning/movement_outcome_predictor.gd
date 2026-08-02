@@ -23,8 +23,8 @@ const PlayerRuleOutcomePredictor := preload(
 const PlayerMovementStateProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
 )
-const PlayerRuleProjection := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projection.gd"
+const PlayerRuleProjector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
 
 const ROAMING_DISTANCE := 600.0
@@ -35,7 +35,7 @@ var _battlefield_pressure_model: Reference = BattlefieldPressureModel.new()
 var _velocity_obstacle_model: Reference = VelocityObstacleModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
-var _rule_projection: Reference = PlayerRuleProjection.new()
+var _rule_projector: Reference = PlayerRuleProjector.new()
 
 
 func predict(
@@ -67,6 +67,9 @@ func predict(
 		"expected_recovery": 0.0,
 		"expected_recovery_events": 0.0,
 		"expected_stat_gain_value": 0.0,
+		"expected_material_gain": 0.0,
+		"expected_kill_weight": 0.0,
+		"expected_critical_kill_weight": 0.0,
 		"movement_survivability_delta": 0.0,
 	}
 	var pressure_outcome: Dictionary = _battlefield_pressure_model.predict(
@@ -136,12 +139,12 @@ func _collection_value(entities: Array, samples: Array, pickup: Dictionary) -> f
 func _recovery_collection_value(observation: Dictionary, samples: Array) -> float:
 	var healing_entities := []
 	for consumable in observation.visible_world.consumables:
-		var recovery: float = _rule_projection.project_recovery(
+		var recovery: float = _rule_projector.project_recovery(
 			observation.player_state.effect_rules,
 			"consumable_pickup",
 			consumable.get("pickup_profile", {}).get("base_recovery", 0.0)
 		)
-		recovery = _rule_projection.project_recovery(
+		recovery = _rule_projector.project_recovery(
 			observation.player_state.effect_rules, "healing", recovery
 		)
 		if recovery > 0.0:
@@ -250,16 +253,16 @@ func _predict_track_position(track: Dictionary, time: float) -> Vector2:
 func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:
 	var result := 0.0
 	for weapon in weapons:
-		if is_moving and not weapon.automatic_attacks_allowed_while_moving:
+		if is_moving and not weapon.attack_model.timing.permitted_while_moving:
 			continue
-		result = max(result, float(weapon.maximum_range))
+		result = max(result, float(weapon.attack_model.delivery.maximum_range))
 	return result
 
 
 func _maximum_weapon_range(weapons: Array) -> float:
 	var result := 0.0
 	for weapon in weapons:
-		result = max(result, float(weapon.maximum_range))
+		result = max(result, float(weapon.attack_model.delivery.maximum_range))
 	return result
 
 

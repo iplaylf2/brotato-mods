@@ -1,6 +1,6 @@
 extends Reference
 
-# Defines stat names shared by effect rules and player-owned weapon observations.
+# Defines stat names shared by effect rules and player-owned weapon attack models.
 
 
 func get_name(stat_hash: int) -> String:

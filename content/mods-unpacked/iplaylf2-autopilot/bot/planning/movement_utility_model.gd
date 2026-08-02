@@ -4,11 +4,11 @@ extends Reference
 # from the current state every replan. Geometric contact is a soft tail-risk
 # cost until observations can support calibrated damage or death probabilities.
 
-const PlayerRuleProjection := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projection.gd"
+const PlayerRuleProjector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
 
-var _rule_projection: Reference = PlayerRuleProjection.new()
+var _rule_projector: Reference = PlayerRuleProjector.new()
 
 
 func build_context(observation: Dictionary) -> Dictionary:
@@ -24,7 +24,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 	var loot_target_multiplier := 1.0 + 0.15 * min(3, max(0, loot_target_count - 1))
 	var producer_multiplier := 1.0 + 0.35 * min(3, max(0, enemy_producer_count - 1))
 	var ranged_source_multiplier := 1.0 + 0.2 * min(5, max(0, ranged_source_count - 1))
-	var player_rule_projection: Dictionary = _rule_projection.project(observation)
+	var player_rule_projection: Dictionary = _rule_projector.project(observation)
 	var survivability_credit := _survivability_credit(observation)
 	var risk_tolerance := clamp((health_ratio - 0.25) / 0.75 + survivability_credit, 0.0, 1.0)
 	var passive_health_loss_rate: float = max(0.0, -player_rule_projection.survival.health_rate)
@@ -44,7 +44,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 		* lerp(1.0, 0.35, projectile_density)
 	)
 	var movement_state_value_rates: Dictionary = player_rule_projection.movement_state_value_rates
-	var allied_role_counts := _count_allied_roles(observation)
 	var fatal_on_unprotected_hit := (
 		player_rule_projection.survival.terminal_on_positive_damage
 		and observation.player_state.runtime_stats.hit_protection <= 0
@@ -85,6 +84,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
 			"expected_recovery": lerp(3.0, 0.15, health_ratio),
 			"expected_stat_gain_value": 0.8,
+			"expected_material_gain": 1.0 + 1.6 * wave_progress,
 			"movement_survivability_delta": 20.0,
 			"expected_producer_damage": 0.045 * wave_time_remaining_ratio * producer_multiplier,
 			"expected_loot_target_damage": 0.055 * (1.0 + wave_progress) * loot_target_multiplier,
@@ -173,7 +173,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"recovery_profile": recovery_profile,
 			"contact_combat_appetite": contact_combat_appetite,
 			"passive_health_loss_rate": passive_health_loss_rate,
-			"allied_role_counts": allied_role_counts,
 		},
 	}
 
@@ -205,22 +204,6 @@ func _count_role(tracks: Array, role: String) -> int:
 	for track in tracks:
 		if track.behavior_profile.strategic_roles[role]:
 			result += 1
-	return result
-
-
-func _count_allied_roles(observation: Dictionary) -> Dictionary:
-	var result := {
-		"party_member": 0,
-		"combat_support": 0,
-		"healing_support": 0,
-		"projectile_interceptor": 0,
-		"resource_support": 0,
-		"threat_diversion": 0,
-	}
-	for ally in observation.visible_world.get("allied_agents", []):
-		for role in result:
-			if ally.influence.roles.get(role, false):
-				result[role] += 1
 	return result
 
 

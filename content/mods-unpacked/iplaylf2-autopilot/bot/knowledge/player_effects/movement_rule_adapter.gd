@@ -30,7 +30,8 @@ func adapt(effects: Dictionary, player: Node) -> Array:
 				[
 					{
 						"target": "automatic_weapon_attack",
-						"operation": "disable",
+						"operation": "set",
+						"value": false,
 					}
 				],
 				"active": player._current_movement != Vector2.ZERO,
@@ -50,8 +51,8 @@ func _append_conditional_stats(
 		if entry[0] == Keys.percent_materials_hash:
 			consequence = {
 				"target": "materials",
-				"operation": "add_percent_of_current",
-				"percent": entry[1],
+				"operation": "add",
+				"target_coefficient": entry[1] / 100.0,
 				"minimum_absolute_change": 1,
 				"maximum_absolute_change": entry[2] if entry.size() >= 3 else null,
 			}

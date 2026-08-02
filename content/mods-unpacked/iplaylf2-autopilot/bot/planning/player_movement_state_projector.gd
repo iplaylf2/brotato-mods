@@ -4,8 +4,10 @@ extends Reference
 # a candidate movement state. It never mutates the player or observed weapons.
 
 
-func project_weapon(weapon: Dictionary, observation: Dictionary, is_moving: bool) -> Dictionary:
-	var projected: Dictionary = weapon.duplicate(true)
+func project_attack_model(
+	observed_weapon: Dictionary, observation: Dictionary, is_moving: bool
+) -> Dictionary:
+	var projected: Dictionary = observed_weapon.attack_model.duplicate(true)
 	var stat_deltas := _movement_stat_deltas(observation.player_state.effect_rules, is_moving)
 	var effective_stats: Dictionary = observation.player_state.effective_stats
 	var percent_damage_delta: float = stat_deltas.get("percent_damage", 0.0)
@@ -16,36 +18,38 @@ func project_weapon(weapon: Dictionary, observation: Dictionary, is_moving: bool
 	)
 
 	var direct_damage_delta := 0.0
-	for scaling in projected.scaling:
+	for scaling in projected.impact.scaling:
 		direct_damage_delta += (
 			stat_deltas.get(scaling.stat, 0.0)
 			* scaling.coefficient
 			* projected_damage_multiplier
 		)
-	projected.damage = max(
+	projected.impact.damage = max(
 		1.0,
 		(
-			projected.damage * projected_damage_multiplier / current_damage_multiplier
+			projected.impact.damage * projected_damage_multiplier / current_damage_multiplier
 			+ direct_damage_delta
 		)
 	)
 
 	var attack_speed_delta: float = stat_deltas.get("attack_speed", 0.0)
 	var current_attack_speed: float = effective_stats.attack_speed
-	projected.nominal_attack_cycle_seconds = max(
-		0.05,
-		(
-			projected.nominal_attack_cycle_seconds
-			* _attack_speed_cooldown_factor(current_attack_speed + attack_speed_delta)
-			/ _attack_speed_cooldown_factor(current_attack_speed)
-		)
+	var attack_speed_factor := (
+		_attack_speed_cooldown_factor(current_attack_speed + attack_speed_delta)
+		/ _attack_speed_cooldown_factor(current_attack_speed)
 	)
-	projected.critical_chance = clamp(
-		projected.critical_chance + stat_deltas.get("critical_chance", 0.0) / 100.0, 0.0, 1.0
+	projected.timing.cycle_seconds = max(0.05, projected.timing.cycle_seconds * attack_speed_factor)
+	projected.timing.long_cycle_seconds = max(
+		projected.timing.cycle_seconds, projected.timing.long_cycle_seconds * attack_speed_factor
+	)
+	projected.impact.critical_chance = clamp(
+		projected.impact.critical_chance + stat_deltas.get("critical_chance", 0.0) / 100.0, 0.0, 1.0
 	)
 	var range_delta: float = stat_deltas.get("range", 0.0)
-	projected.minimum_range = max(0.0, projected.minimum_range + range_delta)
-	projected.maximum_range = max(projected.minimum_range, projected.maximum_range + range_delta)
+	projected.delivery.minimum_range = max(0.0, projected.delivery.minimum_range + range_delta)
+	projected.delivery.maximum_range = max(
+		projected.delivery.minimum_range, projected.delivery.maximum_range + range_delta
+	)
 	return projected
 
 

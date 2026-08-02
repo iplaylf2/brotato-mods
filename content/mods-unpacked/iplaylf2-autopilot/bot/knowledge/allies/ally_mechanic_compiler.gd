@@ -6,34 +6,21 @@ extends Reference
 
 func compile(agent: Node, kind: String) -> Dictionary:
 	var profile := {
-		"roles":
-		{
-			"party_member": kind == "player",
-			"combat_support": false,
-			"healing_support": false,
-			"projectile_interceptor": false,
-			"resource_support": agent is Lootworm,
-			"threat_diversion": _can_divert_threat(agent),
-		},
 		"pressure_relief": _empty_zone(),
 		"healing_support": _empty_zone(),
 		"projectile_interception": _empty_zone(),
-		"coordination_anchor": kind == "player",
 	}
 	if kind == "player":
 		return profile
 
 	var combat_zone := _compile_combat_zone(agent)
 	profile.pressure_relief = combat_zone
-	profile.roles.combat_support = combat_zone.active
 
 	var healing_zone := _compile_healing_zone(agent)
 	profile.healing_support = healing_zone
-	profile.roles.healing_support = healing_zone.active
 
 	var interception_zone := _compile_interception_zone(agent)
 	profile.projectile_interception = interception_zone
-	profile.roles.projectile_interceptor = interception_zone.active
 	return profile
 
 
@@ -75,7 +62,7 @@ func _compile_combat_zone(agent: Node) -> Dictionary:
 			_get_collision_radius(agent, "PlayerTriggerZone/CollisionShape2D"),
 			"intensity": intensity,
 			"single_use": false,
-			"effect": "damage",
+			"simultaneous_target_capacity": 1.0,
 		}
 	return best_zone
 
@@ -91,7 +78,7 @@ func _compile_healing_zone(agent: Node) -> Dictionary:
 		"player_activation_radius": 0.0,
 		"intensity": 0.5,
 		"single_use": false,
-		"effect": "healing_amplification",
+		"requires_recovery_opportunity": true,
 	}
 
 
@@ -108,12 +95,7 @@ func _compile_interception_zone(agent: Node) -> Dictionary:
 		"player_activation_radius": 0.0,
 		"intensity": 1.0,
 		"single_use": false,
-		"effect": "projectile_interception",
 	}
-
-
-func _can_divert_threat(agent: Node) -> bool:
-	return "can_be_targeted_by_enemies" in agent and agent.can_be_targeted_by_enemies
 
 
 func _get_collision_radius(agent: Node, path: String) -> float:
@@ -136,5 +118,6 @@ func _empty_zone() -> Dictionary:
 		"player_activation_radius": 0.0,
 		"intensity": 0.0,
 		"single_use": false,
-		"effect": "none",
+		"simultaneous_target_capacity": 0.0,
+		"requires_recovery_opportunity": false,
 	}

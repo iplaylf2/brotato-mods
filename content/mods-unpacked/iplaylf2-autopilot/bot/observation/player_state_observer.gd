@@ -1,17 +1,17 @@
 extends Reference
 
-# Observes transparent player-owned state and adapts effect data while keeping
-# content IDs and scene objects out of the public observation.
+# Observes transparent player-owned state, then coordinates version-knowledge
+# translation without exposing content IDs or scene objects.
 
 const PlayerEffectAdapter := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/player_effects/player_effect_adapter.gd"
 )
-const StatVocabulary := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
+const WeaponMechanicCompiler := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/weapons/weapon_mechanic_compiler.gd"
 )
 
 var _player_effect_adapter: Reference = PlayerEffectAdapter.new()
-var _stat_vocabulary: Reference = StatVocabulary.new()
+var _weapon_mechanic_compiler: Reference = WeaponMechanicCompiler.new()
 
 
 func observe(player_index: int, player: Node) -> Dictionary:
@@ -108,80 +108,16 @@ func _observe_weapons(player_index: int, player: Node, attacks_allowed_while_mov
 	for weapon in player.current_weapons:
 		if not is_instance_valid(weapon):
 			continue
-		var stats: Resource = weapon.current_stats
 		var weapon_observation := {
 			"slot": weapon.weapon_pos,
 			"tier": weapon.tier,
-			"attack_mode": "ranged" if stats is RangedWeaponStats else "melee",
-			"damage": stats.damage,
-			"cooldown_ticks": stats.cooldown,
-			"cooldown_remaining_ticks": weapon._current_cooldown,
-			"cooldown_remaining_seconds": weapon._current_cooldown / 60.0,
-			"nominal_attack_cycle_seconds": stats.get_cooldown_value(player_index, 1.0),
-			"cooldown_ready": weapon._current_cooldown <= 0.0,
-			"automatic_attack_active": weapon._is_shooting,
-			"automatic_attacks_allowed_while_moving": attacks_allowed_while_moving,
-			"movement_permits_automatic_attack":
-			attacks_allowed_while_moving or player._current_movement == Vector2.ZERO,
-			"reloads_on_material_pickup":
-			_weapon_has_effect(weapon, Keys.reload_when_pickup_gold_hash),
-			"minimum_range": stats.min_range,
-			"maximum_range": stats.max_range,
-			"accuracy": stats.accuracy,
-			"critical_chance": stats.crit_chance,
-			"critical_damage_multiplier": stats.crit_damage,
-			"knockback": stats.knockback,
-			"lifesteal": stats.lifesteal,
-			"scaling": _get_weapon_scaling(stats.scaling_stats),
-			"additional_cooldown_every_attacks": stats.additional_cooldown_every_x_shots,
-			"additional_cooldown_multiplier": stats.additional_cooldown_multiplier,
+			"attack_model":
+			_weapon_mechanic_compiler.compile(
+				weapon, weapon.current_stats, player_index, attacks_allowed_while_moving
+			),
 		}
-		if stats is RangedWeaponStats:
-			weapon_observation.merge(_get_ranged_weapon_stats(stats))
-		elif stats is MeleeWeaponStats:
-			weapon_observation.merge(_get_melee_weapon_stats(stats))
 		weapons.push_back(weapon_observation)
 	return weapons
-
-
-func _weapon_has_effect(weapon: Node, effect_hash: int) -> bool:
-	for effect in weapon.effects:
-		if effect.key_hash == effect_hash or effect.custom_key_hash == effect_hash:
-			return true
-	return false
-
-
-func _get_ranged_weapon_stats(stats: RangedWeaponStats) -> Dictionary:
-	return {
-		"projectile_count": stats.nb_projectiles,
-		"projectile_spread": stats.projectile_spread,
-		"projectile_speed": stats.projectile_speed,
-		"piercing": stats.piercing,
-		"piercing_damage_retained": 1.0 - stats.piercing_dmg_reduction,
-		"bounce": stats.bounce,
-		"bounce_damage_retained": 1.0 - stats.bounce_dmg_reduction,
-	}
-
-
-func _get_melee_weapon_stats(stats: MeleeWeaponStats) -> Dictionary:
-	return {
-		"attack_pattern":
-		"sweep" if stats.attack_type == MeleeWeaponStats.AttackType.SWEEP else "thrust",
-		"alternate_attack_type": stats.alternate_attack_type,
-		"return_damage": stats.deal_dmg_on_return,
-	}
-
-
-func _get_weapon_scaling(scaling_stats: Array) -> Array:
-	var result := []
-	for scaling in scaling_stats:
-		if scaling.size() < 2:
-			continue
-		var stat_name := _stat_vocabulary.get_name(scaling[0])
-		if stat_name.empty():
-			continue
-		result.push_back({"stat": stat_name, "coefficient": scaling[1]})
-	return result
 
 
 func _safe_ratio(value: float, maximum: float) -> float:

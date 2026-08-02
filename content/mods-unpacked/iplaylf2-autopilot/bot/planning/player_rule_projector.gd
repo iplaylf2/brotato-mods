@@ -12,7 +12,7 @@ func project(observation: Dictionary) -> Dictionary:
 		if not event_outcome_channels.has(event):
 			event_outcome_channels[event] = {}
 		for consequence in rule.consequences:
-			var probability := clamp(consequence.get("chance_percent", 100.0) / 100.0, 0.0, 1.0)
+			var probability := clamp(consequence.get("probability", 1.0), 0.0, 1.0)
 			for channel in consequence.get("outcome_channels", {}):
 				event_outcome_channels[event][channel] = (
 					event_outcome_channels[event].get(channel, 0.0)
@@ -46,6 +46,7 @@ func project(observation: Dictionary) -> Dictionary:
 		"survival":
 		{
 			"health_rate": _health_rate(rules),
+			"recovery_rate": _recovery_rate(rules),
 			"terminal_on_positive_damage": _terminal_on_positive_damage(rules),
 		},
 	}
@@ -81,8 +82,8 @@ func _movement_state_value_rates(rules: Array, observation: Dictionary) -> Dicti
 		var value := 0.0
 		for consequence in rule.consequences:
 			if consequence.target == "materials":
-				var percent: float = consequence.get("percent", 0.0) / 100.0
-				value += max(1.0, observation.player_state.resources.materials * percent)
+				var coefficient: float = consequence.get("target_coefficient", 0.0)
+				value += max(1.0, observation.player_state.resources.materials * coefficient)
 			elif consequence.operation == "add":
 				value += max(0.0, consequence.get("value", 0.0)) * 0.04
 		if rule.condition.is_moving:
@@ -98,8 +99,19 @@ func _health_rate(rules: Array) -> float:
 		if rule.event != "time_elapsed":
 			continue
 		for consequence in rule.consequences:
-			if consequence.target == "health" and consequence.operation == "add_rate":
-				result += consequence.get("value", 0.0)
+			if consequence.target == "health" and consequence.operation == "add":
+				result += consequence.get("rate_per_second", 0.0)
+	return result
+
+
+func _recovery_rate(rules: Array) -> float:
+	var result := 0.0
+	for rule in rules:
+		if rule.event != "time_elapsed":
+			continue
+		for consequence in rule.consequences:
+			if consequence.target == "health_recovery" and consequence.operation == "add":
+				result += consequence.get("rate_per_second", 0.0)
 	return result
 
 

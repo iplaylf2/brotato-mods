@@ -16,8 +16,8 @@ const ENTITY_MEMORY_REACQUISITION_MARGIN := 72.0
 const EnemyBehaviorProfiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_behavior_profiler.gd"
 )
-const RememberedEntityExistenceModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/remembered_entity_existence_model.gd"
+const RememberedEntityExistenceEstimator := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/remembered_entity_existence_estimator.gd"
 )
 
 var _elapsed_seconds := 0.0
@@ -30,7 +30,7 @@ var _visible_source_track_ids := {}
 var _remembered_entities := {}
 var _source_memory_record_ids := {}
 var _enemy_profiler: Reference = EnemyBehaviorProfiler.new()
-var _entity_existence_model: Reference = RememberedEntityExistenceModel.new()
+var _entity_existence_estimator: Reference = RememberedEntityExistenceEstimator.new()
 
 
 func update(
@@ -47,7 +47,7 @@ func update(
 	_odometry_position += position_delta
 	_record_visible_edges(visible_edges)
 	_update_enemy_tracks(visible_enemies)
-	_entity_existence_model.update(delta_seconds, position_delta, visible_allied_agents)
+	_entity_existence_estimator.update(delta_seconds, position_delta, visible_allied_agents)
 	_update_remembered_entities(delta_seconds, visible_entities, party_state, player_pickup)
 
 
@@ -209,7 +209,7 @@ func _update_remembered_entities(
 ) -> void:
 	for memory_record in _remembered_entities.values():
 		memory_record.visible = false
-		var existence_estimate: Dictionary = _entity_existence_model.estimate(
+		var existence_estimate: Dictionary = _entity_existence_estimator.estimate(
 			memory_record, party_state, player_pickup
 		)
 		var disappearance_hazard: float = existence_estimate.disappearance_hazard_per_second

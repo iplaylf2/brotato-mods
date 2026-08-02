@@ -239,6 +239,7 @@ func _source_suppression(
 	):
 		return 0.0
 	var covered_pressure := 0.0
+	var strongest_relief := 0.0
 	for track in tracks:
 		var enemy_position := _predict_track_position(track, sample.time)
 		var support_distance := (enemy_position - source_position).length()
@@ -252,10 +253,13 @@ func _source_suppression(
 		)
 		var coverage := clamp(1.25 - support_distance / relief.radius, 0.25, 1.0)
 		var relieved_pressure: float = pressure * coverage * track.recency_confidence
-		if relief.effect == "damage" and not relief.single_use:
-			covered_pressure = max(covered_pressure, relieved_pressure)
-		else:
-			covered_pressure += relieved_pressure
+		covered_pressure += relieved_pressure
+		strongest_relief = max(strongest_relief, relieved_pressure)
+	var target_capacity: float = max(0.0, relief.get("simultaneous_target_capacity", INF))
+	if target_capacity <= 1.0:
+		covered_pressure = strongest_relief * target_capacity
+	else:
+		covered_pressure = min(covered_pressure, target_capacity)
 	return min(2.0, covered_pressure) * relief.intensity * source.get("existence_confidence", 1.0)
 
 
@@ -278,7 +282,7 @@ func _source_healing_support(
 	var distance := (source_position - sample.displacement).length()
 	var coverage := clamp((healing.radius - distance) / healing.radius, 0.0, 1.0)
 	var opportunity := 1.0
-	if healing.effect == "healing_amplification":
+	if healing.get("requires_recovery_opportunity", false):
 		var effective_stats: Dictionary = observation.player_state.effective_stats
 		opportunity = clamp(
 			(effective_stats.health_regeneration + effective_stats.lifesteal) / 20.0, 0.0, 1.0
