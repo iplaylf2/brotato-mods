@@ -1,8 +1,8 @@
 extends MovementBehavior
 
 # The only control boundary: a movement vector consumed by Unit.get_movement().
-# Keep weapon, aim, attack, target, cooldown, damage, and entity mutation out of
-# this adapter and the rest of the control layer.
+# Keep weapon, aim, attack, target, cooldown, damage, and other combat-state
+# mutation out of this adapter and the rest of the control layer.
 
 var _movement := Vector2.ZERO
 

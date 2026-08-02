@@ -70,6 +70,9 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 成本估计是否随局面稳定。帧时间、规划耗时和搜索强度字段用于分析预算分配与收敛；
 `threat_entity_count`、`influence_source_count` 和两个 `*_workload_proxy` 用于解释成本变化。
 
+预算为 `0` 时，该利用率没有有限数值意义，JSON Lines 会把它写为字符串 `"Infinity"`；复盘工具应先
+检查 `planning_duration_budget_usec > 0`，再比较利用率或计算分位数。
+
 规划耗时的计量范围从 `MovementPlanner.plan()` 开始，到动作选择完成为止。完整物理帧验证还要覆盖随后的
 采样序列化、文件写入、控制器收尾与游戏帧表现。
 

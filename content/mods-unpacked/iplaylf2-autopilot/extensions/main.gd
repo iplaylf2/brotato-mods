@@ -14,8 +14,8 @@ var _autopilot_mod: Node = null
 
 
 func _ready() -> void:
-	._ready()
-
+	# The installed script-extension chain already runs the base Main._ready().
+	# Calling it here would repeat vanilla initialization and signal connections.
 	_autopilot_mod = get_node_or_null("/root/ModLoader/%s" % MOD_ID)
 	if not is_instance_valid(_autopilot_mod):
 		ModLoaderLog.error("Autopilot mod entrypoint was not found; Autopilot is disabled.", MOD_ID)
@@ -27,6 +27,11 @@ func _ready() -> void:
 	if connect_error != OK:
 		ModLoaderLog.error("Could not subscribe to Autopilot enable-state changes.", MOD_ID)
 
+	# Vanilla spawns the players from Main._ready(). Depending on script-extension
+	# notification order, its players_spawned signal can arrive before this
+	# extension is ready. Reconcile once the complete ready chain has finished.
+	call_deferred("_start_autopilot_runtime_if_needed")
+
 
 func _on_EntitySpawner_players_spawned(players: Array) -> void:
 	._on_EntitySpawner_players_spawned(players)
@@ -34,6 +39,12 @@ func _on_EntitySpawner_players_spawned(players: Array) -> void:
 
 
 func _on_autopilot_enabled_changed(_enabled: bool) -> void:
+	_sync_autopilot_runtime(_players)
+
+
+func _start_autopilot_runtime_if_needed() -> void:
+	if is_instance_valid(autopilot_controller):
+		return
 	_sync_autopilot_runtime(_players)
 
 
