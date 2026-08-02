@@ -5,19 +5,21 @@ extends Reference
 # velocity enters the collision cone of a moving disk and reports continuous TTC
 # risk instead of inventing a dynamically executed path.
 
-const PLAYER_RADIUS := 24.0
-const TTC_RISK_SECONDS := 1.0
-const MAX_COLLISION_SECONDS := 1.5
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
+const MovementScaleModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
+)
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
+var _movement_scale: Reference = MovementScaleModel.new()
 
 
 func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
+	var scale: Dictionary = _movement_scale.derive(observation)
 	var player_velocity := _player_kinematics.predict_average_velocity(
-		observation, action.movement, TTC_RISK_SECONDS
+		observation, action.movement, scale.ttc_risk_seconds
 	)
 	var enemy_risk := 0.0
 	var projectile_risk := 0.0
@@ -26,27 +28,30 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 
 	for track in observation.enemy_tracks:
 		var combined_radius: float = (
-			PLAYER_RADIUS
+			scale.player_radius
 			+ track.last_measurement.visual_radius
 			+ track.uncertainty_radius
 		)
 		var ttc := _time_to_collision(
 			track.relative_position, track.estimated_velocity - player_velocity, combined_radius
 		)
-		if ttc <= MAX_COLLISION_SECONDS:
+		if ttc <= scale.maximum_collision_seconds:
 			minimum_ttc = min(minimum_ttc, ttc)
-			enemy_risk += _ttc_risk(ttc) * track.recency_confidence
+			enemy_risk += _ttc_risk(ttc, scale.ttc_risk_seconds) * track.recency_confidence
 
 	for projectile in observation.visible_world.enemy_projectiles:
 		var ttc := _time_to_collision(
 			projectile.relative_position,
 			projectile.velocity - player_velocity,
-			PLAYER_RADIUS + projectile.visual_radius
+			scale.player_radius + projectile.visual_radius
 		)
-		if ttc > MAX_COLLISION_SECONDS or _intercepted_before_player(observation, projectile, ttc):
+		if (
+			ttc > scale.maximum_collision_seconds
+			or _intercepted_before_player(observation, projectile, ttc)
+		):
 			continue
 		minimum_ttc = min(minimum_ttc, ttc)
-		projectile_risk += 1.5 * _ttc_risk(ttc)
+		projectile_risk += 1.5 * _ttc_risk(ttc, scale.ttc_risk_seconds)
 
 	for ally in observation.visible_world.get("allied_agents", []):
 		if ally.kind != "player":
@@ -54,12 +59,12 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 		var ttc := _time_to_collision(
 			ally.relative_position,
 			ally.velocity - player_velocity,
-			PLAYER_RADIUS + ally.visual_radius
+			scale.player_radius + ally.visual_radius
 		)
-		if ttc <= MAX_COLLISION_SECONDS:
+		if ttc <= scale.maximum_collision_seconds:
 			minimum_ttc = min(minimum_ttc, ttc)
 			# Do not assume a human or independently controlled ally will reciprocate.
-			ally_risk += _ttc_risk(ttc)
+			ally_risk += _ttc_risk(ttc, scale.ttc_risk_seconds)
 
 	return {
 		"velocity_obstacle_risk": _saturate(enemy_risk + projectile_risk + ally_risk),
@@ -106,8 +111,8 @@ func _intercepted_before_player(
 	return false
 
 
-func _ttc_risk(ttc: float) -> float:
-	return exp(-max(0.0, ttc) / TTC_RISK_SECONDS)
+func _ttc_risk(ttc: float, risk_seconds: float) -> float:
+	return exp(-max(0.0, ttc) / risk_seconds)
 
 
 func _saturate(value: float) -> float:

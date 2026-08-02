@@ -4,16 +4,18 @@ extends Reference
 # Forecast duration follows observed encounter timing; it is not an execution
 # commitment. Zero velocity is the origin of the same action space, not a mode.
 
-const ENCOUNTER_MARGIN := 120.0
-const PLAYER_RADIUS := 24.0
 const MovementPlanningTiming := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
 )
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
+const MovementScaleModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
+)
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
+var _movement_scale: Reference = MovementScaleModel.new()
 
 
 func generate(
@@ -82,6 +84,7 @@ func _candidate_directions(direction_count: int, navigation_graph: Dictionary) -
 func _forecast_window(observation: Dictionary) -> float:
 	var nearest_encounter := INF
 	var player_velocity: Vector2 = observation.player_state.movement.velocity
+	var scale: Dictionary = _movement_scale.derive(observation)
 	for track in observation.enemy_tracks:
 		var relative_velocity: Vector2 = track.estimated_velocity - player_velocity
 		nearest_encounter = min(
@@ -89,7 +92,7 @@ func _forecast_window(observation: Dictionary) -> float:
 			_encounter_time(
 				track.relative_position,
 				relative_velocity,
-				PLAYER_RADIUS + track.last_measurement.visual_radius + ENCOUNTER_MARGIN
+				scale.player_radius + track.last_measurement.visual_radius + scale.encounter_margin
 			)
 		)
 	for projectile in observation.visible_world.enemy_projectiles:
@@ -99,13 +102,13 @@ func _forecast_window(observation: Dictionary) -> float:
 			_encounter_time(
 				projectile.relative_position,
 				relative_velocity,
-				PLAYER_RADIUS + projectile.visual_radius + ENCOUNTER_MARGIN
+				scale.player_radius + projectile.visual_radius + scale.encounter_margin
 			)
 		)
 	if nearest_encounter == INF:
 		return MovementPlanningTiming.LOCAL_FORECAST_DEFAULT_SECONDS
 	return clamp(
-		nearest_encounter + 0.12,
+		nearest_encounter + MovementPlanningTiming.CONTROL_INTERVAL_SECONDS,
 		MovementPlanningTiming.LOCAL_FORECAST_MIN_SECONDS,
 		MovementPlanningTiming.LOCAL_FORECAST_MAX_SECONDS
 	)

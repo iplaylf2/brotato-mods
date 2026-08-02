@@ -24,12 +24,12 @@
       "tags": [],
       "config_schema": {
         "title": "Autopilot",
-        "description": "Configure how Autopilot controls battle movement.",
+        "description": "Control battle movement and record local decision samples for calibration.",
         "type": "object",
         "properties": {
           "enabled": {
             "title": "Enable Autopilot",
-            "description": "Let Autopilot control player movement during battles.",
+            "description": "Let Autopilot control movement and record local decision samples during battles.",
             "type": "boolean",
             "default": false
           }

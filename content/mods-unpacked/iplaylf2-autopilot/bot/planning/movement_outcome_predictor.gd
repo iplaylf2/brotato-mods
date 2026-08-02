@@ -25,8 +25,9 @@ const PlayerMovementStateProjector := preload(
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
-
-const ROAMING_DISTANCE := 600.0
+const MovementScaleModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
+)
 
 var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
@@ -35,6 +36,7 @@ var _velocity_obstacle_risk_model: Reference = VelocityObstacleRiskModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
+var _movement_scale: Reference = MovementScaleModel.new()
 
 
 func predict(
@@ -119,7 +121,8 @@ func _predict_action_outcomes(
 	outcome.targets_in_weapon_range = _targets_in_weapon_range(observation, action)
 
 	var final_displacement: Vector2 = samples.back().displacement
-	outcome.roaming_progress = clamp(final_displacement.length() / ROAMING_DISTANCE, 0.0, 1.0)
+	var roaming_distance: float = _movement_scale.derive(observation).roaming_distance
+	outcome.roaming_progress = clamp(final_displacement.length() / roaming_distance, 0.0, 1.0)
 	if action.movement == Vector2.ZERO:
 		outcome.standing_seconds = action.forecast_seconds
 	else:

@@ -24,6 +24,13 @@ const NavigationValueGraphBuilder := preload(
 const MovementPlanningTiming := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
 )
+const MovementScaleModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
+)
+
+# Bump whenever a formula, parameter meaning, or logged planning
+# contract changes. Samples use it to keep incompatible calibration groups separate.
+const MODEL_REVISION := "2026-08-02.1"
 
 var _action_generator: Reference = MovementActionGenerator.new()
 var _search_budget_policy: Reference = SearchBudgetPolicy.new()
@@ -31,6 +38,7 @@ var _outcome_predictor: Reference = MovementOutcomePredictor.new()
 var _utility_model: Reference = MovementUtilityModel.new()
 var _action_selector: Reference = MovementActionSelector.new()
 var _navigation_graph_builder: Reference = NavigationValueGraphBuilder.new()
+var _movement_scale: Reference = MovementScaleModel.new()
 
 
 func plan(observation: Dictionary, previous_movement: Vector2, player_index: int) -> Dictionary:
@@ -79,7 +87,35 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 	plan.action_count = actions.size()
 	plan.weapon_prediction_count = weapon_scored_actions.size()
 	plan.ranked_actions = _summarize_actions(weapon_scored_actions, 5)
+	plan.model = _model_diagnostics(observation, plan, navigation_graph)
 	return plan
+
+
+func _model_diagnostics(
+	observation: Dictionary, plan: Dictionary, navigation_graph: Dictionary
+) -> Dictionary:
+	var movement_scale: Dictionary = _movement_scale.derive(observation)
+	return {
+		"revision": MODEL_REVISION,
+		"timing":
+		{
+			"control_interval_seconds": MovementPlanningTiming.CONTROL_INTERVAL_SECONDS,
+			"local_forecast_min_seconds": MovementPlanningTiming.LOCAL_FORECAST_MIN_SECONDS,
+			"local_forecast_default_seconds": MovementPlanningTiming.LOCAL_FORECAST_DEFAULT_SECONDS,
+			"local_forecast_max_seconds": MovementPlanningTiming.LOCAL_FORECAST_MAX_SECONDS,
+			"navigation_forecast_max_seconds":
+			MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS,
+		},
+		"derived":
+		{
+			"movement_scale": movement_scale,
+			"action_forecast_seconds": plan.action.forecast_seconds,
+			"near_node_spacing": navigation_graph.near_node_spacing,
+			"local_detail_radius": navigation_graph.local_detail_radius,
+			"local_prediction_radius": navigation_graph.local_prediction_radius,
+			"control_distance": navigation_graph.control_distance,
+		},
+	}
 
 
 func _make_scored_action(

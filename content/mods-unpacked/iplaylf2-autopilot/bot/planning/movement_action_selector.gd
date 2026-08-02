@@ -31,13 +31,60 @@ func select(scored_actions: Array, context: Dictionary, seed: int) -> Dictionary
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
-	var roll := rng.randf() * total_weight
+	var initial_roll := rng.randf() * total_weight
+	var roll := initial_roll
 	for index in near_optimal.size():
 		roll -= weights[index]
 		if roll <= 0.0:
 			var selected: Dictionary = near_optimal[index].duplicate(true)
 			selected.near_optimal_count = near_optimal.size()
+			selected.selection_diagnostics = _selection_diagnostics(
+				seed,
+				best_score,
+				worst_score,
+				score_band,
+				temperature,
+				initial_roll,
+				total_weight,
+				index,
+				weights[index]
+			)
 			return selected
 	var selected: Dictionary = near_optimal.back().duplicate(true)
 	selected.near_optimal_count = near_optimal.size()
+	selected.selection_diagnostics = _selection_diagnostics(
+		seed,
+		best_score,
+		worst_score,
+		score_band,
+		temperature,
+		initial_roll,
+		total_weight,
+		near_optimal.size() - 1,
+		weights.back()
+	)
 	return selected
+
+
+func _selection_diagnostics(
+	seed: int,
+	best_score: float,
+	worst_score: float,
+	score_band: float,
+	temperature: float,
+	roll: float,
+	total_weight: float,
+	selected_near_optimal_index: int,
+	selected_weight: float
+) -> Dictionary:
+	return {
+		"seed": seed,
+		"best_score": best_score,
+		"worst_score": worst_score,
+		"score_spread": best_score - worst_score,
+		"near_optimal_score_band": score_band,
+		"temperature": temperature,
+		"roll_fraction": roll / max(0.000001, total_weight),
+		"selected_near_optimal_index": selected_near_optimal_index,
+		"selected_probability": selected_weight / max(0.000001, total_weight),
+	}

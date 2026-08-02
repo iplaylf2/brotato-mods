@@ -5,7 +5,8 @@
 重复定义该约束。
 
 按修改对象选择阅读入口：公共数据见“观察契约”，决策行为见“滚动规划”，版本知识见“机制知识”，
-代码归属见“模块责任”。敌人与投射物的目标版本覆盖范围单独保存在
+代码归属见“模块责任”，采样格式和参数证据等级见
+[决策采样与模型校准](model-calibration.md)。敌人与投射物的目标版本覆盖范围单独保存在
 [原版敌人与投射物机制参考](vanilla-enemy-mechanics.md)；道具和武器的非常规效果审计见
 [原版道具与武器机制审计](vanilla-item-weapon-mechanics.md)。
 
@@ -22,12 +23,16 @@
     │   ├── 搜索预算与导航图
     │   ├── 动作生成与结果预测
     │   └── 效用评价与动作选择
+    ├── DecisionTelemetry
     └── AutopilotMovementBehavior
 ```
 
 主场景扩展负责管理观察服务和控制器的生命周期。控制器定期读取观察并请求运动计划，只把计划中的
 首个移动方向交给 `MovementBehavior`；这是系统唯一的控制边界。速度、碰撞、击退、动画、瞄准、
 攻击触发和移动机制均由原版 `Player`、`Unit` 与武器系统负责。
+
+`DecisionTelemetry` 按固定采样政策把观察和规划账本持久化为 JSON Lines，但不参与计划生成或动作选择。
+它只接收控制器已经取得的合法观察与只读结果，不形成新的观察入口。
 
 代码依赖保持单向：`control` 依赖 `planning`，`observation` 依赖 `knowledge`，规划层只读取观察字典，
 不访问场景节点。`bot/observation/observation_service.gd` 是观察的公共读取入口。
@@ -292,7 +297,11 @@ visible_world
 
 ### 结果与诊断
 
-规划结果分为评分字段和诊断字段。评分字段与动态权重相乘后进入动作总分：
+状态为 `ready` 的规划结果同时提供评分账本和只读诊断。顶层 `model` 保存模型修订号、统一时间契约和
+本次决策实际使用的派生空间尺度；`selection_diagnostics` 保存候选分数跨度、近优带、温度、随机种子、
+随机抽样位置和所选概率。这些诊断只用于区分校准样本和解释最终选择，不参与效用评分。
+
+以下评分字段与动态权重相乘后进入动作总分：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -442,7 +451,7 @@ VO 使用连续 TTC 风险而不是硬排除集合，因此高收益且风险可
 
 | 模块 | 责任 | 公共边界 |
 | --- | --- | --- |
-| `bot/control` | 安排重规划、保存当前计划，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`AutopilotMovementBehavior` 是唯一控制输出 |
+| `bot/control` | 安排重规划、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`get_decision_sample_path()` 提供当前采样文件；`AutopilotMovementBehavior` 是唯一控制输出 |
 | `bot/planning` | 管理导航价值图、运动学、速度障碍风险、动作搜索、效用评分和近优选择 | `MovementPlanner.plan()`；其余模块是规划包内部协作者 |
 | `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.get_observation()` |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
@@ -461,6 +470,7 @@ VO 使用连续 TTC 风险而不是硬排除集合，因此高收益且风险可
 | `Model` | 封装可复用的领域关系或评价规律 | 领域动词 |
 | `Builder` | 构造并求解一个复合数据产物 | `build` |
 | `Policy` | 根据当前负载或状态分配限制 | `allocate` |
+| `Telemetry` | 按既定采样政策持久化诊断记录，不参与被记录的决策 | `start`、`record_decision`、`close` |
 
 数据仍按其产物命名，例如 `attack_model`、`rule_projection`、`behavior_profile` 和 `navigation_graph`；组件名
 则使用上表的角色后缀。这样可以区分“投影结果”与执行投影的 `Projector`，以及“导航图”与构造它的
@@ -482,7 +492,8 @@ VO 使用连续 TTC 风险而不是硬排除集合，因此高收益且风险可
   `bot/planning/weapon_attack_predictor.gd` 负责短名单动作的目标几何。
 - `bot/planning/battlefield_exposure_model.gd` 拥有环境暴露、位置域碰撞风险、友方减压、挡弹时序和动作诊断；
   `bot/planning/navigation_value_graph_builder.gd` 只在局部动作窗外提供终端价值并求解 Bellman 累计价值，
-  三段时间边界由 `bot/planning/movement_planning_timing.gd` 唯一定义。
+  三段时间边界由 `bot/planning/movement_planning_timing.gd` 唯一定义，体型、速度与这些时域形成的共享
+  空间尺度由 `bot/planning/movement_scale_model.gd` 统一派生。
 - `bot/planning/velocity_obstacle_risk_model.gd` 计算局部速度空间交会风险，最终碰撞风险由动作结果预测器与位置域
   证据合并；
   `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
@@ -496,6 +507,8 @@ VO 使用连续 TTC 风险而不是硬排除集合，因此高收益且风险可
 - `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量，
   `bot/planning/observed_motion_predictor.gd` 负责规划期外推；观察层不得反向依赖规划层。
 - `bot/planning/search_budget_policy.gd` 单独负责计算降级，便于以后用帧时间反馈替换计数政策。
+- `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；它不复制规划公式，
+  模型修订号及本次实际参数由 `MovementPlanner` 提供。
 
 ## 算法依据与适用边界
 

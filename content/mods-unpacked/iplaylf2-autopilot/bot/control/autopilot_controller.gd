@@ -12,6 +12,9 @@ const MovementPlanner := preload(
 const MovementPlanningTiming := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planning_timing.gd"
 )
+const DecisionTelemetry := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/control/decision_telemetry.gd"
+)
 const REPLAN_INTERVAL_SECONDS := MovementPlanningTiming.CONTROL_INTERVAL_SECONDS
 
 var _observation_service: Node
@@ -21,6 +24,7 @@ var _original_movement_behaviors: Array = []
 var _movement_planners: Array = []
 var _current_plans: Array = []
 var _previous_movements: Array = []
+var _decision_telemetry: Reference = DecisionTelemetry.new()
 var _seconds_until_replan := 0.0
 var _shut_down := false
 
@@ -37,6 +41,9 @@ func initialize(observation_service: Node, players: Array) -> void:
 		_current_plans.push_back({})
 		_previous_movements.push_back(Vector2.ZERO)
 		player._current_movement_behavior = actuator
+	_decision_telemetry.start(
+		players.size(), REPLAN_INTERVAL_SECONDS, MovementPlanner.MODEL_REVISION
+	)
 
 
 func _physics_process(delta: float) -> void:
@@ -54,6 +61,7 @@ func shutdown() -> void:
 	if _shut_down:
 		return
 	_shut_down = true
+	_decision_telemetry.close()
 	for player_index in _players.size():
 		var player = _players[player_index]
 		var actuator = _actuators[player_index]
@@ -72,6 +80,10 @@ func get_current_plan(player_index: int) -> Dictionary:
 	return _current_plans[player_index].duplicate(true)
 
 
+func get_decision_sample_path() -> String:
+	return _decision_telemetry.get_current_path()
+
+
 func _replan_all_players() -> void:
 	for player_index in _players.size():
 		var player = _players[player_index]
@@ -82,6 +94,14 @@ func _replan_all_players() -> void:
 			observation, _previous_movements[player_index], player_index
 		)
 		_current_plans[player_index] = plan
+		_decision_telemetry.record_decision(
+			player_index,
+			observation,
+			plan,
+			_previous_movements[player_index],
+			MovementPlanner.MODEL_REVISION,
+			REPLAN_INTERVAL_SECONDS
+		)
 		var movement: Vector2 = plan.movement
 		_actuators[player_index].set_movement(movement)
 		_previous_movements[player_index] = movement

@@ -16,7 +16,7 @@ Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetail
 关闭。安装依赖后，在游戏中打开 `设置 → Mods → Autopilot`，启用 **Enable Autopilot**。
 
 设置会立即作用于当前战斗并保存到后续战斗。关闭后，Autopilot 会停止移动并恢复玩家原有的
-`MovementBehavior`。
+`MovementBehavior`。启用期间还会在本地写入决策采样文件，具体路径和分片策略见“诊断与采样”。
 
 ## 公平边界
 
@@ -35,8 +35,7 @@ Autopilot 从当前可见信息、玩家自身状态、稳定机制知识和先�
 
 敌对暴露、友方减压和治疗机会保持不同语义：友方火力只能降低对应敌人造成的环境暴露；
 投射物拦截只降低实际拦截时刻之后的弹道暴露；治疗则作为独立收益。这些约束避免将支援能力误解为
-无条件的安全区。具体观察字段、
-评分结果和算法流程见 [架构文档](docs/architecture.md)。
+无条件的安全区。具体观察字段、评分结果和算法流程见 [架构文档](docs/architecture.md)。
 
 ## 维护入口
 
@@ -44,10 +43,11 @@ Autopilot 从当前可见信息、玩家自身状态、稳定机制知识和先�
 
 - [玩家权限边界](docs/fair-play.md) 定义允许读取的信息和唯一控制面；
 - [架构文档](docs/architecture.md) 定义公共观察、规划结果、决策流程和模块责任；
+- [决策采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
 - [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人攻击与投射物入口；
 - [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。
 
-## 诊断接口
+## 诊断与采样
 
 启用后，可以读取某位玩家的最新观察和计划：
 
@@ -57,4 +57,10 @@ var plan = main.autopilot_controller.get_current_plan(player_index)
 ```
 
 计划包含所选动作、移动方向、结果字段、字段级与目标级效用账本、动态上下文、导航价值图、搜索预算和
-近优动作摘要，供游戏内诊断与回放校准。
+近优动作摘要，供游戏内诊断与模型校准。
+
+控制器会为每位玩家记录第一次决策，此后每 5 次重规划记录一次，并额外记录规划失败；按名义
+`0.1` 秒控制周期计算，常规采样间隔约为 `0.5` 秒。样本写入
+`user://autopilot/decision-samples/` 下的 JSON Lines 文件，单个文件达到 32 MiB 后自动分片。
+采样不包含两条样本之间的全部决策，不能作为逐帧回放；字段约定、参数证据等级和正确复盘方法见
+[决策采样与模型校准](docs/model-calibration.md)。

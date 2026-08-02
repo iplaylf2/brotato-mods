@@ -17,21 +17,24 @@ const MovementPlanningTiming := preload(
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
+const MovementScaleModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
+)
 
 const MIN_RING_DIRECTIONS := 8
 const MAX_RING_DIRECTIONS := 32
 const ENGAGEMENT_RADIAL_SAMPLES := 6.0
-const NAVIGATION_FORECAST_MIN_SECONDS := 0.12
 const FAR_RING_GROWTH := 1.65
 
 var _exposure_model: Reference = BattlefieldExposureModel.new()
 var _engagement_model: Reference = WeaponEngagementModel.new()
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
+var _movement_scale: Reference = MovementScaleModel.new()
 
 
 func build(observation: Dictionary, context: Dictionary, search_budget: Dictionary) -> Dictionary:
 	var map_extent := _map_extent(observation)
-	var spatial_scale := _spatial_scale(observation, context)
+	var spatial_scale := _spatial_scale(observation)
 	var radii := _adaptive_radii(
 		map_extent.radius, spatial_scale.near_node_spacing, spatial_scale.local_detail_radius
 	)
@@ -104,7 +107,7 @@ func _sample_node(
 	var speed: float = max(1.0, _player_kinematics.predict_command_speed(observation, true))
 	var forecast_seconds := clamp(
 		radius / speed,
-		NAVIGATION_FORECAST_MIN_SECONDS,
+		MovementPlanningTiming.CONTROL_INTERVAL_SECONDS,
 		MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
 	)
 	var current: Dictionary = _exposure_model.sample_point(
@@ -315,11 +318,12 @@ func _adaptive_radii(
 	return result
 
 
-func _spatial_scale(observation: Dictionary, context: Dictionary) -> Dictionary:
+func _spatial_scale(observation: Dictionary) -> Dictionary:
 	var player_state: Dictionary = observation.player_state
-	var player_radius: float = max(1.0, player_state.get("collision_radius", 24.0))
-	var speed: float = max(1.0, _player_kinematics.predict_command_speed(observation, true))
-	var control_distance: float = speed * context.control_interval_seconds
+	var movement_scale: Dictionary = _movement_scale.derive(observation)
+	var player_radius: float = movement_scale.player_radius
+	var speed: float = movement_scale.command_speed
+	var control_distance: float = movement_scale.control_distance
 	var engagement_capacity: Dictionary = _engagement_model.estimate_capacity(
 		observation, MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS
 	)
