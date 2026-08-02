@@ -28,6 +28,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 		* lerp(1.0, 0.35, projectile_density)
 	)
 	var mechanic_weights := _mechanic_weights(observation)
+	var allied_role_counts := _count_allied_roles(observation)
 
 	return {
 		"weights":
@@ -45,21 +46,45 @@ func build_context(observation: Dictionary) -> Dictionary:
 			6.0 * wave_time_remaining_ratio * ranged_source_multiplier * ranged_engagement_appetite,
 			"targets_in_weapon_range": 0.15,
 			"tree_attack_opportunity": _tree_weight(observation, wave_progress),
-			"hazard_exposure": -lerp(30.0, 6.0, risk_tolerance) * lerp(1.0, 0.65, wave_progress),
-			"contact_pressure": -lerp(120.0, 35.0, risk_tolerance) * lerp(1.0, 0.65, wave_progress),
-			"ranged_source_pressure":
-			(
-				-lerp(18.0, 4.0, risk_tolerance)
-				* lerp(1.0, 1.75, projectile_density)
-				* ranged_source_multiplier
-			),
+			"integrated_survival_pressure":
+			-lerp(20.0, 5.0, risk_tolerance) * lerp(1.0, 0.65, wave_progress),
+			"mean_pressure_material_derivative": -lerp(5.0, 1.5, risk_tolerance),
+			"velocity_obstacle_risk":
+			-lerp(70.0, 28.0, risk_tolerance) * lerp(1.0, 0.75, wave_progress),
+			"allied_zone_healing_support": lerp(14.0, 1.5, health_ratio),
 			"roaming_progress": 1.2 * wave_time_remaining_ratio,
 			"standing_seconds": mechanic_weights.standing,
 			"moving_seconds": mechanic_weights.moving,
 			"heading_continuity": 0.25,
+			"navigation_guidance_alignment": 4.0,
 		},
 		"selection_temperature":
 		lerp(0.03, 0.12, risk_tolerance) * lerp(0.7, 1.2, wave_time_remaining_ratio),
+		"pressure_policy":
+		{
+			"enemy_proximity": 0.7,
+			"contact": 2.2,
+			"projectile": 1.4,
+			"spawn": 0.8,
+			"ranged": 0.6 * lerp(1.0, 1.5, projectile_density) * ranged_source_multiplier,
+			"edge": 1.2,
+			"ally_body": 0.8,
+			"allied_suppression": 0.8,
+			"projectile_interception": 1.4,
+		},
+		"navigation_policy":
+		{
+			"material": 0.35 + 0.55 * wave_progress,
+			"healing_pickup": lerp(1.2, 0.1, health_ratio),
+			"healing_support": lerp(0.9, 0.1, health_ratio),
+			"tree": _tree_weight(observation, wave_progress) * 0.35,
+			"enemy_producer": 0.45 * wave_time_remaining_ratio * producer_multiplier,
+			"loot_target": 0.35 * (1.0 + wave_progress) * loot_target_multiplier,
+			"ranged_source":
+			0.5 * wave_time_remaining_ratio * ranged_source_multiplier * ranged_engagement_appetite,
+			"rising_pressure": 0.22,
+			"travel_cost": 0.08,
+		},
 		"state_factors":
 		{
 			"health_ratio": health_ratio,
@@ -74,6 +99,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"ranged_source_multiplier": ranged_source_multiplier,
 			"projectile_density": projectile_density,
 			"ranged_engagement_appetite": ranged_engagement_appetite,
+			"allied_role_counts": allied_role_counts,
 		},
 	}
 
@@ -104,6 +130,22 @@ func _count_role(tracks: Array, role: String) -> int:
 	for track in tracks:
 		if track.behavior_profile.strategic_roles[role]:
 			result += 1
+	return result
+
+
+func _count_allied_roles(observation: Dictionary) -> Dictionary:
+	var result := {
+		"party_member": 0,
+		"combat_support": 0,
+		"healing_support": 0,
+		"projectile_interceptor": 0,
+		"resource_support": 0,
+		"threat_diversion": 0,
+	}
+	for ally in observation.visible_world.get("allied_agents", []):
+		for role in result:
+			if ally.influence.roles.get(role, false):
+				result[role] += 1
 	return result
 
 

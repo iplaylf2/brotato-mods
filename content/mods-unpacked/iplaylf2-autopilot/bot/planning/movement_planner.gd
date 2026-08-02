@@ -1,29 +1,35 @@
 extends Reference
 
-# Public planning boundary. It performs bounded coarse-to-fine trajectory
+# Public planning boundary. It performs bounded coarse-to-fine movement-action
 # search and returns a complete, inspectable score ledger.
 
-const TrajectoryGenerator := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/trajectory_generator.gd"
+const MovementActionGenerator := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_generator.gd"
 )
 const SearchBudgetPolicy := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/search_budget_policy.gd"
 )
-const TrajectoryOutcomePredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/trajectory_outcome_predictor.gd"
+const MovementOutcomePredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_outcome_predictor.gd"
 )
-const UtilityModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/utility_model.gd"
+const MovementUtilityModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_utility_model.gd"
 )
-const TrajectorySelector := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/trajectory_selector.gd"
+const MovementActionSelector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_selector.gd"
+)
+const NavigationValueGraph := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_value_graph.gd"
 )
 
-var _trajectory_generator: Reference = TrajectoryGenerator.new()
+const CONTROL_INTERVAL_SECONDS := 0.1
+
+var _action_generator: Reference = MovementActionGenerator.new()
 var _search_budget_policy: Reference = SearchBudgetPolicy.new()
-var _trajectory_outcome_predictor: Reference = TrajectoryOutcomePredictor.new()
-var _utility_model: Reference = UtilityModel.new()
-var _trajectory_selector: Reference = TrajectorySelector.new()
+var _outcome_predictor: Reference = MovementOutcomePredictor.new()
+var _utility_model: Reference = MovementUtilityModel.new()
+var _action_selector: Reference = MovementActionSelector.new()
+var _navigation_graph_builder: Reference = NavigationValueGraph.new()
 
 
 func plan(observation: Dictionary, previous_movement: Vector2, player_index: int) -> Dictionary:
@@ -33,48 +39,54 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 		return _empty_plan("player_dead")
 
 	var context: Dictionary = _utility_model.build_context(observation)
+	context.control_interval_seconds = CONTROL_INTERVAL_SECONDS
 	var search_budget: Dictionary = _search_budget_policy.build(observation)
-	var trajectories: Array = _trajectory_generator.generate(observation, search_budget)
-	var full_evaluation_limit: int = search_budget.full_evaluation_limit
+	var navigation_graph: Dictionary = _navigation_graph_builder.build(
+		observation, context, search_budget
+	)
+	context.navigation_guidance = navigation_graph.navigation_guidance
+	var actions: Array = _action_generator.generate(observation, search_budget, navigation_graph)
+	var detailed_prediction_limit: int = search_budget.detailed_prediction_limit
 	var coarse_shortlist := []
 
-	for trajectory in trajectories:
-		var outcome: Dictionary = _trajectory_outcome_predictor.predict(
-			observation, trajectory, previous_movement, false
+	for action in actions:
+		var outcome: Dictionary = _outcome_predictor.predict(
+			observation, action, previous_movement, false, context
 		)
 		var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
-		var scored := _make_scored_trajectory(trajectory, outcome, evaluation)
-		_insert_descending(coarse_shortlist, scored, full_evaluation_limit)
+		var scored := _make_scored_action(action, outcome, evaluation)
+		_insert_descending(coarse_shortlist, scored, detailed_prediction_limit)
 
-	var fully_scored_trajectories := []
+	var detailed_actions := []
 	for coarse in coarse_shortlist:
-		var outcome: Dictionary = _trajectory_outcome_predictor.predict(
-			observation, coarse.trajectory, previous_movement, true
+		var outcome: Dictionary = _outcome_predictor.predict(
+			observation, coarse.action, previous_movement, true, context
 		)
 		var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
 		_insert_descending(
-			fully_scored_trajectories,
-			_make_scored_trajectory(coarse.trajectory, outcome, evaluation),
-			full_evaluation_limit
+			detailed_actions,
+			_make_scored_action(coarse.action, outcome, evaluation),
+			detailed_prediction_limit
 		)
 
 	var seed: int = int(observation.physics_frame) * 31 + player_index
-	var plan: Dictionary = _trajectory_selector.select(fully_scored_trajectories, context, seed)
+	var plan: Dictionary = _action_selector.select(detailed_actions, context, seed)
 	plan.status = "ready"
 	plan.context = context
 	plan.search_budget = search_budget.duplicate(true)
-	plan.trajectory_count = trajectories.size()
-	plan.full_evaluation_count = fully_scored_trajectories.size()
-	plan.ranked_trajectories = _summarize_trajectories(fully_scored_trajectories, 5)
+	plan.navigation_graph = navigation_graph.duplicate(true)
+	plan.action_count = actions.size()
+	plan.detailed_prediction_count = detailed_actions.size()
+	plan.ranked_actions = _summarize_actions(detailed_actions, 5)
 	return plan
 
 
-func _make_scored_trajectory(
-	trajectory: Dictionary, outcome: Dictionary, evaluation: Dictionary
+func _make_scored_action(
+	action: Dictionary, outcome: Dictionary, evaluation: Dictionary
 ) -> Dictionary:
 	return {
-		"trajectory": trajectory,
-		"movement": trajectory.movement,
+		"action": action,
+		"movement": action.movement,
 		"outcome": outcome,
 		"score": evaluation.score,
 		"utility_breakdown": evaluation.breakdown,
@@ -94,14 +106,15 @@ func _insert_descending(entries: Array, entry: Dictionary, limit: int) -> void:
 		entries.pop_back()
 
 
-func _summarize_trajectories(entries: Array, limit: int) -> Array:
+func _summarize_actions(entries: Array, limit: int) -> Array:
 	var result := []
 	for index in min(limit, entries.size()):
 		var entry: Dictionary = entries[index]
 		result.push_back(
 			{
-				"trajectory_id": entry.trajectory.trajectory_id,
+				"action_id": entry.action.action_id,
 				"movement": entry.movement,
+				"forecast_seconds": entry.action.forecast_seconds,
 				"score": entry.score,
 				"outcome": entry.outcome.duplicate(true),
 				"utility_breakdown": entry.utility_breakdown.duplicate(true),

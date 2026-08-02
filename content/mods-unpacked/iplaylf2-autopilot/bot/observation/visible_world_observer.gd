@@ -11,11 +11,19 @@ const ObservedMotionEstimator := preload(
 const EnemyMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_mechanic_compiler.gd"
 )
+const StructureMechanicCompiler := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/structures/structure_mechanic_compiler.gd"
+)
+const AllyMechanicCompiler := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/allies/ally_mechanic_compiler.gd"
+)
 
 var _main: Node
 var _players: Array
 var _motion_estimators := []
 var _enemy_mechanic_compiler: Reference = EnemyMechanicCompiler.new()
+var _structure_mechanic_compiler: Reference = StructureMechanicCompiler.new()
+var _ally_mechanic_compiler: Reference = AllyMechanicCompiler.new()
 
 
 func _init(main: Node, players: Array) -> void:
@@ -30,9 +38,18 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	var origin: Vector2 = player.global_position
 	var enemies := _observe_enemies(player, visible_rect)
 	var enemy_projectiles := _observe_enemy_projectiles(origin, visible_rect, enemies)
+	var trees := _observe_nodes(_main._entity_spawner.neutrals, origin, visible_rect, "tree")
+	var materials := _observe_children(_main._materials_container, origin, visible_rect, "material")
+	var consumables := _observe_children(
+		_main._consumables_container, origin, visible_rect, "consumable"
+	)
+	var structures := _observe_structures(origin, visible_rect)
+	var allied_agents := _observe_allied_agents(player_index, origin, visible_rect)
 	var moving_observations := []
 	moving_observations.append_array(enemies)
 	moving_observations.append_array(enemy_projectiles)
+	moving_observations.append_array(structures)
+	moving_observations.append_array(allied_agents)
 	_motion_estimators[player_index].update(moving_observations, delta_seconds)
 	_update_enemy_motion_features(enemies, _get_velocity(player))
 	var ranged_attack_sources := _infer_ranged_attacks(enemies, enemy_projectiles)
@@ -42,6 +59,7 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	return {
 		# Internal inputs for observed world memory; never expose them through the service.
 		"enemy_observations": enemies,
+		"entity_memory_observations": trees + materials + consumables + structures,
 		"visible_edges": _observe_visible_edges(origin, visible_rect),
 		"visibility":
 		{
@@ -51,12 +69,11 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 		},
 		"visible_world":
 		{
-			"trees": _observe_nodes(_main._entity_spawner.neutrals, origin, visible_rect, "tree"),
-			"allies": _observe_allies(player_index, origin, visible_rect),
-			"materials":
-			_observe_children(_main._materials_container, origin, visible_rect, "material"),
-			"consumables":
-			_observe_children(_main._consumables_container, origin, visible_rect, "consumable"),
+			"trees": _make_public_motion_observations(trees),
+			"allied_agents": _make_public_motion_observations(allied_agents),
+			"structures": _make_public_motion_observations(structures),
+			"materials": _make_public_motion_observations(materials),
+			"consumables": _make_public_motion_observations(consumables),
 			"enemy_projectiles": _make_public_motion_observations(enemy_projectiles),
 			"spawn_warnings": _observe_spawn_warnings(origin, visible_rect),
 		},
@@ -178,17 +195,70 @@ func _infer_ranged_attacks(enemies: Array, projectiles: Array) -> Dictionary:
 	return likely_sources
 
 
-func _observe_allies(player_index: int, origin: Vector2, visible_rect: Rect2) -> Array:
+func _observe_allied_agents(player_index: int, origin: Vector2, visible_rect: Rect2) -> Array:
 	var observations := []
 	for index in _players.size():
 		if index == player_index:
 			continue
-		_append_observation(observations, _players[index], origin, visible_rect, "player")
+		_append_allied_agent(
+			observations, _players[index], origin, visible_rect, "player", index, "party_member"
+		)
 
-	for structure in _main._entity_spawner.structures:
-		_append_observation(observations, structure, origin, visible_rect, "structure")
 	for pet in _main._entity_spawner.pets:
-		_append_observation(observations, pet, origin, visible_rect, "pet")
+		var owner_index: int = pet.player_index if "player_index" in pet else -1
+		var relationship := "owned_companion" if owner_index == player_index else "party_companion"
+		_append_allied_agent(
+			observations, pet, origin, visible_rect, "pet", owner_index, relationship
+		)
+	return observations
+
+
+func _append_allied_agent(
+	observations: Array,
+	agent,
+	origin: Vector2,
+	visible_rect: Rect2,
+	kind: String,
+	owner_player_index: int,
+	relationship: String
+) -> void:
+	if not _is_node_visible(agent, visible_rect):
+		return
+	var observation := _make_entity_observation(agent, origin, kind)
+	observation._source = agent
+	observation._world_position = agent.global_position
+	observation.acceleration = Vector2.ZERO
+	observation.motion_confidence = 0.0
+	observation.owner_player_index = owner_player_index
+	observation.relationship = relationship
+	observation.influence = _ally_mechanic_compiler.compile(agent, kind)
+	if kind == "player":
+		observation.pickup = _get_player_pickup_geometry(agent)
+		observation.move_speed = agent.get_move_speed()
+	observations.push_back(observation)
+
+
+func _get_player_pickup_geometry(player: Node) -> Dictionary:
+	var attract_shape = player._item_attract_area.get_node("CollisionShape2D").shape
+	var pickup_shape = player._item_pickup_area.get_node("CollisionShape2D").shape
+	return {
+		"attraction_radius": attract_shape.radius,
+		"collection_radius": pickup_shape.radius,
+	}
+
+
+func _observe_structures(origin: Vector2, visible_rect: Rect2) -> Array:
+	var observations := []
+	for structure in _main._entity_spawner.structures:
+		if not _is_node_visible(structure, visible_rect):
+			continue
+		var observation := _make_entity_observation(structure, origin, "structure")
+		observation._source = structure
+		observation._world_position = structure.global_position
+		observation.acceleration = Vector2.ZERO
+		observation.motion_confidence = 0.0
+		observation.influence = _structure_mechanic_compiler.compile(structure)
+		observations.push_back(observation)
 	return observations
 
 
@@ -233,7 +303,10 @@ func _append_observation(
 	observations: Array, node, origin: Vector2, visible_rect: Rect2, kind: String
 ) -> void:
 	if _is_node_visible(node, visible_rect):
-		observations.push_back(_make_entity_observation(node, origin, kind))
+		var observation := _make_entity_observation(node, origin, kind)
+		observation._source = node
+		observation._world_position = node.global_position
+		observations.push_back(observation)
 
 
 func _make_entity_observation(node: Node2D, origin: Vector2, kind: String) -> Dictionary:

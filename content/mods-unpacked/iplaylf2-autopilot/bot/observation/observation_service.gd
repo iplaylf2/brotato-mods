@@ -67,18 +67,48 @@ func _build_observation(player_index: int, player: Node2D, delta: float) -> Dict
 
 	var world_observation: Dictionary = _visible_world_observer.observe(player_index, player, delta)
 	var world_memory: Reference = _world_memories[player_index]
+	var party_state := _get_party_state(player_index)
+	var player_state := _player_state_observer.observe(player_index, player)
 	world_memory.update(
-		delta, position_delta, world_observation.visible_edges, world_observation.enemy_observations
+		delta,
+		position_delta,
+		world_observation.visible_edges,
+		world_observation.enemy_observations,
+		world_observation.entity_memory_observations,
+		party_state,
+		world_observation.visible_world.allied_agents,
+		player_state.pickup
 	)
 
 	return {
 		"physics_frame": Engine.get_physics_frames(),
 		"wave_state": _get_wave_state(),
-		"player_state": _player_state_observer.observe(player_index, player),
+		"player_state": player_state,
+		"party_state": party_state,
 		"localization": world_memory.get_localization_state(),
 		"enemy_tracks": world_memory.get_enemy_tracks(),
+		"remembered_entities": world_memory.get_remembered_entities(),
 		"visibility": world_observation.visibility,
 		"visible_world": world_observation.visible_world,
+	}
+
+
+func _get_party_state(player_index: int) -> Dictionary:
+	var teammate_count := 0
+	var living_teammate_count := 0
+	var living_teammate_player_indices := []
+	for index in _players.size():
+		if index == player_index:
+			continue
+		teammate_count += 1
+		var teammate = _players[index]
+		if is_instance_valid(teammate) and not teammate.dead:
+			living_teammate_count += 1
+			living_teammate_player_indices.push_back(index)
+	return {
+		"teammate_count": teammate_count,
+		"living_teammate_count": living_teammate_count,
+		"living_teammate_player_indices": living_teammate_player_indices,
 	}
 
 

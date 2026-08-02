@@ -34,6 +34,7 @@ func observe(player_index: int, player: Node) -> Dictionary:
 		"inventory": {"item_count": RunData.get_player_items(player_index).size()},
 		"effective_stats": _get_effective_stats(player_index),
 		"runtime_stats": _get_runtime_stats(player),
+		"collision_radius": _get_collision_radius(player),
 		"movement": _get_movement_state(player),
 		"pickup": _get_pickup_state(player_index, player),
 		"weapons":
@@ -72,6 +73,13 @@ func _get_runtime_stats(player: Node) -> Dictionary:
 		"armor": player.current_stats.armor,
 		"dodge_chance": player.current_stats.dodge,
 	}
+
+
+func _get_collision_radius(player: Node) -> float:
+	var collision_shape: CollisionShape2D = player.get_node_or_null("Collision")
+	if collision_shape != null and collision_shape.shape is CircleShape2D:
+		return collision_shape.shape.radius
+	return 24.0
 
 
 func _get_movement_state(player: Node) -> Dictionary:

@@ -1,8 +1,9 @@
 # 原版敌人与投射物机制审计
 
-本文记录 Autopilot 针对 PC 版 Brotato `1.1.15.4` 的敌人攻击与投射物入口审计。它是版本兼容性
+本文记录 Autopilot 针对 PC 版 Brotato `1.1.15.4` 的敌人攻击与投射物入口审计。它只保存版本兼容性
 证据，不定义玩家权限或模块边界；权限规则见 [玩家权限边界](fair-play.md)，实现责任见
-[架构文档](architecture.md)。
+[架构文档](architecture.md)。审计依据位于本地 GDRETools 恢复工程
+`.local/brotato-1.1.15.4-recovered/`，恢复工程不属于 mod 发布内容。
 
 ## 覆盖范围
 

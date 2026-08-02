@@ -3,13 +3,13 @@ extends Node
 # Closes the observation -> planning -> movement-input loop. Planning runs at a
 # lower cadence than physics; the chosen movement remains active until replanning.
 
-const REPLAN_INTERVAL_SECONDS := 0.1
 const AutopilotMovementBehavior := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/control/autopilot_movement_behavior.gd"
 )
 const MovementPlanner := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planner.gd"
 )
+const REPLAN_INTERVAL_SECONDS := MovementPlanner.CONTROL_INTERVAL_SECONDS
 
 var _observation_service: Node
 var _players: Array = []

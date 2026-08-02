@@ -1,0 +1,230 @@
+extends Reference
+
+# Predicts the outcome of one feasible movement vector over a threat-timed
+# forecast. The coarse pass covers pressure and goals; the detailed pass also
+# predicts automatic-weapon geometry for shortlisted actions. Scoring belongs
+# to MovementUtilityModel.
+
+const WeaponAttackPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_attack_predictor.gd"
+)
+const ObservedMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
+)
+const BattlefieldPressureModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_pressure_model.gd"
+)
+const VelocityObstacleModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/velocity_obstacle_model.gd"
+)
+
+const ROAMING_DISTANCE := 600.0
+
+var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
+var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _battlefield_pressure_model: Reference = BattlefieldPressureModel.new()
+var _velocity_obstacle_model: Reference = VelocityObstacleModel.new()
+
+
+func predict(
+	observation: Dictionary,
+	action: Dictionary,
+	previous_movement: Vector2,
+	include_detailed_engagement: bool,
+	planning_context: Dictionary
+) -> Dictionary:
+	var outcome := {
+		"material_pickup_value": 0.0,
+		"healing_pickup_value": 0.0,
+		"expected_enemy_damage": 0.0,
+		"expected_producer_damage": 0.0,
+		"expected_loot_target_damage": 0.0,
+		"ranged_source_suppression_value": 0.0,
+		"producer_approach_progress": 0.0,
+		"loot_target_approach_progress": 0.0,
+		"ranged_source_engagement_progress": 0.0,
+		"targets_in_weapon_range": 0.0,
+		"tree_attack_opportunity": 0.0,
+		"roaming_progress": 0.0,
+		"standing_seconds": 0.0,
+		"moving_seconds": 0.0,
+		"heading_continuity": 0.0,
+		"navigation_guidance_alignment": 0.0,
+		"expected_attack_hits": 0.0,
+	}
+	var pressure_outcome: Dictionary = _battlefield_pressure_model.predict(
+		observation, action, planning_context.pressure_policy
+	)
+	outcome.merge(pressure_outcome, true)
+	outcome.merge(_velocity_obstacle_model.evaluate(observation, action), true)
+	_predict_action_outcomes(observation, action, previous_movement, outcome)
+	outcome.navigation_guidance_alignment = action.movement.dot(
+		planning_context.navigation_guidance
+	)
+	if include_detailed_engagement:
+		_weapon_attack_predictor.accumulate_outcome(observation, action, outcome)
+	return outcome
+
+
+func _predict_action_outcomes(
+	observation: Dictionary, action: Dictionary, previous_movement: Vector2, outcome: Dictionary
+) -> void:
+	var samples: Array = action.samples
+	assert(not samples.empty())
+	outcome.material_pickup_value = _collection_value(
+		observation.visible_world.materials, samples, observation.player_state.pickup
+	)
+	outcome.healing_pickup_value = (
+		_collection_value(
+			observation.visible_world.consumables, samples, observation.player_state.pickup
+		)
+		* (1.0 - observation.player_state.health.ratio)
+	)
+	outcome.tree_attack_opportunity = _tree_attack_opportunity(observation, action)
+	outcome.producer_approach_progress = _target_approach_progress(
+		observation.enemy_tracks, samples, "enemy_producer"
+	)
+	outcome.loot_target_approach_progress = _target_approach_progress(
+		observation.enemy_tracks, samples, "loot_reward_target"
+	)
+	outcome.ranged_source_engagement_progress = _ranged_source_engagement_progress(
+		observation, action
+	)
+	outcome.targets_in_weapon_range = _targets_in_weapon_range(observation, action)
+
+	var final_displacement: Vector2 = samples.back().displacement
+	outcome.roaming_progress = clamp(final_displacement.length() / ROAMING_DISTANCE, 0.0, 1.0)
+	if action.movement == Vector2.ZERO:
+		outcome.standing_seconds = action.forecast_seconds
+	else:
+		outcome.moving_seconds = action.forecast_seconds
+	if previous_movement.length_squared() > 0.0 and action.movement.length_squared() > 0.0:
+		outcome.heading_continuity = previous_movement.normalized().dot(action.movement)
+
+
+func _collection_value(entities: Array, samples: Array, pickup: Dictionary) -> float:
+	var value := 0.0
+	for entity in entities:
+		var closest_distance := entity.relative_position.length()
+		for sample in samples:
+			closest_distance = min(
+				closest_distance, (entity.relative_position - sample.displacement).length()
+			)
+		if closest_distance <= pickup.collection_radius:
+			value += 1.0
+		elif closest_distance <= pickup.attraction_radius:
+			value += 0.7
+		else:
+			value += max(0.0, 1.0 - closest_distance / 500.0) * 0.15
+	return value
+
+
+func _tree_attack_opportunity(observation: Dictionary, action: Dictionary) -> float:
+	var maximum_range := _usable_weapon_range(
+		observation.player_state.weapons, action.movement != Vector2.ZERO
+	)
+	if maximum_range <= 0.0:
+		return 0.0
+	var interaction := 0.0
+	for tree in observation.visible_world.trees:
+		var initial_distance := tree.relative_position.length()
+		var closest_distance := initial_distance
+		for sample in action.samples:
+			closest_distance = min(
+				closest_distance, (tree.relative_position - sample.displacement).length()
+			)
+		if closest_distance <= maximum_range:
+			interaction += 1.0
+		elif initial_distance > 0.0:
+			interaction += max(0.0, initial_distance - closest_distance) / initial_distance * 0.3
+	return interaction
+
+
+func _target_approach_progress(tracks: Array, samples: Array, role: String) -> float:
+	var progress := 0.0
+	var final_displacement: Vector2 = samples.back().displacement
+	for track in tracks:
+		if not track.behavior_profile.strategic_roles[role]:
+			continue
+		var initial_distance: float = track.relative_position.length()
+		if initial_distance <= 0.0:
+			continue
+		var predicted_position := _predict_track_position(track, samples.back().time)
+		var final_distance: float = (predicted_position - final_displacement).length()
+		progress += (
+			clamp((initial_distance - final_distance) / initial_distance, -1.0, 1.0)
+			* track.recency_confidence
+		)
+	return progress
+
+
+func _ranged_source_engagement_progress(observation: Dictionary, action: Dictionary) -> float:
+	# Movement can prepare a later stationary attack, so this strategic coarse
+	# estimate considers owned weapon reach even when movement suppresses attacks.
+	var maximum_range := _maximum_weapon_range(observation.player_state.weapons)
+	if maximum_range <= 0.0:
+		return 0.0
+	var final_sample: Dictionary = action.samples.back()
+	var progress := 0.0
+	for track in observation.enemy_tracks:
+		if not track.behavior_profile.strategic_roles.ranged_pressure_source:
+			continue
+		var attack_range := maximum_range + track.last_measurement.visual_radius
+		var initial_distance: float = track.relative_position.length()
+		var initial_gap := max(0.0, initial_distance - attack_range)
+		if initial_gap <= 0.0:
+			continue
+		var predicted_position := _predict_track_position(track, final_sample.time)
+		var final_distance: float = (predicted_position - final_sample.displacement).length()
+		var final_gap := max(0.0, final_distance - attack_range)
+		progress += (
+			clamp((initial_gap - final_gap) / initial_distance, -1.0, 1.0)
+			* track.recency_confidence
+			* track.behavior_profile.attack_behavior.confidence
+			* track.behavior_profile.attack_behavior.pressure_intensity
+		)
+	return progress
+
+
+func _targets_in_weapon_range(observation: Dictionary, action: Dictionary) -> float:
+	var maximum_range := _usable_weapon_range(
+		observation.player_state.weapons, action.movement != Vector2.ZERO
+	)
+	if maximum_range <= 0.0:
+		return 0.0
+	var final_sample: Dictionary = action.samples.back()
+	var opportunity := 0.0
+	for track in observation.enemy_tracks:
+		var position := (
+			_predict_track_position(track, final_sample.time)
+			- final_sample.displacement
+		)
+		if position.length() <= maximum_range + track.last_measurement.visual_radius:
+			opportunity += track.recency_confidence
+	return opportunity
+
+
+func _predict_track_position(track: Dictionary, time: float) -> Vector2:
+	return _motion_predictor.predict_position(
+		track.relative_position,
+		track.estimated_velocity,
+		track.estimated_acceleration,
+		track.motion_confidence,
+		time
+	)
+
+
+func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:
+	var result := 0.0
+	for weapon in weapons:
+		if is_moving and not weapon.automatic_attacks_allowed_while_moving:
+			continue
+		result = max(result, float(weapon.maximum_range))
+	return result
+
+
+func _maximum_weapon_range(weapons: Array) -> float:
+	var result := 0.0
+	for weapon in weapons:
+		result = max(result, float(weapon.maximum_range))
+	return result

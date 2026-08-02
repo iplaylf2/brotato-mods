@@ -1,40 +1,38 @@
 extends Reference
 
-# Read-only model of expected automatic-weapon outcomes along one trajectory.
+# Read-only model of expected automatic-weapon outcomes during one action forecast.
 # It scores movement and must never invoke or mutate weapons, targets, or attacks.
 
 const RAY_BUCKET_COUNT := 8
-const MotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion_predictor.gd"
+const ObservedMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
+)
+const WeaponEngagementModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_engagement_model.gd"
 )
 
-var _motion_predictor: Reference = MotionPredictor.new()
+var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _engagement_model: Reference = WeaponEngagementModel.new()
 
 
-func accumulate_outcome(
-	observation: Dictionary, trajectory: Dictionary, outcome: Dictionary
-) -> void:
+func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
 	for weapon in observation.player_state.weapons:
-		if (
-			trajectory.movement != Vector2.ZERO
-			and not weapon.automatic_attacks_allowed_while_moving
-		):
+		if action.movement != Vector2.ZERO and not weapon.automatic_attacks_allowed_while_moving:
 			continue
-		var shot_time: float = max(0.0, weapon.cooldown_remaining_seconds)
-		var attack_cycle: float = max(0.05, weapon.nominal_attack_cycle_seconds)
-		while shot_time <= trajectory.horizon_seconds:
-			_accumulate_weapon_attack(observation, trajectory, weapon, shot_time, outcome)
-			shot_time += attack_cycle
+		for shot_time in _engagement_model.get_scheduled_attack_times(
+			weapon, 0.0, action.forecast_seconds
+		):
+			_accumulate_weapon_attack(observation, action, weapon, shot_time, outcome)
 
 
 func _accumulate_weapon_attack(
 	observation: Dictionary,
-	trajectory: Dictionary,
+	action: Dictionary,
 	weapon: Dictionary,
 	shot_time: float,
 	outcome: Dictionary
 ) -> void:
-	var displacement := _sample_displacement(trajectory.samples, shot_time)
+	var displacement := _sample_displacement(action.samples, shot_time)
 	var targets := _targets_at_time(observation.enemy_tracks, displacement, shot_time)
 	var primary = _nearest_legal_target(targets, weapon.minimum_range, weapon.maximum_range + 50.0)
 	if primary == null:
@@ -74,7 +72,11 @@ func _predict_ranged_attack(targets: Array, primary: Dictionary, weapon: Diction
 				hit_probability = max(hit_probability, clamp(weapon.accuracy, 0.1, 1.0))
 			if hit_probability <= 0.0:
 				continue
-			var expected_damage: float = weapon.damage * retained * hit_probability
+			var expected_damage: float = (
+				_engagement_model.expected_damage_per_hit(weapon)
+				* retained
+				* hit_probability
+			)
 			_accumulate_target_outcome(result, target, expected_damage, hit_probability)
 			remaining_capacity -= hit_probability
 			retained *= lerp(1.0, damage_retained, hit_probability)
@@ -115,7 +117,12 @@ func _predict_melee_attack(targets: Array, primary: Dictionary, weapon: Dictiona
 		else:
 			var corridor_angle := atan2(target.radius + 16.0, max(1.0, distance))
 			hit_probability = 1.0 if angular_error <= corridor_angle else 0.0
-		_accumulate_target_outcome(result, target, weapon.damage * hit_probability, hit_probability)
+		_accumulate_target_outcome(
+			result,
+			target,
+			_engagement_model.expected_damage_per_hit(weapon) * hit_probability,
+			hit_probability
+		)
 	return result
 
 

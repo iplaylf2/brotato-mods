@@ -1,7 +1,8 @@
 extends Reference
 
-# Ephemeral memory of the world observed by one player in one battle. Hidden
-# enemies are never refreshed from game state: estimates age and expire.
+# Battle-local memory of the world observed by one player. Hidden enemies are
+# short-lived motion estimates. Remembered entities are permanent observation
+# records; only the belief that an unobserved entity still exists may change.
 
 const TRACK_MEMORY_SECONDS := 4.0
 const BASE_UNCERTAINTY := 24.0
@@ -10,26 +11,44 @@ const VELOCITY_UNCERTAINTY_FACTOR := 0.35
 const REACQUISITION_MARGIN := 72.0
 const VISUAL_RADIUS_REACQUISITION_TOLERANCE := 12.0
 const ACCELERATION_DECAY_SECONDS := 0.18
+const ENTITY_MEMORY_UNCERTAINTY_PER_SECOND := 24.0
+const ENTITY_MEMORY_REACQUISITION_MARGIN := 72.0
 const EnemyBehaviorProfiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_behavior_profiler.gd"
+)
+const RememberedEntityExistenceModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/remembered_entity_existence_model.gd"
 )
 
 var _elapsed_seconds := 0.0
 var _next_track_id := 1
+var _next_memory_record_id := 1
 var _odometry_position := Vector2.ZERO
 var _observed_edge_coordinates := {"left": null, "right": null, "top": null, "bottom": null}
 var _tracks := {}
 var _visible_source_track_ids := {}
+var _remembered_entities := {}
+var _source_memory_record_ids := {}
 var _enemy_profiler: Reference = EnemyBehaviorProfiler.new()
+var _entity_existence_model: Reference = RememberedEntityExistenceModel.new()
 
 
 func update(
-	delta_seconds: float, position_delta: Vector2, visible_edges: Dictionary, visible_enemies: Array
+	delta_seconds: float,
+	position_delta: Vector2,
+	visible_edges: Dictionary,
+	visible_enemies: Array,
+	visible_entities: Array,
+	party_state: Dictionary,
+	visible_allied_agents: Array,
+	player_pickup: Dictionary
 ) -> void:
 	_elapsed_seconds += delta_seconds
 	_odometry_position += position_delta
 	_record_visible_edges(visible_edges)
 	_update_enemy_tracks(visible_enemies)
+	_entity_existence_model.update(delta_seconds, position_delta, visible_allied_agents)
+	_update_remembered_entities(delta_seconds, visible_entities, party_state, player_pickup)
 
 
 func get_localization_state() -> Dictionary:
@@ -104,6 +123,52 @@ func get_enemy_tracks() -> Array:
 	return result
 
 
+func get_remembered_entities() -> Array:
+	var result := []
+	for memory_record_id in _remembered_entities:
+		var memory_record: Dictionary = _remembered_entities[memory_record_id]
+		var seconds_since_seen: float = _elapsed_seconds - memory_record.last_seen_at_seconds
+		var confidence: float = memory_record.existence_confidence
+		var observation: Dictionary = memory_record.observation.duplicate(true)
+		observation.erase("_source")
+		observation.erase("_world_position")
+		observation.memory_record_id = memory_record.memory_record_id
+		var remembered_velocity: Vector2 = observation.get("velocity", Vector2.ZERO)
+		var remembered_motion_confidence: float = clamp(
+			observation.get("motion_confidence", 0.0), 0.0, 1.0
+		)
+		observation.relative_position = (
+			memory_record.odometry_position
+			+ remembered_velocity * remembered_motion_confidence * seconds_since_seen
+			- _odometry_position
+		)
+		observation.last_observed_relative_position = (
+			memory_record.odometry_position
+			- _odometry_position
+		)
+		observation.motion_confidence = remembered_motion_confidence * confidence
+		observation.visible = memory_record.visible
+		observation.seconds_since_seen = seconds_since_seen
+		# The permanent record proves that the observation happened. This confidence
+		# describes the uncertain present existence and is what planning must use.
+		observation.existence_confidence = confidence
+		observation.disappearance_hazard_per_second = memory_record.get(
+			"disappearance_hazard_per_second", 0.0
+		)
+		observation.absence_confirmed = memory_record.get("absence_confirmed", false)
+		observation.uncertainty_radius = (
+			0.0
+			if memory_record.visible
+			else (
+				ENTITY_MEMORY_UNCERTAINTY_PER_SECOND
+				* seconds_since_seen
+				* clamp(observation.get("motion_confidence", 0.0), 0.0, 1.0)
+			)
+		)
+		result.push_back(observation)
+	return result
+
+
 func _record_visible_edges(visible_edges: Dictionary) -> void:
 	for edge in visible_edges:
 		if _observed_edge_coordinates[edge] != null:
@@ -134,6 +199,67 @@ func _update_enemy_tracks(visible_enemies: Array) -> void:
 
 	_visible_source_track_ids = next_visible_source_track_ids
 	_expire_old_tracks()
+
+
+func _update_remembered_entities(
+	delta_seconds: float,
+	visible_entities: Array,
+	party_state: Dictionary,
+	player_pickup: Dictionary
+) -> void:
+	for memory_record in _remembered_entities.values():
+		memory_record.visible = false
+		var existence_estimate: Dictionary = _entity_existence_model.estimate(
+			memory_record, party_state, player_pickup
+		)
+		var disappearance_hazard: float = existence_estimate.disappearance_hazard_per_second
+		memory_record.absence_confirmed = existence_estimate.absence_confirmed
+		memory_record.disappearance_hazard_per_second = disappearance_hazard
+		memory_record.existence_confidence = (
+			0.0
+			if existence_estimate.absence_confirmed
+			else (memory_record.existence_confidence * exp(-disappearance_hazard * delta_seconds))
+		)
+	for observation in visible_entities:
+		var source = observation._source
+		var source_id: int = source.get_instance_id()
+		var memory_record_id = _source_memory_record_ids.get(source_id)
+		if memory_record_id == null or _source_reused_for_new_entity(memory_record_id, observation):
+			memory_record_id = _next_memory_record_id
+			_next_memory_record_id += 1
+			_source_memory_record_ids[source_id] = memory_record_id
+		_remembered_entities[memory_record_id] = {
+			"memory_record_id": memory_record_id,
+			"source_id": source_id,
+			"visible": true,
+			"last_seen_at_seconds": _elapsed_seconds,
+			"odometry_position": _odometry_position + observation.relative_position,
+			"observation": observation.duplicate(true),
+			"existence_confidence": 1.0,
+			"disappearance_hazard_per_second": 0.0,
+			"absence_confirmed": false,
+		}
+
+
+func _source_reused_for_new_entity(memory_record_id: int, observation: Dictionary) -> bool:
+	if not _remembered_entities.has(memory_record_id):
+		return true
+	var memory_record: Dictionary = _remembered_entities[memory_record_id]
+	if memory_record.visible:
+		return false
+	var observed_position: Vector2 = _odometry_position + observation.relative_position
+	var seconds_since_seen: float = _elapsed_seconds - memory_record.last_seen_at_seconds
+	var remembered_velocity: Vector2 = memory_record.observation.get("velocity", Vector2.ZERO)
+	var plausible_position: Vector2 = (
+		memory_record.odometry_position
+		+ remembered_velocity * seconds_since_seen
+	)
+	var plausible_distance := (
+		ENTITY_MEMORY_REACQUISITION_MARGIN
+		+ remembered_velocity.length() * seconds_since_seen * 0.5
+		+ memory_record.observation.get("visual_radius", 0.0)
+	)
+	return plausible_position.distance_to(observed_position) > plausible_distance
 
 
 func _find_reacquisition(observation: Dictionary, observed_track_ids: Dictionary):
