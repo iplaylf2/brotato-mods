@@ -18,14 +18,14 @@ func _ready() -> void:
 
 	_autopilot_mod = get_node_or_null("/root/ModLoader/%s" % MOD_ID)
 	if not is_instance_valid(_autopilot_mod):
-		ModLoaderLog.error("Autopilot mod entrypoint was not found; runtime disabled.", MOD_ID)
+		ModLoaderLog.error("Autopilot mod entrypoint was not found; Autopilot is disabled.", MOD_ID)
 		return
 
 	var connect_error: int = _autopilot_mod.connect(
 		"enabled_changed", self, "_on_autopilot_enabled_changed"
 	)
 	if connect_error != OK:
-		ModLoaderLog.error("Could not subscribe to Autopilot enabled changes.", MOD_ID)
+		ModLoaderLog.error("Could not subscribe to Autopilot enable-state changes.", MOD_ID)
 
 
 func _on_EntitySpawner_players_spawned(players: Array) -> void:

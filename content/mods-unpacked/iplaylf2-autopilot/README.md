@@ -1,14 +1,14 @@
 # Autopilot
 
-Autopilot 是一个实验性 Brotato mod。它在玩家权限边界内评估环境暴露、碰撞风险、资源和交战机会，
-再通过滚动规划选择战斗移动方向。唯一的控制输出是 `MovementBehavior.get_movement()`；瞄准、
+Autopilot 是一个实验性 Brotato mod。它只使用玩家权限边界内的信息评估环境暴露、碰撞风险、资源和
+交战机会，再通过滚动规划选择战斗移动方向。唯一的控制输出是 `MovementBehavior.get_movement()`；瞄准、
 攻击、速度、碰撞、击退、动画和移动机制仍由原版系统负责。
 
 ## 目标环境与验证状态
 
 - 目标环境为 Brotato `1.1.15.4` 和 Godot Mod Loader `6.3.0`；以 `manifest.json` 中的声明为准。
-- 源码已通过 Godot 3.6 编译检查，但尚未在目标游戏环境完成加载和行为验证，因此当前版本仍应视为
-  开发版。编译通过不代表游戏内兼容性或模型已经完成校准。
+- 源码已通过仓库的可移植静态检查；修复后的发行包尚未在目标游戏环境完成加载和行为验证，因此当前
+  版本仍应视为开发版。静态检查通过不代表游戏内兼容性或模型已经完成校准。
 
 ## 安装与启用
 
@@ -40,16 +40,6 @@ Autopilot 根据当前物理帧余量和实测规划耗时分配搜索强度，�
 投射物拦截只降低实际拦截时刻之后的弹道暴露；治疗则作为独立收益。这些约束避免将支援能力误解为
 无条件的安全区。具体观察字段、评分结果和算法流程见 [架构文档](docs/architecture.md)。
 
-## 维护入口
-
-文档按权威范围分工：
-
-- [玩家权限边界](docs/fair-play.md) 定义允许读取的信息和唯一控制面；
-- [架构文档](docs/architecture.md) 定义公共观察、规划结果、决策流程和模块责任；
-- [决策采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
-- [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人攻击与投射物入口；
-- [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。
-
 ## 诊断与采样
 
 启用后，可以读取某位玩家的最新观察和计划：
@@ -67,3 +57,13 @@ var plan: Dictionary = main.autopilot_controller.get_current_plan(player_index)
 `user://autopilot/decision-samples/` 下的 JSON Lines 文件，单个文件达到 32 MiB 后自动分片。
 采样不包含两条样本之间的全部决策，不能作为逐帧回放；字段约定、参数证据等级和正确复盘方法见
 [决策采样与模型校准](docs/model-calibration.md)。
+
+## 维护入口
+
+文档按权威范围分工：
+
+- [玩家权限边界](docs/fair-play.md) 定义允许读取的信息和唯一控制面；
+- [架构文档](docs/architecture.md) 定义公共观察、规划结果、决策流程和模块责任；
+- [决策采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
+- [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人攻击与投射物入口；
+- [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。

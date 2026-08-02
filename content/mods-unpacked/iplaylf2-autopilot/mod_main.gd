@@ -18,10 +18,20 @@ func _init() -> void:
 
 
 func _ready() -> void:
+	# ModLoader 6.3 updates existing user profiles in its own _ready(). Mod mains
+	# are children of ModLoader, so their _ready() runs first. Defer config setup
+	# until the profile contains this newly installed mod.
+	call_deferred("_initialize_runtime")
+
+
+func _initialize_runtime() -> void:
 	var config: ModConfig = _get_or_repair_current_config()
 	_apply_config(config)
 
-	var current_config_error: int = ModLoader.connect(
+	# The target game's Godot build cannot type-check a direct typed assignment
+	# from Object.connect(), even though the method returns an Error code.
+	var current_config_error: int
+	current_config_error = ModLoader.connect(
 		"current_config_changed", self, "_on_current_config_changed"
 	)
 	if current_config_error != OK:
@@ -32,9 +42,8 @@ func _ready() -> void:
 		ModLoaderLog.error("Required Mod Options interface was not found.", MOD_ID)
 		return
 
-	var setting_error: int = _mod_options.connect(
-		"setting_changed", self, "_on_mod_options_setting_changed"
-	)
+	var setting_error: int
+	setting_error = _mod_options.connect("setting_changed", self, "_on_mod_options_setting_changed")
 	if setting_error != OK:
 		ModLoaderLog.error("Could not subscribe to Mod Options setting changes.", MOD_ID)
 
@@ -72,14 +81,19 @@ func _get_or_repair_current_config() -> ModConfig:
 
 	config = ModLoaderConfig.get_default_config(MOD_ID)
 	if config == null:
-		ModLoaderLog.error("No valid default config is available; runtime disabled.", MOD_ID)
+		ModLoaderLog.error(
+			"No valid default configuration is available; Autopilot is disabled.", MOD_ID
+		)
 		return null
 
 	# ModLoader 6.3 profiles created before a mod gained a config schema can lack
 	# current_config. Selecting the generated default repairs and persists that
 	# profile entry through ModData's current_config setter.
 	ModLoaderConfig.set_current_config(config)
-	ModLoaderLog.info("Repaired the missing current config with the default config.", MOD_ID)
+	ModLoaderLog.info(
+		"Selected the default configuration because the current profile had no Autopilot configuration.",
+		MOD_ID
+	)
 	return config
 
 
