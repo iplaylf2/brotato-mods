@@ -12,34 +12,34 @@ mod，目录名必须与 `manifest.json` 中的 `{namespace}-{name}` 一致，�
 `content/.import/` 只用于本仓库 mod 自定义资源的 Godot 3 导入产物。发行单个 mod 时，
 只包含该 mod 及其对应的导入产物；本地恢复工程和原版游戏资源始终排除在仓库与发行包之外。
 
+修改原版行为前，先以目标游戏版本的恢复工程确认控制点。优先使用 Mod Loader script extension，
+避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。各 mod 的目标环境由其
+`manifest.json` 声明，README 负责解释目标环境和验证状态。
+
 ## Mods
 
 - [Autopilot](content/mods-unpacked/iplaylf2-autopilot/README.md) — 根据玩家可合法获得的信息规划并控制战斗
   移动；其 README 统一提供安装、目标环境与维护文档入口。
 
-修改原版行为前，先以目标游戏版本的恢复工程确认控制点。优先使用 Mod Loader script extension，
-避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。各 mod 的目标环境由其
-`manifest.json` 声明，README 负责解释目标环境和验证状态。
-
 ## 开发环境
 
-Brotato 是 Godot 3 项目；当前开发环境使用 GodotSteam 3.6。编辑、运行和打包 mod 需要：
+Brotato 1.1.15.4 基于 Godot 3.7.dev 构建。编辑恢复工程、进行游戏内验证和打包 mod 需要：
 
-- [GodotSteam 3.6](https://codeberg.org/godotsteam/godotsteam/releases/tag/v3.28)
+- 与目标游戏构建一致的 Godot 3.7.dev，包含项目使用的 Steam API
 - 使用 [GDRETools](https://github.com/GDRETools/gdsdecomp) 恢复的 Brotato Godot 工程
 - [Godot Mod Tool 的 `3.x` 分支](https://github.com/GodotModding/godot-mod-tool/tree/3.x)
 
-运行仓库检查还需要 [uv](https://docs.astral.sh/uv/getting-started/installation/)。GodotSteam/Godot 3.6
-可执行文件由开发环境提供，并且必须位于 `PATH` 中。
+运行仓库检查还需要 [uv](https://docs.astral.sh/uv/getting-started/installation/)。脚本编译检查不运行 Steam 功能，可使用
+[Godot 3.7-dev1 官方 headless 构建](https://godotengine.org/download/archive/3.7-dev1/)。
 
 恢复工程包含 Brotato 的版权代码与资源，只能作为本地开发材料，不能纳入仓库内容或 mod 发行包。
 若需调查或使用 Abyssal Terrors 内容，恢复工程还需要包含 DLC PCK。
 
 ### 本地配置
 
-完整检查需要目标版本的恢复工程。仓库不约定其存放位置；将 `.env.example` 复制为 Git 已忽略的
-`.env`，并把 `BROTATO_PROJECT` 设置为恢复工程的绝对路径。任务会自动读取该文件，但不会覆盖进程
-环境中已有的同名变量。
+完整检查需要 Godot 3.7.dev 可执行文件和目标版本的恢复工程。仓库不规定这些本地依赖的
+存放位置。将 `.env.example` 复制为 Git 已忽略的 `.env`，设置 `GODOT_EXECUTABLE` 和
+`BROTATO_PROJECT`。任务会读取 `.env`，但不会覆盖进程环境中已有的同名变量。
 
 ### 编辑与打包
 
@@ -50,7 +50,7 @@ content/mods-unpacked/iplaylf2-autopilot/
   -> <recovered-project>/mods-unpacked/iplaylf2-autopilot/
 ```
 
-然后用 GodotSteam 3.6 打开恢复工程。使用 Mod Tool 维护 manifest 并导出 ZIP；这样
+然后用与目标游戏一致的 Godot 3.7.dev 打开恢复工程。使用 Mod Tool 维护 manifest 并导出 ZIP；这样
 自定义图片、字体等资源对应的 Godot 3 `.import` 产物也会被正确收集。
 
 ## 检查与格式化
@@ -67,15 +67,19 @@ uv run --locked tools/tasks.py lint-portable
 检查 GDScript 格式与静态规则，使用 Ruff 检查任务脚本。GitHub CI 只运行这一层，因此不需要恢复工程，
 也不会接触游戏文件。
 
-本地完整检查在上述检查之后，使用 Godot 3.6 和 `BROTATO_PROJECT` 指向的恢复工程实际编译所有 mod
-脚本及其预加载依赖：
+本地完整检查在上述检查之后，确认 `GODOT_EXECUTABLE` 使用 Godot 3.7.dev，再以
+`BROTATO_PROJECT` 指向的恢复工程实际编译所有 mod 脚本及其预加载依赖：
 
 ```bash
 uv run --locked tools/tasks.py lint
 ```
 
-如果不使用 `.env`，也可以在 PowerShell、cmd 或 POSIX shell 的进程环境中设置 `BROTATO_PROJECT`。
-这些任务不依赖 `sh` 或 `make`。自动格式化受管理的源码：
+该任务验证 GDScript 加载与编译，不代替游戏内行为测试。官方 headless 构建不包含目标游戏的
+Steam API，恢复工程初始化时可能输出 Steam 单例和无窗口环境的原游戏错误；验证器会另行报告
+无法编译的 mod 脚本，并以非零状态退出。
+
+如果不使用 `.env`，也可以在 PowerShell、cmd 或 POSIX shell 的进程环境中设置这两个变量。这些任务
+不依赖 `sh` 或 `make`。自动格式化受管理的源码：
 
 ```bash
 uv run --locked tools/tasks.py format
@@ -87,4 +91,4 @@ uv run --locked tools/tasks.py format
 - [Godot Mod Loader: Mod Files](https://wiki.godotmodding.com/guides/modding/mod_files/)
 - [Godot Mod Loader: Script Extensions](https://wiki.godotmodding.com/guides/modding/script_extensions/)
 - [Godot Mod Tool](https://wiki.godotmodding.com/guides/modding/tools/mod_tool/)
-- [GDScript Toolkit 3.6.0](https://github.com/Scony/godot-gdscript-toolkit/tree/3.6.0)
+- [GDScript Toolkit 3.6.0](https://github.com/Scony/godot-gdscript-toolkit/tree/3.6.0)（工具版本）

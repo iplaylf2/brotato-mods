@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
+import re
 import subprocess
 import sys
 import tempfile
@@ -18,6 +18,7 @@ MODS = REPOSITORY / "content" / "mods-unpacked"
 THIS_FILE = Path(__file__).relative_to(REPOSITORY)
 PKG_RESOURCES_WARNING = "ignore:pkg_resources is deprecated as an API:UserWarning"
 GODOT_VALIDATOR = REPOSITORY / "tools" / "validate_godot_scripts.gd"
+EXPECTED_GODOT_VERSION = (3, 7, "dev")
 
 
 def run(
@@ -75,12 +76,54 @@ def validate_manifests() -> None:
             )
 
 
+def resolve_configured_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = REPOSITORY / path
+    return path.resolve()
+
+
 def resolve_godot() -> str:
-    for command in ("godotsteam", "godot3", "godot"):
-        executable = shutil.which(command)
-        if executable:
-            return executable
-    raise SystemExit("error: Godot 3.6 was not found on PATH")
+    configured_executable = os.environ.get("GODOT_EXECUTABLE")
+    if not configured_executable:
+        raise SystemExit(
+            "error: GODOT_EXECUTABLE must point to a Godot 3.7.dev executable"
+        )
+
+    executable = resolve_configured_path(configured_executable)
+    if not executable.is_file():
+        raise SystemExit(f"error: GODOT_EXECUTABLE is not a file: {executable}")
+    if os.name != "nt" and not os.access(executable, os.X_OK):
+        raise SystemExit(f"error: GODOT_EXECUTABLE is not executable: {executable}")
+    return str(executable)
+
+
+def validate_godot_version(executable: str) -> None:
+    result = subprocess.run(
+        (executable, "--version"),
+        cwd=REPOSITORY,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    version_output = f"{result.stdout}\n{result.stderr}".strip()
+    version_match = re.search(r"\b(\d+)\.(\d+)\.([A-Za-z]+)", version_output)
+    if not version_match:
+        raise SystemExit(
+            f"error: could not read the Godot version from: {version_output!r}"
+        )
+
+    version = (
+        int(version_match.group(1)),
+        int(version_match.group(2)),
+        version_match.group(3).lower(),
+    )
+    if version != EXPECTED_GODOT_VERSION:
+        expected = ".".join(str(part) for part in EXPECTED_GODOT_VERSION)
+        actual = version_match.group(0)
+        raise SystemExit(
+            f"error: GODOT_EXECUTABLE must use Godot {expected}; found {actual}"
+        )
 
 
 def validate_godot_scripts() -> None:
@@ -90,11 +133,14 @@ def validate_godot_scripts() -> None:
             "error: BROTATO_PROJECT must point to a locally recovered Brotato project"
         )
 
-    project = Path(configured_project).expanduser()
+    project = resolve_configured_path(configured_project)
     if not (project / "project.godot").is_file():
         raise SystemExit(
             f"error: BROTATO_PROJECT does not contain project.godot: {project}"
         )
+
+    godot = resolve_godot()
+    validate_godot_version(godot)
 
     with tempfile.TemporaryDirectory(prefix="brotato-mod-lint-") as temp_directory:
         temporary_root = Path(temp_directory)
@@ -110,7 +156,7 @@ def validate_godot_scripts() -> None:
             )
         }
         run(
-            resolve_godot(),
+            godot,
             "--path",
             str(project.resolve()),
             "--script",

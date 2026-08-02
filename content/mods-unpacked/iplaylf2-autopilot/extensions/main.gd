@@ -38,6 +38,13 @@ func _on_EntitySpawner_players_spawned(players: Array) -> void:
 	_sync_autopilot_runtime(players)
 
 
+func clean_up_room() -> void:
+	# Vanilla frees combat containers during cleanup. Stop observation and planning
+	# first so no later physics tick can traverse nodes queued for deletion.
+	_stop_autopilot_runtime()
+	.clean_up_room()
+
+
 func _on_autopilot_enabled_changed(_enabled: bool) -> void:
 	_sync_autopilot_runtime(_players)
 
@@ -49,14 +56,7 @@ func _start_autopilot_runtime_if_needed() -> void:
 
 
 func _sync_autopilot_runtime(players: Array) -> void:
-	if is_instance_valid(autopilot_controller):
-		autopilot_controller.shutdown()
-		autopilot_controller.queue_free()
-		autopilot_controller = null
-
-	if is_instance_valid(autopilot_observation_service):
-		autopilot_observation_service.queue_free()
-		autopilot_observation_service = null
+	_stop_autopilot_runtime()
 
 	if not is_instance_valid(_autopilot_mod) or not _autopilot_mod.is_enabled() or players.empty():
 		return
@@ -70,3 +70,14 @@ func _sync_autopilot_runtime(players: Array) -> void:
 	autopilot_controller.name = "AutopilotController"
 	add_child(autopilot_controller)
 	autopilot_controller.initialize(autopilot_observation_service, players)
+
+
+func _stop_autopilot_runtime() -> void:
+	if is_instance_valid(autopilot_controller):
+		autopilot_controller.shutdown()
+		autopilot_controller.queue_free()
+		autopilot_controller = null
+
+	if is_instance_valid(autopilot_observation_service):
+		autopilot_observation_service.queue_free()
+		autopilot_observation_service = null

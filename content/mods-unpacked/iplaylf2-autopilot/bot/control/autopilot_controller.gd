@@ -50,7 +50,7 @@ func initialize(observation_service: Node, players: Array) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if _shut_down or not is_instance_valid(_observation_service):
+	if _shut_down or get_tree().paused or not is_instance_valid(_observation_service):
 		return
 
 	_planning_frame_budget_monitor.observe_physics_duration(

@@ -217,7 +217,8 @@ func _update_remembered_entities(
 	party_state: Dictionary,
 	player_pickup: Dictionary
 ) -> void:
-	for memory_record in _remembered_entities.values():
+	for memory_record_id in _remembered_entities:
+		var memory_record: Dictionary = _remembered_entities[memory_record_id]
 		memory_record.visible = false
 		var existence_estimate: Dictionary = _entity_existence_estimator.estimate(
 			memory_record, party_state, player_pickup
@@ -230,6 +231,9 @@ func _update_remembered_entities(
 			if existence_estimate.absence_confirmed
 			else (memory_record.existence_confidence * exp(-disappearance_hazard * delta_seconds))
 		)
+		# Dictionary values have copy-on-write semantics. Store the mutated record
+		# back explicitly so visibility and disappearance evidence survive this loop.
+		_remembered_entities[memory_record_id] = memory_record
 	for observation in visible_entities:
 		var source: Object = observation._source
 		var source_id: int = source.get_instance_id()
@@ -238,17 +242,30 @@ func _update_remembered_entities(
 			memory_record_id = _next_memory_record_id
 			_next_memory_record_id += 1
 			_source_memory_record_ids[source_id] = memory_record_id
-		_remembered_entities[memory_record_id] = {
-			"memory_record_id": memory_record_id,
-			"source_id": source_id,
-			"visible": true,
-			"last_seen_at_seconds": _elapsed_seconds,
-			"odometry_position": _odometry_position + observation.relative_position,
-			"observation": observation.duplicate(true),
-			"existence_confidence": 1.0,
-			"disappearance_hazard_per_second": 0.0,
-			"absence_confirmed": false,
-		}
+			_remembered_entities[memory_record_id] = {
+				"memory_record_id": memory_record_id,
+				"source_id": source_id,
+				"visible": true,
+				"last_seen_at_seconds": _elapsed_seconds,
+				"odometry_position": _odometry_position + observation.relative_position,
+				"observation": observation.duplicate(true),
+				"existence_confidence": 1.0,
+				"disappearance_hazard_per_second": 0.0,
+				"absence_confirmed": false,
+			}
+		else:
+			# Visible pickups move while dropping and while being attracted. Refreshing
+			# the existing record keeps navigation aimed at their current position and
+			# prevents ordinary motion from being mistaken for pooled-node reuse.
+			var memory_record: Dictionary = _remembered_entities[memory_record_id]
+			memory_record.visible = true
+			memory_record.last_seen_at_seconds = _elapsed_seconds
+			memory_record.odometry_position = _odometry_position + observation.relative_position
+			memory_record.observation = observation.duplicate(true)
+			memory_record.existence_confidence = 1.0
+			memory_record.disappearance_hazard_per_second = 0.0
+			memory_record.absence_confirmed = false
+			_remembered_entities[memory_record_id] = memory_record
 
 
 func _source_reused_for_new_entity(memory_record_id: int, observation: Dictionary) -> bool:

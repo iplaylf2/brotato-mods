@@ -5,7 +5,7 @@ extends Reference
 # diagnostics. Files rotate before a long run can create one unbounded artifact.
 
 const MOD_ID := "iplaylf2-autopilot"
-const LOG_DIRECTORY := "user://autopilot/decision-samples"
+const SAMPLE_DIRECTORY := "user://logs/mods/iplaylf2-autopilot/decision-samples"
 const SAMPLE_INTERVAL_SECONDS := 0.5
 const MAX_FILE_BYTES := 32 * 1024 * 1024
 const FLUSH_EVERY_SAMPLES := 4
@@ -38,16 +38,25 @@ func start(player_count: int, control_interval_seconds: float) -> void:
 
 	_session_id = _make_session_id()
 	var directory := Directory.new()
-	var directory_error := directory.make_dir_recursive(LOG_DIRECTORY)
-	if directory_error != OK and not directory.dir_exists(LOG_DIRECTORY):
+	var directory_error := directory.make_dir_recursive(SAMPLE_DIRECTORY)
+	if directory_error != OK and not directory.dir_exists(SAMPLE_DIRECTORY):
 		ModLoaderLog.error(
-			"Could not create Autopilot decision sample directory (error %s)." % directory_error,
+			(
+				"Could not create the decision sample directory %s (error %s)."
+				% [SAMPLE_DIRECTORY, directory_error]
+			),
 			MOD_ID
 		)
 		return
 	_active = _open_part(control_interval_seconds, false)
 	if _active:
-		ModLoaderLog.info("Writing Autopilot decision samples to %s." % _current_path, MOD_ID)
+		ModLoaderLog.info(
+			(
+				"Writing decision samples to %s (%s)."
+				% [_current_path, ProjectSettings.globalize_path(_current_path)]
+			),
+			MOD_ID
+		)
 
 
 func record_decision(
@@ -136,12 +145,13 @@ func _rotate(control_interval_seconds: float) -> void:
 
 
 func _open_part(control_interval_seconds: float, continued: bool) -> bool:
-	_current_path = "%s/%s-part-%03d.jsonl" % [LOG_DIRECTORY, _session_id, _part_index]
+	_current_path = "%s/%s-part-%03d.jsonl" % [SAMPLE_DIRECTORY, _session_id, _part_index]
 	_file = File.new()
 	var open_error := _file.open(_current_path, File.WRITE)
 	if open_error != OK:
 		ModLoaderLog.error(
-			"Could not open Autopilot decision sample log (error %s)." % open_error, MOD_ID
+			"Could not open the decision sample file %s (error %s)." % [_current_path, open_error],
+			MOD_ID
 		)
 		_file = null
 		return false

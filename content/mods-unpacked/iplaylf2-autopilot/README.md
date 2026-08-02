@@ -7,10 +7,10 @@ Autopilot 是一个实验性 Brotato mod。它只使用玩家权限边界内的�
 ## 目标环境与验证状态
 
 - 目标环境为 Brotato `1.1.15.4` 和 Godot Mod Loader `6.3.0`；以 `manifest.json` 中的声明为准。
-- 源码已通过仓库的可移植静态检查；mod 已在目标环境的单玩家模式中成功加载，决策采样也确认观察、
-  规划和移动控制主链路实际运行。
-- 首次进入战斗的自动启动修复仍需用当前发行包复测，多玩家和不同设备上的性能表现也尚未验证，因此
-  当前版本仍应视为开发版。
+- 当前源码已通过仓库的可移植静态检查和 Godot 3.7.dev 脚本编译检查。此前的开发构建已在
+  目标环境的单玩家模式中成功加载，决策采样确认观察、规划和移动控制主链路实际运行。
+- 当前源码对战斗启动、材料与消耗品记忆和波次结束清理的修复仍需在目标环境复测；多人模式及不同
+  设备上的性能也尚未验证，因此当前版本仍是开发版。
 - 上述运行验证只证明主链路可以工作，不表示启发式模型和参数已经完成校准。
 
 ## 安装与启用
@@ -19,7 +19,8 @@ Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetail
 关闭。安装依赖后，在游戏中打开 `设置 → Mods → Autopilot`，启用 **Enable Autopilot**。
 
 设置会立即作用于当前战斗并保存到后续战斗。关闭后，Autopilot 会停止移动并恢复玩家原有的
-`MovementBehavior`。启用期间还会在本地写入决策采样文件，具体路径、采样频率和分片策略见“诊断与采样”。
+`MovementBehavior`。启用且进入战斗后，Autopilot 还会在本地写入决策采样文件；具体路径、采样频率和
+分片策略见“诊断与采样”。
 
 ## 公平边界
 
@@ -45,7 +46,7 @@ Autopilot 根据当前物理帧余量和实测规划耗时分配搜索强度，�
 
 ## 诊断与采样
 
-启用后，可以读取某位玩家的最新观察和计划：
+启用并进入战斗后，可以读取某位玩家的最新观察和计划：
 
 ```gdscript
 var observation: Dictionary = main.autopilot_observation_service.get_observation(player_index)
@@ -57,7 +58,12 @@ var plan: Dictionary = main.autopilot_controller.get_current_plan(player_index)
 
 控制器会为每位玩家记录第一次决策，此后每 5 次重规划记录一次，并额外记录规划失败；按名义
 `0.1` 秒控制周期计算，常规采样间隔约为 `0.5` 秒。样本写入
-`user://autopilot/decision-samples/` 下的 JSON Lines 文件，单个文件达到 32 MiB 后自动分片。
+`user://logs/mods/iplaylf2-autopilot/decision-samples/` 下的 JSON Lines 文件，单个文件达到
+32 MiB 后自动分片。Windows 上 `user://` 对应 `%APPDATA%/Brotato/`，因此完整目录通常是
+`%APPDATA%/Brotato/logs/mods/iplaylf2-autopilot/decision-samples/`；Mod Loader 日志也会打印
+当前文件的 `user://` 路径和绝对路径。游戏暂停时观察与规划停止，不会新增决策样本；恢复后继续写入
+同一会话文件。
+
 采样不包含两条样本之间的全部决策，不能作为逐帧回放；字段约定、参数证据等级和正确复盘方法见
 [决策采样与模型校准](docs/model-calibration.md)。
 
