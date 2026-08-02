@@ -95,7 +95,7 @@ func _sample_node(
 	)
 	var engagement_utility: float = (
 		engagement_estimate.expected_damage
-		* context.weights.expected_enemy_damage
+		* context.weights.expected_weapon_damage
 	)
 	var traversal_cost: float = (
 		0.4 * current.net
@@ -141,7 +141,10 @@ func _strategic_value(
 				value += (
 					_radial_pull(distance, 360.0)
 					* confidence
-					* context.navigation_policy.healing_pickup
+					* (
+						context.navigation_policy.recovery_pickup
+						+ context.navigation_policy.consumable_event_value
+					)
 				)
 			"tree":
 				value += (
@@ -171,6 +174,12 @@ func _strategic_value(
 				_radial_pull(distance, 700.0)
 				* track.recency_confidence
 				* context.navigation_policy.ranged_source
+			)
+		if context.navigation_policy.contact_combat > 0.0:
+			value += (
+				_radial_pull(distance, 420.0)
+				* track.recency_confidence
+				* context.navigation_policy.contact_combat
 			)
 	return sign(value) * (1.0 - exp(-abs(value)))
 

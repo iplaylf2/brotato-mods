@@ -17,6 +17,9 @@ const StructureMechanicCompiler := preload(
 const AllyMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/allies/ally_mechanic_compiler.gd"
 )
+const ConsumableProfileAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/pickups/consumable_profile_adapter.gd"
+)
 
 var _main: Node
 var _players: Array
@@ -24,6 +27,7 @@ var _motion_estimators := []
 var _enemy_mechanic_compiler: Reference = EnemyMechanicCompiler.new()
 var _structure_mechanic_compiler: Reference = StructureMechanicCompiler.new()
 var _ally_mechanic_compiler: Reference = AllyMechanicCompiler.new()
+var _consumable_profile_adapter: Reference = ConsumableProfileAdapter.new()
 
 
 func _init(main: Node, players: Array) -> void:
@@ -40,9 +44,7 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	var enemy_projectiles := _observe_enemy_projectiles(origin, visible_rect, enemies)
 	var trees := _observe_nodes(_main._entity_spawner.neutrals, origin, visible_rect, "tree")
 	var materials := _observe_children(_main._materials_container, origin, visible_rect, "material")
-	var consumables := _observe_children(
-		_main._consumables_container, origin, visible_rect, "consumable"
-	)
+	var consumables := _observe_consumables(origin, visible_rect)
 	var structures := _observe_structures(origin, visible_rect)
 	var allied_agents := _observe_allied_agents(player_index, origin, visible_rect)
 	var moving_observations := []
@@ -273,6 +275,19 @@ func _observe_children(
 	container: Node, origin: Vector2, visible_rect: Rect2, kind: String
 ) -> Array:
 	return _observe_nodes(container.get_children(), origin, visible_rect, kind)
+
+
+func _observe_consumables(origin: Vector2, visible_rect: Rect2) -> Array:
+	var observations := []
+	for consumable in _main._consumables_container.get_children():
+		if not _is_node_visible(consumable, visible_rect):
+			continue
+		var observation := _make_entity_observation(consumable, origin, "consumable")
+		observation._source = consumable
+		observation._world_position = consumable.global_position
+		observation.pickup_profile = _consumable_profile_adapter.adapt(consumable)
+		observations.push_back(observation)
+	return observations
 
 
 func _observe_spawn_warnings(origin: Vector2, visible_rect: Rect2) -> Array:

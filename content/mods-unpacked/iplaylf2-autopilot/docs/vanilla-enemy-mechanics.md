@@ -5,18 +5,18 @@
 [架构文档](architecture.md)。审计依据位于本地 GDRETools 恢复工程
 `.local/brotato-1.1.15.4-recovered/`，恢复工程不属于 mod 发布内容。
 
-## 覆盖范围
+## 复核范围
 
-审计以本地 GDRETools 恢复工程为依据，检查以下原版入口：
+本次检查以下原版入口：
 
 - 敌人注册的全部 `ShootingAttackBehavior`，包括普通攻击、附加攻击和 Boss 各阶段攻击；
 - 敌人节点下常驻的 `EnemyProjectile`；
 - 主敌方投射物容器中的移动、静止和动画危险区；
 - 不属于任何可清理敌人的环境弹幕。
 
-当前覆盖结果：
+复核记录：
 
-| 机制族 | 原版内容 |
+| 入口 | 已核对内容 |
 | --- | --- |
 | 标准或继承的射击行为 | `spitter`、`horned_spitter`、`junkie`、`dire_junkie`、`fly`、`horned_fly`、`lamprey`、`tentacle`、`slasher`、`mad_slasher`、`butcher`、`colossus`、`croc`、`gargoyle`、`invoker`、`mantis`、`mom`、`monk`、`rhino`、`predator` |
 | 敌人子节点常驻投射物 | 腐化树的单枚旋转投射物；`predator` 的九枚旋转投射物 |

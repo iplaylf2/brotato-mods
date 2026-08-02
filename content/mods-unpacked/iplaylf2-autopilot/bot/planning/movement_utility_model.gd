@@ -4,6 +4,12 @@ extends Reference
 # from the current state every replan. Geometric contact is a soft tail-risk
 # cost until observations can support calibrated damage or death probabilities.
 
+const PlayerRuleProjection := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projection.gd"
+)
+
+var _rule_projection: Reference = PlayerRuleProjection.new()
+
 
 func build_context(observation: Dictionary) -> Dictionary:
 	var health_ratio: float = observation.player_state.health.ratio
@@ -18,8 +24,18 @@ func build_context(observation: Dictionary) -> Dictionary:
 	var loot_target_multiplier := 1.0 + 0.15 * min(3, max(0, loot_target_count - 1))
 	var producer_multiplier := 1.0 + 0.35 * min(3, max(0, enemy_producer_count - 1))
 	var ranged_source_multiplier := 1.0 + 0.2 * min(5, max(0, ranged_source_count - 1))
+	var player_rule_projection: Dictionary = _rule_projection.project(observation)
 	var survivability_credit := _survivability_credit(observation)
 	var risk_tolerance := clamp((health_ratio - 0.25) / 0.75 + survivability_credit, 0.0, 1.0)
+	var passive_health_loss_rate: float = max(0.0, -player_rule_projection.survival.health_rate)
+	risk_tolerance = clamp(
+		(
+			risk_tolerance
+			- passive_health_loss_rate / max(1.0, observation.player_state.health.maximum)
+		),
+		0.0,
+		1.0
+	)
 	var projectile_density := clamp(
 		observation.visible_world.enemy_projectiles.size() / 12.0, 0.0, 1.0
 	)
@@ -27,15 +43,49 @@ func build_context(observation: Dictionary) -> Dictionary:
 		lerp(0.25, 1.0, risk_tolerance)
 		* lerp(1.0, 0.35, projectile_density)
 	)
-	var mechanic_weights := _mechanic_weights(observation)
+	var movement_state_value_rates: Dictionary = player_rule_projection.movement_state_value_rates
 	var allied_role_counts := _count_allied_roles(observation)
+	var fatal_on_unprotected_hit := (
+		player_rule_projection.survival.terminal_on_positive_damage
+		and observation.player_state.runtime_stats.hit_protection <= 0
+	)
+	var incoming_attack_value := {
+		"enemy_damage":
+		max(
+			_event_value(player_rule_projection, "damage_taken", "enemy_damage"),
+			_event_value(player_rule_projection, "attack_dodged", "enemy_damage")
+		),
+		"player_growth":
+		max(
+			_event_value(player_rule_projection, "damage_taken", "player_growth"),
+			_event_value(player_rule_projection, "attack_dodged", "player_growth")
+		),
+	}
+	var recovery_profile: Dictionary = player_rule_projection.recovery
+	if fatal_on_unprotected_hit:
+		risk_tolerance = 0.0
+	var contact_combat_appetite := clamp(
+		(
+			max(incoming_attack_value.enemy_damage, incoming_attack_value.player_growth)
+			* risk_tolerance
+		),
+		0.0,
+		1.0
+	)
 
 	return {
 		"weights":
 		{
 			"material_pickup_value": 1.0 + 1.6 * wave_progress,
-			"healing_pickup_value": lerp(10.0, 0.8, health_ratio),
-			"expected_enemy_damage": 0.018 * _enemy_damage_multiplier(observation, wave_progress),
+			"recovery_pickup_value":
+			lerp(10.0, 0.8, health_ratio) if recovery_profile.consumable_available else 0.0,
+			"expected_weapon_damage":
+			0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
+			"expected_effect_damage":
+			0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
+			"expected_recovery": lerp(3.0, 0.15, health_ratio),
+			"expected_stat_gain_value": 0.8,
+			"movement_survivability_delta": 20.0,
 			"expected_producer_damage": 0.045 * wave_time_remaining_ratio * producer_multiplier,
 			"expected_loot_target_damage": 0.055 * (1.0 + wave_progress) * loot_target_multiplier,
 			"ranged_source_suppression_value":
@@ -45,16 +95,24 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"ranged_source_engagement_progress":
 			6.0 * wave_time_remaining_ratio * ranged_source_multiplier * ranged_engagement_appetite,
 			"targets_in_weapon_range": 0.15,
-			"tree_attack_opportunity": _tree_weight(observation, wave_progress),
+			"tree_attack_opportunity": _tree_weight(player_rule_projection, wave_progress),
 			"integrated_survival_pressure":
-			-lerp(20.0, 5.0, risk_tolerance) * lerp(1.0, 0.65, wave_progress),
+			(
+				-lerp(20.0, 5.0 - 2.0 * contact_combat_appetite, risk_tolerance)
+				* lerp(1.0, 0.65, wave_progress)
+			),
 			"mean_pressure_material_derivative": -lerp(5.0, 1.5, risk_tolerance),
 			"velocity_obstacle_risk":
-			-lerp(70.0, 28.0, risk_tolerance) * lerp(1.0, 0.75, wave_progress),
-			"allied_zone_healing_support": lerp(14.0, 1.5, health_ratio),
+			(
+				-(160.0 if fatal_on_unprotected_hit else lerp(70.0, 28.0, risk_tolerance))
+				* lerp(1.0, 0.45, contact_combat_appetite)
+				* lerp(1.0, 0.75, wave_progress)
+			),
+			"allied_zone_healing_support":
+			lerp(14.0, 1.5, health_ratio) if recovery_profile.available else 0.0,
 			"roaming_progress": 1.2 * wave_time_remaining_ratio,
-			"standing_seconds": mechanic_weights.standing,
-			"moving_seconds": mechanic_weights.moving,
+			"standing_seconds": movement_state_value_rates.standing,
+			"moving_seconds": movement_state_value_rates.moving,
 			"heading_continuity": 0.25,
 			"navigation_guidance_alignment": 4.0,
 		},
@@ -75,15 +133,26 @@ func build_context(observation: Dictionary) -> Dictionary:
 		"navigation_policy":
 		{
 			"material": 0.35 + 0.55 * wave_progress,
-			"healing_pickup": lerp(1.2, 0.1, health_ratio),
-			"healing_support": lerp(0.9, 0.1, health_ratio),
-			"tree": _tree_weight(observation, wave_progress) * 0.35,
+			"recovery_pickup":
+			lerp(1.2, 0.1, health_ratio) if recovery_profile.consumable_available else 0.0,
+			"consumable_event_value":
+			clamp(
+				max(
+					_event_value(player_rule_projection, "consumable_pickup", "enemy_damage"),
+					_event_value(player_rule_projection, "consumable_pickup", "player_growth")
+				),
+				0.0,
+				1.0
+			),
+			"healing_support": lerp(0.9, 0.1, health_ratio) if recovery_profile.available else 0.0,
+			"tree": _tree_weight(player_rule_projection, wave_progress) * 0.35,
 			"enemy_producer": 0.45 * wave_time_remaining_ratio * producer_multiplier,
 			"loot_target": 0.35 * (1.0 + wave_progress) * loot_target_multiplier,
 			"ranged_source":
 			0.5 * wave_time_remaining_ratio * ranged_source_multiplier * ranged_engagement_appetite,
 			"rising_pressure": 0.22,
 			"travel_cost": 0.08,
+			"contact_combat": 0.65 * contact_combat_appetite,
 		},
 		"state_factors":
 		{
@@ -99,6 +168,11 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"ranged_source_multiplier": ranged_source_multiplier,
 			"projectile_density": projectile_density,
 			"ranged_engagement_appetite": ranged_engagement_appetite,
+			"fatal_on_unprotected_hit": fatal_on_unprotected_hit,
+			"incoming_attack_value": incoming_attack_value,
+			"recovery_profile": recovery_profile,
+			"contact_combat_appetite": contact_combat_appetite,
+			"passive_health_loss_rate": passive_health_loss_rate,
 			"allied_role_counts": allied_role_counts,
 		},
 	}
@@ -122,6 +196,7 @@ func _survivability_credit(observation: Dictionary) -> float:
 	credit += clamp(observation.player_state.runtime_stats.armor / 100.0, -0.1, 0.15)
 	credit += clamp(observation.player_state.runtime_stats.dodge_chance * 0.15, 0.0, 0.1)
 	credit += clamp(observation.player_state.effective_stats.health_regeneration / 100.0, 0.0, 0.1)
+	credit += clamp(observation.player_state.effective_stats.lifesteal / 1000.0, 0.0, 0.1)
 	return credit
 
 
@@ -149,47 +224,17 @@ func _count_allied_roles(observation: Dictionary) -> Dictionary:
 	return result
 
 
-func _enemy_damage_multiplier(observation: Dictionary, wave_progress: float) -> float:
-	if _has_positive_wave_reward(observation, "materials_and_experience_per_living_enemy"):
+func _enemy_damage_multiplier(rule_projection: Dictionary, wave_progress: float) -> float:
+	if _event_value(rule_projection, "wave_end", "enemy_preservation") > 0.0:
 		return lerp(0.7, -0.5, wave_progress)
 	return 1.0
 
 
-func _tree_weight(observation: Dictionary, wave_progress: float) -> float:
-	if _has_positive_wave_reward(observation, "materials_and_experience_per_living_tree"):
+func _tree_weight(rule_projection: Dictionary, wave_progress: float) -> float:
+	if _event_value(rule_projection, "wave_end", "tree_preservation") > 0.0:
 		return lerp(-0.4, -2.0, wave_progress)
 	return 0.5 + 0.5 * wave_progress
 
 
-func _mechanic_weights(observation: Dictionary) -> Dictionary:
-	var result := {"standing": 0.0, "moving": 0.0}
-	for rule in observation.player_state.mechanic_rules:
-		if rule.event != "movement_state" or not rule.condition.has("is_moving"):
-			continue
-		var value := _consequence_value(rule.consequences, observation)
-		if rule.condition.is_moving:
-			result.moving += value
-		else:
-			result.standing += value
-	return result
-
-
-func _consequence_value(consequences: Array, observation: Dictionary) -> float:
-	var result := 0.0
-	for consequence in consequences:
-		if consequence.target == "materials":
-			var percent: float = consequence.get("percent", 0.0) / 100.0
-			result += max(1.0, observation.player_state.resources.materials * percent)
-		elif consequence.operation == "add":
-			result += max(0.0, consequence.get("value", 0.0)) * 0.04
-	return result
-
-
-func _has_positive_wave_reward(observation: Dictionary, target: String) -> bool:
-	for rule in observation.player_state.mechanic_rules:
-		if rule.event != "wave_end":
-			continue
-		for consequence in rule.consequences:
-			if consequence.target == target and consequence.get("value", 0.0) > 0.0:
-				return true
-	return false
+func _event_value(rule_projection: Dictionary, event: String, channel: String) -> float:
+	return rule_projection.event_outcome_channels.get(event, {}).get(channel, 0.0)

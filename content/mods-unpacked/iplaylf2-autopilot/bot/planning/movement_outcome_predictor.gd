@@ -17,6 +17,15 @@ const BattlefieldPressureModel := preload(
 const VelocityObstacleModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/velocity_obstacle_model.gd"
 )
+const PlayerRuleOutcomePredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_outcome_predictor.gd"
+)
+const PlayerMovementStateProjector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
+)
+const PlayerRuleProjection := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projection.gd"
+)
 
 const ROAMING_DISTANCE := 600.0
 
@@ -24,6 +33,9 @@ var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
 var _battlefield_pressure_model: Reference = BattlefieldPressureModel.new()
 var _velocity_obstacle_model: Reference = VelocityObstacleModel.new()
+var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
+var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
+var _rule_projection: Reference = PlayerRuleProjection.new()
 
 
 func predict(
@@ -35,8 +47,8 @@ func predict(
 ) -> Dictionary:
 	var outcome := {
 		"material_pickup_value": 0.0,
-		"healing_pickup_value": 0.0,
-		"expected_enemy_damage": 0.0,
+		"recovery_pickup_value": 0.0,
+		"expected_weapon_damage": 0.0,
 		"expected_producer_damage": 0.0,
 		"expected_loot_target_damage": 0.0,
 		"ranged_source_suppression_value": 0.0,
@@ -51,6 +63,11 @@ func predict(
 		"heading_continuity": 0.0,
 		"navigation_guidance_alignment": 0.0,
 		"expected_attack_hits": 0.0,
+		"expected_effect_damage": 0.0,
+		"expected_recovery": 0.0,
+		"expected_recovery_events": 0.0,
+		"expected_stat_gain_value": 0.0,
+		"movement_survivability_delta": 0.0,
 	}
 	var pressure_outcome: Dictionary = _battlefield_pressure_model.predict(
 		observation, action, planning_context.pressure_policy
@@ -58,11 +75,13 @@ func predict(
 	outcome.merge(pressure_outcome, true)
 	outcome.merge(_velocity_obstacle_model.evaluate(observation, action), true)
 	_predict_action_outcomes(observation, action, previous_movement, outcome)
+	outcome.movement_survivability_delta = _movement_survivability_delta(observation, action)
 	outcome.navigation_guidance_alignment = action.movement.dot(
 		planning_context.navigation_guidance
 	)
 	if include_detailed_engagement:
 		_weapon_attack_predictor.accumulate_outcome(observation, action, outcome)
+	_player_rule_outcome_predictor.accumulate_outcome(observation, action, outcome)
 	return outcome
 
 
@@ -74,12 +93,7 @@ func _predict_action_outcomes(
 	outcome.material_pickup_value = _collection_value(
 		observation.visible_world.materials, samples, observation.player_state.pickup
 	)
-	outcome.healing_pickup_value = (
-		_collection_value(
-			observation.visible_world.consumables, samples, observation.player_state.pickup
-		)
-		* (1.0 - observation.player_state.health.ratio)
-	)
+	outcome.recovery_pickup_value = _recovery_collection_value(observation, samples)
 	outcome.tree_attack_opportunity = _tree_attack_opportunity(observation, action)
 	outcome.producer_approach_progress = _target_approach_progress(
 		observation.enemy_tracks, samples, "enemy_producer"
@@ -117,6 +131,25 @@ func _collection_value(entities: Array, samples: Array, pickup: Dictionary) -> f
 		else:
 			value += max(0.0, 1.0 - closest_distance / 500.0) * 0.15
 	return value
+
+
+func _recovery_collection_value(observation: Dictionary, samples: Array) -> float:
+	var healing_entities := []
+	for consumable in observation.visible_world.consumables:
+		var recovery: float = _rule_projection.project_recovery(
+			observation.player_state.effect_rules,
+			"consumable_pickup",
+			consumable.get("pickup_profile", {}).get("base_recovery", 0.0)
+		)
+		recovery = _rule_projection.project_recovery(
+			observation.player_state.effect_rules, "healing", recovery
+		)
+		if recovery > 0.0:
+			healing_entities.push_back(consumable)
+	return (
+		_collection_value(healing_entities, samples, observation.player_state.pickup)
+		* (1.0 - observation.player_state.health.ratio)
+	)
 
 
 func _tree_attack_opportunity(observation: Dictionary, action: Dictionary) -> float:
@@ -228,3 +261,25 @@ func _maximum_weapon_range(weapons: Array) -> float:
 	for weapon in weapons:
 		result = max(result, float(weapon.maximum_range))
 	return result
+
+
+func _movement_survivability_delta(observation: Dictionary, action: Dictionary) -> float:
+	var current: Dictionary = observation.player_state.runtime_stats
+	var projected: Dictionary = _movement_state_projector.project_runtime_stats(
+		observation, action.movement != Vector2.ZERO
+	)
+	var current_damage_exposure := (
+		_armor_damage_multiplier(current.armor)
+		* (1.0 - current.dodge_chance)
+	)
+	var projected_damage_exposure := (
+		_armor_damage_multiplier(projected.armor)
+		* (1.0 - projected.dodge_chance)
+	)
+	return (current_damage_exposure - projected_damage_exposure) * action.forecast_seconds
+
+
+func _armor_damage_multiplier(armor: float) -> float:
+	if armor >= 0.0:
+		return 1.0 / (1.0 + armor / 15.0)
+	return 2.0 - 1.0 / (1.0 - armor / 15.0)

@@ -42,13 +42,15 @@ Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetail
 - 可见炮塔、地雷、减速场、治疗构筑物和宠物通过能力画像参与决策。多人友军还参与实体阻塞判断；在
   缺少合法协作状态时，规划器不会假设抱团必然有利。
 
-## 开发与诊断
+## 维护文档
 
-维护入口按职责分开：
+文档按权威范围分开：
 
 - [玩家权限边界](docs/fair-play.md) 定义允许读取的信息和唯一控制面；
-- [架构文档](docs/architecture.md) 定义观察契约、决策流程、结果字段和模块责任；
-- [原版机制审计](docs/vanilla-enemy-mechanics.md) 记录目标游戏版本的敌人与投射物覆盖证据。
+- [架构文档](docs/architecture.md) 定义公共观察、规划结果、决策流程和模块责任；
+- [原版敌人机制审计](docs/vanilla-enemy-mechanics.md) 记录目标游戏版本的敌人与投射物覆盖证据。
+
+## 诊断接口
 
 启用后，可以读取某位玩家的最新观察和计划：
 

@@ -1,21 +1,21 @@
 extends Reference
 
-# Observes transparent player-owned state and compiles mechanics while keeping
+# Observes transparent player-owned state and adapts effect data while keeping
 # content IDs and scene objects out of the public observation.
 
-const PlayerMechanicCompiler := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/mechanics/player_mechanic_compiler.gd"
+const PlayerEffectAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/player_effects/player_effect_adapter.gd"
 )
 const StatVocabulary := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
 )
 
-var _player_mechanic_compiler: Reference = PlayerMechanicCompiler.new()
+var _player_effect_adapter: Reference = PlayerEffectAdapter.new()
 var _stat_vocabulary: Reference = StatVocabulary.new()
 
 
 func observe(player_index: int, player: Node) -> Dictionary:
-	var compiled_mechanics := _player_mechanic_compiler.compile(player_index, player)
+	var adapted_effects := _player_effect_adapter.adapt(player_index, player)
 	return {
 		"dead": player.dead,
 		"health":
@@ -39,9 +39,9 @@ func observe(player_index: int, player: Node) -> Dictionary:
 		"pickup": _get_pickup_state(player_index, player),
 		"weapons":
 		_observe_weapons(
-			player_index, player, compiled_mechanics.automatic_attacks_allowed_while_moving
+			player_index, player, adapted_effects.automatic_attacks_allowed_while_moving
 		),
-		"mechanic_rules": compiled_mechanics.rules,
+		"effect_rules": adapted_effects.effect_rules,
 	}
 
 
@@ -72,6 +72,7 @@ func _get_runtime_stats(player: Node) -> Dictionary:
 		"move_speed": player.get_move_speed(),
 		"armor": player.current_stats.armor,
 		"dodge_chance": player.current_stats.dodge,
+		"hit_protection": player.life_bar_effects().get("hit_protection", 0),
 	}
 
 

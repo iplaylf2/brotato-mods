@@ -4,8 +4,9 @@
 [README](../README.md)；允许使用的信息和控制能力由 [玩家权限边界](fair-play.md) 统一规定，本文不
 重复定义该约束。
 
-阅读或修改公共数据时，从“观察契约”开始；调整决策行为时，从“滚动规划”和结果字段开始；扩展稳定
-游戏知识时，先阅读“机制知识”和对应的 [原版机制审计](vanilla-enemy-mechanics.md)。
+按修改对象选择阅读入口：公共数据见“观察契约”，决策行为见“滚动规划”，版本知识见“机制知识”，
+代码归属见“模块责任”。敌人与投射物的目标版本证据单独保存在
+[原版敌人与投射物机制审计](vanilla-enemy-mechanics.md)。
 
 ## 运行链路
 
@@ -30,10 +31,13 @@
     │   ├── MovementOutcomePredictor
     │   │   ├── BattlefieldPressureModel ──> ObservedMotionPredictor
     │   │   ├── VelocityObstacleModel ──> PlayerKinematicsModel
+    │   │   ├── PlayerRuleOutcomePredictor ──> PlayerRuleProjection
+    │   │   ├── PlayerMovementStateProjector
     │   │   └── WeaponAttackPredictor
-    │   │       ├── WeaponEngagementModel
+    │   │       ├── WeaponEngagementModel ──> PlayerMovementStateProjector
+    │   │       ├── PlayerMovementStateProjector
     │   │       └── ObservedMotionPredictor
-    │   ├── MovementUtilityModel
+    │   ├── MovementUtilityModel ──> PlayerRuleProjection
     │   └── MovementActionSelector
     └── AutopilotMovementBehavior
 ```
@@ -70,7 +74,7 @@ player_state
 ├── movement
 ├── pickup
 ├── weapons
-└── mechanic_rules
+└── effect_rules
 party_state
 localization
 enemy_tracks
@@ -180,7 +184,8 @@ visible_world
 
 ## 机制知识
 
-机制知识按信息所有者分别编译，观察层只在对应实体可见后调用这些编译器。
+机制知识按信息所有者适配或编译。外部实体只有通过可见性判定后，才能调用对应知识模块；玩家自身的
+透明效果数据则直接进入玩家效果适配边界。
 
 ### 敌人机制
 
@@ -193,18 +198,21 @@ visible_world
 目标版本的敌人清单、投射物形态、实现映射和升级复核步骤见
 [原版敌人与投射物机制审计](vanilla-enemy-mechanics.md)。版本证据独立于架构契约维护。
 
-### 玩家携带机制
+### 玩家效果规则
 
-玩家侧由原版先把携带内容聚合为 `effects`，Autopilot 再按机制族编译为由 `event`、`condition` 和
-`consequences` 组成的规则。当前玩家机制编译器覆盖：
+原版先把玩家携带内容聚合为 `effects`。`knowledge/player_effects` 是这套目标版本存储格式的适配边界，
+只把已理解的字段翻译为统一规则。每条规则由事件、作用于事件载荷的条件和状态变换组成；条件描述可组合
+事实，状态变换使用 `target`、`operation` 和参数表达，可比较结果则映射到少量 `outcome_channels`。规则
+支持范围由这些正交轴定义，不以角色、物品、武器或扩展内容的目录衡量。
 
-- 站立或移动时的属性、材料变化和自动攻击限制；
-- 拾取材料或消耗品产生的价值、治疗、伤害、冷却和属性效果；
-- 持有材料以及保留敌人或树木产生的波次收益。
+`PlayerRuleProjection` 沿上述轴投影恢复、生存、动作状态与事件结果通道，结果预测器则把同一规则应用到
+候选路径。两者都不能读取原版字段名或内容 ID。可见消耗品同样只公开基础恢复量和语义特征；实体特征
+由通用条件匹配，
+不以“能否触发某项机制”的布尔字段扩张观察契约。
 
-规划器目前直接使用移动状态规则和波次收益规则。拾取规则已经进入观察契约，但相关效果尚未全部纳入
-动作结果预测。受击、闪避、击杀、生命阈值、周期成长和其他特殊效果也仍待补充。无法识别的机制不会
-被推断为已有类别。
+新增能力优先组合已有的事件、条件、状态变换和结果通道。只有共享模型缺少必要表达能力时才扩展正交轴，
+并使现有规则能够自然复用。目标版本字段映射只是局部兼容代码；公共文档描述规则轴、预测语义和已知限制，
+不维护内容覆盖目录。
 
 ### 友方角色与构筑物机制
 
@@ -232,20 +240,25 @@ visible_world
    必须支付中间压力带的代价。动作生成器离散化本次可提交的移动输入；零向量是不输入移动指令的动作。
 4. 动作只会执行到下一次 0.1 秒重规划。用于风险比较的预测窗由最近敌人或弹道的预计交会时间决定，
    限制在 0.18–0.7 秒；预测点近时密、远时疏，且只有首个 0.1 秒控制输入会被执行。
-5. 所有动作先预测压力物质导数、拾取、接近、跑图和移动机制结果；速度障碍模型直接在速度空间计算
-   玩家与敌人、弹体和队友移动圆盘的 TTC 风险。位置域投射物仍使用扫掠线段，避免高速弹体穿过采样间隙。
+5. 所有动作先预测压力物质导数、拾取、玩家效果规则、接近、跑图和动作状态结果。速度障碍模型直接在
+   速度空间计算玩家与敌人、弹体和队友移动圆盘的 TTC 风险；位置域投射物仍使用扫掠线段，避免高速
+   弹体穿过采样间隙。
 6. 粗评分最高的固定数量动作再进行自动武器攻击结果预测，效用模型输出逐项得分账本。
 7. 选择器从近优动作中带权选择；控制器提交所选移动向量，下一次规划重新读取环境。
 
 ### 结果与诊断
 
-规划结果向量使用以下语义：
+规划结果分为评分字段和诊断字段。评分字段与动态权重相乘后进入动作总分：
 
 | 字段 | 含义 |
 | --- | --- |
 | `material_pickup_value` | 动作对可见材料的拾取、吸附或接近价值 |
-| `healing_pickup_value` | 结合缺失生命比例计算的消耗品拾取价值 |
-| `expected_enemy_damage` | 自动武器对所有敌人的预期总伤害 |
+| `recovery_pickup_value` | 结合缺失生命比例计算的消耗品拾取价值 |
+| `expected_weapon_damage` | 自动武器对所有敌人的预期总伤害 |
+| `expected_effect_damage` | 玩家效果规则因拾取、治疗、受击或闪避产生的预期敌人伤害 |
+| `expected_recovery` | 候选动作实际拾取或自动武器生命偷取产生的预期恢复量 |
+| `expected_stat_gain_value` | 效果规则产生的永久或临时属性成长的期望归一化价值 |
+| `movement_survivability_delta` | 候选移动状态相对当前状态造成的护甲与闪避生存价值差量 |
 | `expected_producer_damage` | 自动武器对生产型敌人的预期伤害 |
 | `expected_loot_target_damage` | 自动武器对战利品目标的预期伤害 |
 | `ranged_source_suppression_value` | 预期伤害占最大生命的比例，再按稳定火力和死亡时清除投射物的收益加权 |
@@ -254,6 +267,19 @@ visible_world
 | `ranged_source_engagement_progress` | 缩短与远程压力源之间超出自有武器射程部分的进度 |
 | `targets_in_weapon_range` | 预测末端进入可用武器范围的敌人权重 |
 | `tree_attack_opportunity` | 进入树木攻击范围或向其接近的价值 |
+| `allied_zone_healing_support` | 动作预测处于友方治疗或治疗增益覆盖内的累计支援价值 |
+| `integrated_survival_pressure` | 敌对压力扣除合法减压后的沿途净生存压力 |
+| `mean_pressure_material_derivative` | 沿候选动作 `P(x(t),t)` 的平均物质导数 |
+| `velocity_obstacle_risk` | 候选速度落入敌人、弹体或队友碰撞锥的有界 TTC 风险 |
+| `navigation_guidance_alignment` | 移动向量与导航图建议首步方向的一致程度 |
+| `roaming_progress` | 动作预测位移形成的跑图倾向 |
+| `standing_seconds`、`moving_seconds` | 对应移动状态在预测窗口内的持续时间 |
+| `heading_continuity` | 新旧移动方向的点积 |
+
+诊断字段解释评分来源，但不直接进入动作总分：
+
+| 字段 | 含义 |
+| --- | --- |
 | `enemy_proximity_pressure` | 敌人距离与记忆不确定性形成的有界累计压力 |
 | `projectile_pressure` | 未被先行拦截的敌方投射物扫掠压力 |
 | `spawn_pressure` | 靠近可见敌对生成警告的累计压力 |
@@ -262,25 +288,17 @@ visible_world
 | `ranged_source_pressure` | 暴露在已确认远程压力源范围内的累计压力 |
 | `allied_body_pressure` | 多人模式下动作与其他玩家实体碰撞产生的阻塞压力 |
 | `allied_zone_pressure_relief` | 构筑物或战斗宠物对相关敌人环境压力的原始减压量 |
-| `allied_zone_healing_support` | 动作预测处于友方治疗或治疗增益覆盖内的累计支援价值 |
 | `allied_projectile_interception` | 友方角色先于玩家截获威胁弹道后形成的累计投射物减压 |
-| `integrated_hostile_pressure` | 相对压力政策加权后的沿途总敌对压力，仅供诊断 |
-| `integrated_relief_pressure` | 受对应敌压上限约束的沿途总减压，仅供诊断 |
-| `integrated_survival_pressure` | 敌对压力扣除合法减压后的沿途净生存压力 |
-| `peak_survival_pressure` | 动作预测中任一采样点的峰值净生存压力，仅供诊断 |
-| `mean_pressure_material_derivative` | 沿候选动作 `P(x(t),t)` 的平均物质导数 |
-| `velocity_obstacle_risk` | 候选速度落入敌人、弹体或队友碰撞锥的有界 TTC 风险 |
-| `enemy_velocity_obstacle_risk` | 与敌人交会的 VO 风险，仅供诊断 |
-| `projectile_velocity_obstacle_risk` | 与敌方投射物交会的 VO 风险，仅供诊断 |
-| `ally_velocity_obstacle_risk` | 与其他玩家交会的 VO 风险，仅供诊断 |
-| `minimum_time_to_collision` | 当前候选速度下最早预测交会时间，仅供诊断 |
-| `candidate_velocity` | 结合移动输入与推断击退衰减后的候选平均速度，仅供诊断 |
-| `pressure_trace` | 每个预测时刻的位置、原始通道、敌压、带负号减压和净压诊断 |
-| `navigation_guidance_alignment` | 移动向量与导航图建议首步方向的一致程度 |
-| `roaming_progress` | 动作预测位移形成的跑图倾向 |
-| `standing_seconds`、`moving_seconds` | 对应移动状态在预测窗口内的持续时间 |
-| `heading_continuity` | 新旧移动方向的点积 |
-| `expected_attack_hits` | 武器几何预测得到的预期命中数，仅供诊断 |
+| `integrated_hostile_pressure` | 相对压力政策加权后的沿途总敌对压力 |
+| `integrated_relief_pressure` | 受对应敌压上限约束的沿途总减压 |
+| `peak_survival_pressure` | 动作预测中任一采样点的峰值净生存压力 |
+| `enemy_velocity_obstacle_risk` | 与敌人交会的 VO 风险 |
+| `projectile_velocity_obstacle_risk` | 与敌方投射物交会的 VO 风险 |
+| `ally_velocity_obstacle_risk` | 与其他玩家交会的 VO 风险 |
+| `minimum_time_to_collision` | 当前候选速度下最早预测交会时间 |
+| `candidate_velocity` | 结合移动输入与推断击退衰减后的候选平均速度 |
+| `pressure_trace` | 每个预测时刻的位置、原始通道、敌压、带负号减压和净压 |
+| `expected_attack_hits` | 武器几何预测得到的预期命中数 |
 
 这些量是可解释的启发式结果，不都具有相同物理单位。压力通道先在各自语义内归一化和有界叠加，再由
 压力政策转换成统一净压；拾取、伤害、战略接近和移动机制仍作为压力场之外的目标效用。生产者和战利品
@@ -296,6 +314,7 @@ visible_world
 自身武器的冷却、预测窗内攻击次数、弹丸数量、准确度、穿透、弹跳、近战攻击形态、单次伤害和暴击
 期望，而不是把最大射程当成交战能力。每个导航节点还针对届时的敌人数量和距离估算预期攻击数、命中数
 与伤害，因此走位会比较实际火力收益。
+
 远场角向和径向单元随距离扩大，用于选择大方向而非精确避弹。动作评价仍直接查询连续场，避免远场粗
 网格污染局部碰撞判断。规划结果同时公开推导出的 `near_node_spacing`、`local_detail_radius`、
 `control_distance`、`engagement_capacity` 和 `current_engagement_estimate`，便于验证空间尺度是否合理；
@@ -312,8 +331,8 @@ visible_world
 ### 动态效用
 
 权重在每次规划时重建。波次接近结束时，可见材料和战利品目标价值上升，危险成本下降；生产型敌人的
-提前处理价值随剩余时间增加。生命比例、护甲、闪避和恢复共同形成风险容忍度；保留敌人或树木的波次
-机制会改变对应结果的权重，站立与移动机制也直接进入账本。
+提前处理价值随剩余时间增加。生命比例、护甲、闪避和恢复共同形成风险容忍度；规则投影产生的事件价值、
+状态变化和长期保留价值通过同一账本调整对应结果，不切换到内容专属策略。
 
 远程压力源同样不触发硬编码目标模式。剩余时间较长时，对压力源的预期伤害和进入自有武器射程具有
 额外清理价值，并按预期伤害占最大生命的比例、稳定火力强度和死亡时清除投射物的收益计分。低生命、
@@ -355,6 +374,7 @@ visible_world
 压力场中敌人与友方作用源、投射物与拦截者存在交互项，其余粗评成本随动作数、采样数和实体数线性增长；
 详细武器预测只作用于固定短名单。`search_budget` 同时公开原始威胁计数、作用源数、交互负载和总规划
 负载。
+
 基础方向之外加入导航价值图的最优首步方向，并单独加入零移动输入。当前单步动作空间不需要模拟
 退火；若以后允许多个自由动作段，组合数会指数增长，届时应优先考虑束搜索或交叉熵方法。
 
@@ -368,22 +388,28 @@ visible_world
 | `bot/control` | 安排重规划、保存当前计划，并适配原版 `MovementBehavior` |
 | `bot/planning` | 管理导航价值图、运动学、速度障碍、动作搜索、效用评分和近优选择 |
 | `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 |
-| `bot/knowledge` | 编译可见实体的稳定机制，向观察层提供不含场景节点的语义结果 |
+| `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 |
 
-所有新增能力必须先满足 [玩家权限边界](fair-play.md)。新增玩家携带机制应放入 `knowledge/mechanics`，并由
-`player_mechanic_compiler.gd` 聚合；新增敌人稳定特征或画像规则应放入 `knowledge/enemies`。新增参与
-评分的结果维度必须同时定义预测语义和效用权重；新增诊断维度则应明确标注不参与评分。
+所有新增能力必须先满足 [玩家权限边界](fair-play.md)。玩家效果的版本字段映射由
+`knowledge/player_effects` 拥有，消耗品稳定画像由 `knowledge/pickups` 拥有；公共规则轴及其解释权属于规划
+模型，不能随字段数量同步扩张。新增敌人稳定特征或画像规则应放入 `knowledge/enemies`。新增参与评分的
+结果维度必须同时定义预测语义和效用权重；新增诊断维度则应明确标注不参与评分。
 
-友方角色和构筑物的稳定作用分别由 `knowledge/allies/ally_mechanic_compiler.gd` 与
-`knowledge/structures/structure_mechanic_compiler.gd` 编译；`planning/battlefield_pressure_model.gd`
-统一拥有敌压、位置约束、友方减压、挡弹时序、压力组合和动作压力诊断；
-`planning/navigation_value_graph.gd` 负责多尺度状态图和 Bellman 累计价值，
-`planning/velocity_obstacle_model.gd` 负责局部速度空间交会风险，`planning/player_kinematics_model.gd`
-负责与原版一致的一阶移动及击退衰减。`planning/movement_outcome_predictor.gd` 只预测动作结果，
-`planning/movement_utility_model.gd` 负责把结果转换成效用。
-`observation/observed_world_memory.gd` 是每玩家观察记忆的聚合边界，实体当前是否仍存在的推断由
-`observation/remembered_entity_existence_model.gd` 单独负责。观察层只输出语义画像，规划层不读取
-场景节点或实现细节。
+关键所有权如下：
+
+- `knowledge/allies/ally_mechanic_compiler.gd` 与
+  `knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方角色和构筑物的稳定作用画像。
+- `planning/battlefield_pressure_model.gd` 拥有敌压、位置约束、友方减压、挡弹时序、压力组合和动作压力
+  诊断；`planning/navigation_value_graph.gd` 拥有多尺度状态图与 Bellman 累计价值。
+- `planning/velocity_obstacle_model.gd` 计算局部速度空间交会风险；
+  `planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
+- `planning/movement_outcome_predictor.gd` 预测动作结果，`planning/movement_utility_model.gd` 把结果转换为
+  效用。`planning/player_rule_outcome_predictor.gd` 负责事件触发几何，
+  `planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量，
+  `planning/player_rule_projection.gd` 将规则归约为正交状态与结果通道；这些模块都不能读取场景节点。
+- `observation/observed_world_memory.gd` 聚合每位玩家的观察记忆；实体存在性由
+  `observation/remembered_entity_existence_model.gd` 推断。观察层只输出语义画像，规划层不读取观察层的
+  场景节点或内部实现细节。
 
 ## 算法依据与适用边界
 
@@ -412,7 +438,7 @@ Eikonal/Fast Marching 工作](https://pmc.ncbi.nlm.nih.gov/articles/PMC39986/)�
 ## 当前限制
 
 - 压力通道和动态权重尚未由实际伤害、无敌帧与游戏内动作回放完成校准。
-- 拾取机制规则已经编译，但相关效果尚未全部进入结果预测。
+- 击杀、周期成长与短预测窗内跨越生命或波次阈值后的完整状态转移尚未统一建模。
 - 运动估计的平滑、限幅和衰减参数尚未完成游戏内校准。
 - 负载等级仍是实体计数启发式，尚未使用 Godot 性能监视器或实测帧时间。
 - 观察、规划和控制尚未完成游戏内加载与行为验证。

@@ -8,8 +8,12 @@ extends Reference
 const ObservedMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/observed_motion_predictor.gd"
 )
+const PlayerMovementStateProjector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
+)
 
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 
 
 func estimate_capacity(observation: Dictionary, horizon_seconds: float) -> Dictionary:
@@ -18,7 +22,10 @@ func estimate_capacity(observation: Dictionary, horizon_seconds: float) -> Dicti
 	var total_damage_capacity := 0.0
 	var weighted_range := 0.0
 	var weighted_bandwidth := 0.0
-	for weapon in observation.player_state.weapons:
+	for observed_weapon in observation.player_state.weapons:
+		var weapon: Dictionary = _movement_state_projector.project_weapon(
+			observed_weapon, observation, false
+		)
 		var attacks := _scheduled_attack_count(weapon, 0.0, horizon_seconds)
 		var hit_capacity := _hit_capacity_per_attack(weapon)
 		var damage_capacity := (
@@ -55,7 +62,10 @@ func estimate_at_position(
 	var expected_attacks := 0.0
 	var expected_hits := 0.0
 	var expected_damage := 0.0
-	for weapon in observation.player_state.weapons:
+	for observed_weapon in observation.player_state.weapons:
+		var weapon: Dictionary = _movement_state_projector.project_weapon(
+			observed_weapon, observation, false
+		)
 		var eligible_targets := _eligible_targets(targets, weapon)
 		if eligible_targets.empty():
 			continue

@@ -1,5 +1,7 @@
 extends Reference
 
+# Adapts movement-state fields from the target player-effect schema.
+
 const StatVocabulary := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
 )
@@ -7,7 +9,7 @@ const StatVocabulary := preload(
 var _stat_vocabulary: Reference = StatVocabulary.new()
 
 
-func compile(effects: Dictionary, player: Node) -> Array:
+func adapt(effects: Dictionary, player: Node) -> Array:
 	var rules := []
 	_append_conditional_stats(
 		rules,

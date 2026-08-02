@@ -10,19 +10,26 @@ const ObservedMotionPredictor := preload(
 const WeaponEngagementModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_engagement_model.gd"
 )
+const PlayerMovementStateProjector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
+)
 
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
 var _engagement_model: Reference = WeaponEngagementModel.new()
+var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 
 
 func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
 	for weapon in observation.player_state.weapons:
 		if action.movement != Vector2.ZERO and not weapon.automatic_attacks_allowed_while_moving:
 			continue
+		var projected_weapon: Dictionary = _movement_state_projector.project_weapon(
+			weapon, observation, action.movement != Vector2.ZERO
+		)
 		for shot_time in _engagement_model.get_scheduled_attack_times(
-			weapon, 0.0, action.forecast_seconds
+			projected_weapon, 0.0, action.forecast_seconds
 		):
-			_accumulate_weapon_attack(observation, action, weapon, shot_time, outcome)
+			_accumulate_weapon_attack(observation, action, projected_weapon, shot_time, outcome)
 
 
 func _accumulate_weapon_attack(
@@ -43,11 +50,26 @@ func _accumulate_weapon_attack(
 		attack_outcome = _predict_ranged_attack(targets, primary, weapon)
 	else:
 		attack_outcome = _predict_melee_attack(targets, primary, weapon)
-	outcome.expected_enemy_damage += attack_outcome.expected_damage
+	outcome.expected_weapon_damage += attack_outcome.expected_damage
 	outcome.expected_producer_damage += attack_outcome.expected_producer_damage
 	outcome.expected_loot_target_damage += attack_outcome.expected_loot_target_damage
 	outcome.ranged_source_suppression_value += attack_outcome.ranged_source_suppression_value
 	outcome.expected_attack_hits += attack_outcome.expected_hits
+	var expected_lifesteal_events := (
+		attack_outcome.expected_hits
+		* clamp(weapon.lifesteal, 0.0, 1.0)
+	)
+	var remaining_missing_health := max(
+		0.0,
+		(
+			observation.player_state.health.maximum
+			- observation.player_state.health.current
+			- outcome.expected_recovery
+		)
+	)
+	var expected_lifesteal_recovery := min(remaining_missing_health, expected_lifesteal_events)
+	outcome.expected_recovery += expected_lifesteal_recovery
+	outcome.expected_recovery_events += expected_lifesteal_recovery
 
 
 func _predict_ranged_attack(targets: Array, primary: Dictionary, weapon: Dictionary) -> Dictionary:
