@@ -15,6 +15,9 @@ const MovementPlanningTiming := preload(
 const DecisionTelemetry := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/control/decision_telemetry.gd"
 )
+const PlanningFrameBudgetMonitor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/control/planning_frame_budget_monitor.gd"
+)
 const REPLAN_INTERVAL_SECONDS := MovementPlanningTiming.CONTROL_INTERVAL_SECONDS
 
 var _observation_service: Node
@@ -25,8 +28,10 @@ var _movement_planners: Array = []
 var _current_plans: Array = []
 var _previous_movements: Array = []
 var _decision_telemetry: Reference = DecisionTelemetry.new()
+var _planning_frame_budget_monitor: Reference = PlanningFrameBudgetMonitor.new()
 var _seconds_until_replan := 0.0
 var _shut_down := false
+var _previous_physics_frame_included_planning := false
 
 
 func initialize(observation_service: Node, players: Array) -> void:
@@ -50,11 +55,16 @@ func _physics_process(delta: float) -> void:
 	if _shut_down or not is_instance_valid(_observation_service):
 		return
 
+	_planning_frame_budget_monitor.observe_physics_duration(
+		delta, _previous_physics_frame_included_planning
+	)
+	_previous_physics_frame_included_planning = false
 	_seconds_until_replan -= delta
 	if _seconds_until_replan > 0.0:
 		return
 	_seconds_until_replan = REPLAN_INTERVAL_SECONDS
 	_replan_all_players()
+	_previous_physics_frame_included_planning = true
 
 
 func shutdown() -> void:
@@ -85,10 +95,18 @@ func get_decision_sample_path() -> String:
 
 
 func _replan_all_players() -> void:
+	var scheduled_planner_count := 0
+	for player in _players:
+		if is_instance_valid(player):
+			scheduled_planner_count += 1
+	var frame_budget_context := _planning_frame_budget_monitor.build_context(
+		scheduled_planner_count
+	)
 	for player_index in _players.size():
 		var player = _players[player_index]
 		if not is_instance_valid(player):
 			continue
+		_movement_planners[player_index].set_frame_budget_context(frame_budget_context)
 		var observation: Dictionary = _observation_service.get_observation(player_index)
 		var plan: Dictionary = _movement_planners[player_index].plan(
 			observation, _previous_movements[player_index], player_index

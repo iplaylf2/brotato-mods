@@ -1,6 +1,6 @@
 extends Reference
 
-# Public planning boundary. It performs bounded screening followed by weapon-aware
+# Public planning boundary. It performs budgeted screening followed by weapon-aware
 # movement-action scoring and returns a complete, inspectable score ledger.
 
 const MovementActionGenerator := preload(
@@ -30,7 +30,7 @@ const MovementScaleModel := preload(
 
 # Bump whenever a formula, parameter meaning, or logged planning
 # contract changes. Samples use it to keep incompatible calibration groups separate.
-const MODEL_REVISION := "2026-08-02.1"
+const MODEL_REVISION := "2026-08-02.4"
 
 var _action_generator: Reference = MovementActionGenerator.new()
 var _search_budget_policy: Reference = SearchBudgetPolicy.new()
@@ -41,12 +41,17 @@ var _navigation_graph_builder: Reference = NavigationValueGraphBuilder.new()
 var _movement_scale: Reference = MovementScaleModel.new()
 
 
+func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
+	_search_budget_policy.set_frame_budget_context(frame_budget_context)
+
+
 func plan(observation: Dictionary, previous_movement: Vector2, player_index: int) -> Dictionary:
 	if observation.empty() or not observation.has("player_state"):
 		return _empty_plan("observation_unavailable")
 	if observation.player_state.dead:
 		return _empty_plan("player_dead")
 
+	var planning_started_usec := OS.get_ticks_usec()
 	var context: Dictionary = _utility_model.build_context(observation)
 	context.control_interval_seconds = MovementPlanningTiming.CONTROL_INTERVAL_SECONDS
 	var search_budget: Dictionary = _search_budget_policy.allocate(observation)
@@ -80,6 +85,10 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 
 	var seed: int = int(observation.physics_frame) * 31 + player_index
 	var plan: Dictionary = _action_selector.select(weapon_scored_actions, context, seed)
+	var planning_duration_usec := float(OS.get_ticks_usec() - planning_started_usec)
+	search_budget.merge(
+		_search_budget_policy.observe_planning_duration(planning_duration_usec), true
+	)
 	plan.status = "ready"
 	plan.context = context
 	plan.search_budget = search_budget.duplicate(true)

@@ -21,8 +21,8 @@ const MovementScaleModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
 )
 
-const MIN_RING_DIRECTIONS := 8
-const MAX_RING_DIRECTIONS := 32
+const MIN_RING_DIRECTION_COUNT := 8
+const REFERENCE_LOCAL_RING_DIRECTION_COUNT := 32
 const ENGAGEMENT_RADIAL_SAMPLES := 6.0
 const FAR_RING_GROWTH := 1.65
 
@@ -379,13 +379,11 @@ func _ring_direction_count(
 	radius: float, local_detail_radius: float, graph_angular_resolution_scale: float
 ) -> int:
 	var local_detail := clamp(local_detail_radius / max(1.0, radius), 0.0, 1.0)
-	var unscaled_count := lerp(float(MIN_RING_DIRECTIONS), float(MAX_RING_DIRECTIONS), local_detail)
-	return int(
-		clamp(
-			round(unscaled_count * graph_angular_resolution_scale),
-			MIN_RING_DIRECTIONS,
-			MAX_RING_DIRECTIONS
-		)
+	var unscaled_count := lerp(
+		float(MIN_RING_DIRECTION_COUNT), float(REFERENCE_LOCAL_RING_DIRECTION_COUNT), local_detail
+	)
+	return max(
+		MIN_RING_DIRECTION_COUNT, int(round(unscaled_count * graph_angular_resolution_scale))
 	)
 
 

@@ -19,6 +19,7 @@
 │   ├── 版本知识：bot/knowledge
 │   └── 局内记忆：ObservedWorldMemory
 └── AutopilotController
+    ├── PlanningFrameBudgetMonitor
     ├── MovementPlanner
     │   ├── 搜索预算与导航图
     │   ├── 动作生成与结果预测
@@ -31,11 +32,15 @@
 首个移动方向交给 `MovementBehavior`；这是系统唯一的控制边界。速度、碰撞、击退、动画、瞄准、
 攻击触发和移动机制均由原版 `Player`、`Unit` 与武器系统负责。
 
-`DecisionTelemetry` 按固定采样政策把观察和规划账本持久化为 JSON Lines，但不参与计划生成或动作选择。
-它只接收控制器已经取得的合法观察与只读结果，不形成新的观察入口。
+`DecisionTelemetry` 按固定采样政策，把控制器已取得的合法观察和只读规划账本持久化为
+JSON Lines。它的责任终止于序列化和存储；计划生成与动作选择归属规划器和控制器。
 
-代码依赖保持单向：`control` 依赖 `planning`，`observation` 依赖 `knowledge`，规划层只读取观察字典，
-不访问场景节点。`bot/observation/observation_service.gd` 是观察的公共读取入口。
+`PlanningFrameBudgetMonitor` 读取 Godot 已完成物理帧的耗时，并在采样时避开紧随规划之后的帧，维护基线
+物理耗时与耗时偏差，再把帧预算上下文交给规划器。它的输入边界是引擎计时；动作与搜索参数的决策分别归属
+`MovementPlanner` 和 `SearchBudgetPolicy`。
+
+代码依赖保持单向：`control` 依赖 `planning`，`observation` 依赖 `knowledge`，规划层的输入边界是已移除场景节点的
+观察字典。`bot/observation/observation_service.gd` 是观察的公共读取入口。
 
 ## 观察契约
 
@@ -256,7 +261,8 @@ visible_world
 
 每次重规划依次执行以下步骤：
 
-1. 预算政策根据敌人、投射物，以及友方作用源与它们形成的交互工作量分配搜索预算。
+1. 控制器提供由实测物理帧耗时形成的帧预算上下文；预算政策结合上一轮规划的实测成本，分配本轮搜索
+   强度。实体数量及其交互随分配结果记录，用于解释规划成本变化。
 2. 自适应导航图覆盖当前合法认知到的地图范围。近场径向步长由角色碰撞半径、一次控制周期可达距离和
    伤害加权交战能力共同推导；精细区域半径由预测窗可达距离、拾取范围及有效交战范围共同决定，之后环带
    随距离逐步变疏。每个节点把当前与未来环境暴露转换成非负通行成本，把材料、治疗、战略目标以及
@@ -268,9 +274,8 @@ visible_world
 5. 所有动作先预测环境暴露、碰撞、拾取、玩家效果规则、接近、跑图和动作状态结果。碰撞风险取位置域
    扫掠证据与速度空间 TTC 证据的较大值，同一次交会不会因两个检测器都发现它而相加；位置域投射物
    使用扫掠线段，避免高速弹体穿过采样间隙。
-6. 筛选评分最高的固定数量动作再进行自动武器攻击结果预测。
-   `targets_in_weapon_range` 只在筛选时代理尚未
-   计算的攻击结果，包含武器预测的评分不再叠加该代理量。
+6. 按本轮预算确定短名单规模，再对筛选分数最高的动作进行自动武器攻击结果预测。
+   `targets_in_weapon_range` 只在筛选时代理尚未计算的攻击结果；包含武器预测的评分不再叠加该代理量。
 7. 选择器按候选分数跨度定义近优带并带权选择，因此给所有动作增加同一个常量不会改变选择；控制器提交
    所选移动向量，下一次规划重新读取环境。
 
@@ -424,34 +429,77 @@ VO 使用连续 TTC 风险而不是硬排除集合，因此高收益且风险可
 
 ### 搜索预算
 
-预算政策使用以下规划负载代理：
+搜索预算以实测物理帧余量和规划成本为输入。`PlanningFrameBudgetMonitor` 读取 Godot
+`Performance.TIME_PHYSICS_PROCESS`，采样时避开紧随规划之后的帧，以 `0.5 s` 时间常数维护基线物理
+耗时的指数移动平均，并以绝对偏差的指数移动平均表示近期波动。物理帧容量由
+`Engine.iterations_per_second` 派生：
 
 ```text
-敌人轨迹数 + 可见投射物数
-+ (敌人数 × 友方作用源数 + 投射物数 × 有效拦截区数) / 8
+单个规划器的规划耗时预算
+= max(0, 物理帧容量 - 基线物理耗时 EMA - 物理耗时偏差 EMA) / 调度规划器数
 ```
 
-| 等级 | 规划负载 | 基础方向 | 时间采样 | 武器预测上限 |
-| --- | ---: | ---: | ---: | ---: |
-| 正常 | `< 140` | 16 | 6 | 10 |
-| 繁忙 | `140–319` | 12 | 4 | 6 |
-| 极端 | `≥ 320` | 8 | 3 | 4 |
+`MovementPlanner` 用 `OS.get_ticks_usec()` 测量从构建规划上下文到动作选择完成的主要规划路径。
+`SearchBudgetPolicy` 据此维护每单位搜索强度的耗时估计，再用规划耗时预算除以单位成本，估计下一轮可持续
+的搜索强度。非对称响应使强度在过载时快速下降、在余量持续存在时逐步恢复；单次调整比例把变化限制在
+`0.25×–2×` 之间，以平滑处理测量尖峰与短暂空闲。冷启动期使用搜索强度 `1`。
 
-暴露场中敌人与友方作用源、投射物与有效拦截区存在交互项，其余筛选成本随动作数、采样数和实体数线性增长；
-武器预测只作用于固定短名单。`search_budget` 同时公开原始威胁计数、作用源数、交互负载和总规划
-负载。
+搜索强度的政策取值域为 `[1, +∞)`；每轮可持续目标值由规划耗时预算除以单位搜索成本得到。各分辨率按搜索强度的平方根增长，使方向数与时间采样数的乘积
+近似随总强度线性增长：
+
+```text
+分辨率倍率 = sqrt(搜索强度)
+基础方向 = round(8 × 分辨率倍率)
+时间采样 = round(3 × 分辨率倍率)
+导航角分辨率倍率 = 0.5 × 分辨率倍率
+武器预测上限 = round(4 × 分辨率倍率)
+```
+
+`32` 定义导航图局部环的参考方向数；分辨率倍率可随持续实测余量继续提高候选方向、时间采样、
+导航节点和武器预测数量。
+
+`search_budget` 公开本轮分配和反馈状态：
+
+| 字段 | 含义 |
+| --- | --- |
+| `allocation_mode` | 分配算法；当前为 `frame_time_feedback` |
+| `direction_count`、`forecast_sample_count` | 本轮基础方向数与每个动作的时间采样数 |
+| `graph_angular_resolution_scale` | 本轮导航图角向分辨率倍率 |
+| `weapon_prediction_limit` | 进入完整武器预测的短名单上限 |
+| `search_effort_scale`、`next_search_effort_scale` | 本轮已分配及反馈后建议的下一轮搜索强度 |
+| `physics_frame_capacity_usec` | 由物理帧率派生的单帧容量 |
+| `baseline_physics_duration_usec_ema` | 用于估计非规划负载的物理耗时基线 |
+| `physics_duration_deviation_usec_ema` | 物理耗时相对基线的绝对偏差估计 |
+| `has_frame_time_sample`、`scheduled_planner_count` | 帧耗时样本是否有效，以及共享余量的规划器数量 |
+| `planning_duration_budget_usec` | 分配给单个规划器的本轮耗时预算 |
+| `planning_duration_usec`、`planning_duration_usec_ema` | 本轮实测规划耗时及其指数移动平均 |
+| `planning_usec_per_effort_ema` | 每单位搜索强度的规划耗时估计 |
+| `planning_duration_budget_utilization` | 本轮实测耗时与耗时预算之比；大于 `1` 表示超出预算 |
+| `threat_entity_count`、`influence_source_count` | 敌人与投射物总数，以及友方作用源数 |
+| `interaction_workload_proxy`、`entity_workload_proxy` | 用于解释成本变化的实体交互和总体工作量计数代理 |
+
+两个工作量代理按以下关系记录预测器可能处理的实体与成对作用规模。实测 CPU 时间由
+`planning_duration_usec`、`planning_duration_usec_ema` 和 `planning_usec_per_effort_ema` 提供：
+
+```text
+interaction_workload_proxy
+= ceil((敌人数 × 友方作用源数 + 投射物数 × 有效拦截区数) / 8)
+entity_workload_proxy
+= 敌人数 + 投射物数 + interaction_workload_proxy
+```
 
 基础方向之外加入导航价值图的最优首步方向，并单独加入零移动输入。单步动作空间不需要模拟
 退火；若以后允许多个自由动作段，组合数会指数增长，届时应优先考虑束搜索或交叉熵方法。
 
-这些等级是计数启发式，不是 Godot 帧耗时测量。`search_budget` 会公开实际等级、计数和上限，供后续
-以性能监视器或帧时间反馈替换政策。
+搜索强度 `1` 保证规划契约始终有候选；基础分辨率定义搜索形状，响应系数、EMA 时间常数和单次调节范围
+定义反馈的收敛速度与稳定性。Godot 性能监视器可能短暂延迟，控制层因此跳过紧随规划之后的基线样本，并以规划器
+自身的单调时钟测量闭合反馈。反馈在下一轮规划生效，因而首次规划、同一帧内的突发负载和监视值更新延迟仍可能造成超预算。
 
 ## 模块责任
 
 | 模块 | 责任 | 公共边界 |
 | --- | --- | --- |
-| `bot/control` | 安排重规划、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`get_decision_sample_path()` 提供当前采样文件；`AutopilotMovementBehavior` 是唯一控制输出 |
+| `bot/control` | 安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`get_decision_sample_path()` 提供当前采样文件；`AutopilotMovementBehavior` 是唯一控制输出 |
 | `bot/planning` | 管理导航价值图、运动学、速度障碍风险、动作搜索、效用评分和近优选择 | `MovementPlanner.plan()`；其余模块是规划包内部协作者 |
 | `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.get_observation()` |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
@@ -469,7 +517,8 @@ VO 使用连续 TTC 风险而不是硬排除集合，因此高收益且风险可
 | `Projector` | 将同一组已知规则或状态映射到候选表示，不模拟世界演化 | `project` |
 | `Model` | 封装可复用的领域关系或评价规律 | 领域动词 |
 | `Builder` | 构造并求解一个复合数据产物 | `build` |
-| `Policy` | 根据当前负载或状态分配限制 | `allocate` |
+| `Monitor` | 读取运行时监视值，维护平滑状态并公开上下文 | `observe_*`、`build_context` |
+| `Policy` | 根据帧预算上下文和历史反馈分配搜索限制 | `set_frame_budget_context`、`allocate`、`observe_*` |
 | `Telemetry` | 按既定采样政策持久化诊断记录，不参与被记录的决策 | `start`、`record_decision`、`close` |
 
 数据仍按其产物命名，例如 `attack_model`、`rule_projection`、`behavior_profile` 和 `navigation_graph`；组件名
@@ -506,9 +555,12 @@ VO 使用连续 TTC 风险而不是硬排除集合，因此高收益且风险可
   场景节点或内部实现细节。
 - `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量，
   `bot/planning/observed_motion_predictor.gd` 负责规划期外推；观察层不得反向依赖规划层。
-- `bot/planning/search_budget_policy.gd` 单独负责计算降级，便于以后用帧时间反馈替换计数政策。
-- `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；它不复制规划公式，
-  模型修订号及本次实际参数由 `MovementPlanner` 提供。
+- `bot/control/planning_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
+  边界公开帧预算上下文。
+- `bot/planning/search_budget_policy.gd` 根据控制层提供的帧预算上下文和自身实测规划耗时闭环调整搜索强度；
+  帧预算上下文是规划包与控制层监视实现之间的依赖边界。
+- `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；规划公式、模型修订号及
+  本次实际参数由 `MovementPlanner` 提供。
 
 ## 算法依据与适用边界
 
@@ -532,5 +584,5 @@ Eikonal/Fast Marching 工作](https://pmc.ncbi.nlm.nih.gov/articles/PMC39986/)�
 
 - 原始压力通道、合成暴露和动态权重尚未由实际伤害、无敌帧与游戏内动作回放完成校准。
 - 运动估计的平滑、限幅和衰减参数尚未完成游戏内校准。
-- 负载等级仍是实体计数启发式，尚未使用 Godot 性能监视器或实测帧时间。
+- 尚未通过不同设备上的稳态负载、突发负载和多玩家场景校准反馈收敛速度与超预算频率。
 - 观察、规划和控制尚未完成游戏内加载与行为验证。
