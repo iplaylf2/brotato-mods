@@ -95,7 +95,7 @@ func get_decision_sample_path() -> String:
 func _replan_all_players() -> void:
 	var scheduled_planner_count := 0
 	for player in _players:
-		if is_instance_valid(player):
+		if is_instance_valid(player) and not player.dead:
 			scheduled_planner_count += 1
 	var frame_budget_context: Dictionary = _physics_frame_budget_monitor.build_context(
 		scheduled_planner_count

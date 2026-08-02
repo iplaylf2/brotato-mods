@@ -17,7 +17,7 @@ const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
 
-const STRATEGIC_DIRECTION_COUNT := 8
+const BASELINE_DIRECTION_COUNT := 8
 const MAX_PROJECTILE_PHASE_STEP := PI / 2.0
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
@@ -45,10 +45,26 @@ func generate(observation: Dictionary, navigation_intent: Dictionary) -> Array:
 				direction,
 				forecast_seconds,
 				sample_count,
-				_is_strategic_direction(direction, navigation_intent)
+				_is_baseline_direction(direction, navigation_intent)
 			)
 		)
 	return actions
+
+
+func make_refined_action(
+	observation: Dictionary,
+	direction: Vector2,
+	forecast_template: Dictionary,
+	refined_action_index: int
+) -> Dictionary:
+	return _make_action(
+		observation,
+		"refined_movement_input_%s" % refined_action_index,
+		direction.normalized(),
+		forecast_template.forecast_seconds,
+		forecast_template.samples.size(),
+		false
+	)
 
 
 func _make_action(
@@ -57,7 +73,7 @@ func _make_action(
 	movement: Vector2,
 	forecast_seconds: float,
 	sample_count: int,
-	is_strategic_candidate: bool
+	is_baseline_candidate: bool
 ) -> Dictionary:
 	var samples := []
 	for step in range(1, sample_count + 1):
@@ -79,7 +95,7 @@ func _make_action(
 		"movement": movement,
 		"forecast_seconds": forecast_seconds,
 		"samples": samples,
-		"is_strategic_candidate": is_strategic_candidate,
+		"is_baseline_candidate": is_baseline_candidate,
 	}
 
 
@@ -90,14 +106,14 @@ func _candidate_directions(direction_count: int, navigation_intent: Dictionary) 
 			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))
 		)
 	# The geometry-derived lattice owns escape resolution. The octants own smooth
-	# strategic comparison and are added independently when the two grids do not
+	# baseline comparison and are added independently when the two grids do not
 	# share an angle.
-	for strategic_index in STRATEGIC_DIRECTION_COUNT:
-		var strategic_direction := Vector2.RIGHT.rotated(
-			TAU * float(strategic_index) / float(STRATEGIC_DIRECTION_COUNT)
+	for baseline_index in BASELINE_DIRECTION_COUNT:
+		var baseline_direction := Vector2.RIGHT.rotated(
+			TAU * float(baseline_index) / float(BASELINE_DIRECTION_COUNT)
 		)
-		if not _has_similar_direction(result, strategic_direction):
-			result.push_back(strategic_direction)
+		if not _has_similar_direction(result, baseline_direction):
+			result.push_back(baseline_direction)
 	var movement_preference: Vector2 = navigation_intent.movement_preference
 	if movement_preference != Vector2.ZERO:
 		var preferred_direction := movement_preference.normalized()
@@ -182,10 +198,10 @@ func _forecast_sample_count(
 	return int(max(max(1, spatial_samples), max(phase_samples, control_samples)))
 
 
-func _is_strategic_direction(direction: Vector2, navigation_intent: Dictionary) -> bool:
-	var strategic_step := TAU / float(STRATEGIC_DIRECTION_COUNT)
-	var nearest_strategic_angle := round(direction.angle() / strategic_step) * strategic_step
-	if abs(wrapf(direction.angle() - nearest_strategic_angle, -PI, PI)) <= 0.001:
+func _is_baseline_direction(direction: Vector2, navigation_intent: Dictionary) -> bool:
+	var baseline_step := TAU / float(BASELINE_DIRECTION_COUNT)
+	var nearest_baseline_angle := round(direction.angle() / baseline_step) * baseline_step
+	if abs(wrapf(direction.angle() - nearest_baseline_angle, -PI, PI)) <= 0.001:
 		return true
 	var preference: Vector2 = navigation_intent.movement_preference
 	return preference != Vector2.ZERO and direction.dot(preference.normalized()) > 0.999

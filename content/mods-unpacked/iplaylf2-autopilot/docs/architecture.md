@@ -24,7 +24,7 @@
 └── AutopilotController
     ├── PhysicsFrameBudgetMonitor
     ├── MovementPlanner
-    │   ├── 计算细节预算与导航意图
+    │   ├── 投射物可达性过滤、计算预算与导航意图
     │   ├── 动作生成与结果预测
     │   └── 效用评价与动作选择
     ├── DecisionTelemetry
@@ -40,8 +40,8 @@
 JSON Lines。它的责任终止于序列化和存储；计划生成与动作选择归属规划器和控制器。
 
 `PhysicsFrameBudgetMonitor` 读取 Godot 已完成物理帧的耗时。它跳过紧随规划之后的基线样本，维护基线
-物理耗时及其偏差，再把帧预算上下文交给规划器。引擎计时止于该边界；动作决策和可选计算细节分别归属
-`MovementPlanner` 与 `PlanningDetailBudgetPolicy`。
+物理耗时及其偏差，再把帧预算上下文交给规划器。引擎计时止于该边界；动作决策和计算预算准入分别归属
+`MovementPlanner` 与 `PlanningComputeBudgetPolicy`。
 
 代码依赖保持单向：`control` 依赖 `planning`，`observation` 依赖 `knowledge`。规划层只接收已经移除
 场景节点的观察字典；`bot/observation/observation_service.gd` 是观察的公共读取入口。
@@ -283,13 +283,14 @@ visible_world
 
 每次重规划依次执行以下步骤：
 
-1. 控制器提供由实测物理帧耗时形成的帧预算上下文；预算政策只调整战略导航广度和昂贵武器预测数量，
-   不降低动作角向覆盖或碰撞时间采样。实体数量及其交互随分配结果记录，用于解释规划成本变化。
-2. 导航意图规划器在派生的导航可达圆内评价一组均匀方向，并补入已观察资源与战略敌人的精确方向。
-   每个候选终点统一比较材料、治疗、树木、战略目标、预期火力、环境暴露和行程成本；当前可见且局部
-   可达的目标继续由动作预测器负责，避免重复计分。只有正增益终点会形成移动偏好；规划器不保留跨帧
-   空间图。
-3. 导航风险使用与局部生存效用相同、随生命、防御和波次时限变化的环境风险价格，不定义独立风险偏好。
+1. 控制器提供由实测物理帧耗时形成的帧预算上下文。规划器先用保守位移上界排除在导航时域内无法影响
+   玩家可达区域的投射物；敌人因缺少统一机动上界而全部保留。计算预算政策再把每位存活玩家可用的
+   帧余量转换为阶段截止，不降低基础动作角向覆盖或碰撞时间采样。
+2. 导航意图规划器从原点和八个均匀基线方向开始，再在导航截止前按距离由近及远补入已观察资源与战略
+   敌人的精确方向，并细分高价值方向之间的角区间。每个候选终点统一比较材料、治疗、树木、战略目标、
+   预期火力、环境暴露和行程成本；当前可见且局部可达的目标继续由动作预测器负责，避免重复计分。只有
+   正增益终点会形成移动偏好；规划器不保留跨帧空间图。
+3. 导航风险使用与局部生存效用相同、随生命、防御和波次时限变化的环境风险价格，不另设风险偏好。
    动作生成器离散化本次可提交的移动输入，并补入导航偏好方向；零向量是不输入移动指令的动作。
 4. 动作只会执行到下一次重规划。提交期由整数物理 tick 派生；近端预测窗为两个控制步。
    局部默认窗至少包含四个控制步，且足以跨越两个玩家碰撞直径；局部上限再保留三个修正步，
@@ -300,10 +301,13 @@ visible_world
    位置域投射物使用扫掠线段，避免高速弹体穿过采样间隙。
 6. 碰撞证据先按可见威胁伤害、候选移动状态下的护甲/闪避、命中保护和当前生命换算为生命资源成本。只有
    一次命中可能终止本局时，最低终止风险带才构成硬可行域；普通受伤作为可补充的生命资源进入效用交换。
-   八方向战略格点继续完整计分；若由碰撞几何派生的更细角度提供更低风险逃生方向，也加入完整计分，
-   等风险冗余角度不重复运行昂贵预测。随后按预算确定武器预测短名单规模。
-   `targets_in_weapon_range` 只在筛选时代理尚未计算的攻击结果；包含武器预测的评分不再叠加该代理量。
-7. 选择器按候选分数跨度的固定比例定义近优带并带权选择，不设置覆盖真实分差的最小带宽；因此只有实际
+   八方向基线与导航偏好方向继续完整计分；只有在碰撞几何派生的更细角度提供更低风险逃生能力时，才将
+   对应方向加入基线评价，等风险冗余角度不重复运行昂贵预测。
+7. 在动作细分截止前，规划器围绕当前高分动作的相邻角区间插入中点，逐个执行碰撞投影和不含武器攻击的
+   完整评分。最终可行候选按筛选分数排序；前两个候选必定执行完整武器预测，其余候选仅在最终规划截止
+   前继续预测。`targets_in_weapon_range` 只在尚未计算攻击结果时充当筛选代理；包含武器预测的评分不再
+   叠加该代理量。
+8. 选择器按候选分数跨度的固定比例定义近优带并带权选择，不设置覆盖真实分差的最小带宽；因此只有实际
    同分或足够接近的动作参与随机消歧，给所有动作增加同一个常量也不会改变选择。控制器提交所选移动向量，
    下一次规划重新读取环境。
 
@@ -322,10 +326,9 @@ visible_world
 材料周期收益归入 `economy`，护甲、闪避、武器属性和移动速度分别进入拥有其结果的生存、攻击与运动学预测器。
 
 规划时间域也有唯一所有者：`MovementTimingModel` 从物理 tick、控制步数、玩家碰撞直径和当前速度
-派生提交期、局部动作预测期和导航预测期。当前可见且位于局部可达半径内的静态目标归动预测器负责；
-导航意图
-只消费不可见记忆与局部范围外的静态目标，避免在责任交界处遗漏或重复计分。导航交战估计只形成终端
-价值，不替代短名单动作的武器几何预测。
+派生提交期、局部动作预测期和导航预测期。当前可见且位于局部可达半径内的静态目标归动作预测器负责；
+导航意图只消费不可见记忆与局部范围外的静态目标，避免在责任交界处遗漏或重复计分。导航交战估计只
+形成终端价值，不替代候选动作的武器几何预测。
 动作集合只离散化方向和零输入，不遗漏独立的“力度”轴：目标版本 `Unit.get_move_input()` 会把任何非零
 移动输入归一化后乘移动速度，非零向量的长度不会产生不同控制结果。
 
@@ -417,9 +420,10 @@ visible_world
 
 每个终点针对届时的敌人数量与距离估算预期伤害，并消费动作预测窗之外的材料、治疗、树木和战略敌人
 价值。当前可见且局部可达的目标仍由动作预测器计分；不可见记忆与远场目标由导航拥有。规划结果公开
-`movement_preference`、`evaluated_position_count`、`origin_value`、`selected_displacement`、`value_gain`、
+`movement_preference`、`position_evaluation_count`、`origin_value`、`selected_displacement`、`value_gain`、
 `sampling_radius`、`local_prediction_radius`、`control_distance`、`engagement_capacity` 和
-`current_engagement_estimate`，便于验证战略意图来源。其中 `evaluated_position_count` 包含原点，
+`current_engagement_estimate`，便于验证战略意图来源。其中 `position_evaluation_count` 包含原点，
+`baseline_position_evaluation_count` 与 `budgeted_position_evaluation_count` 分别记录基线和预算内评价次数；
 `sampling_radius` 是地图边界裁剪前的候选半径，不声称是实际行进距离。
 
 导航终点的环境暴露按局部生存效用使用的同一动态风险价格计入成本。动作评价仍检查完整路径并执行扫掠
@@ -471,9 +475,9 @@ visible_world
 时刻、几何命中与事件结果。原版的装填、扩散、贯穿、弹射、近战形态和命中后效果只在机制编译边界变换成
 这些量，不成为规划分支。预测是只读结果，只为移动动作提供效用，不选择瞄准目标、触发攻击或修改武器。
 
-### 计算细节预算
+### 可中断计算预算
 
-计算细节预算以实测物理帧余量和规划成本为输入。`PhysicsFrameBudgetMonitor` 读取 Godot
+计算预算以实测物理帧余量和规划成本为输入。`PhysicsFrameBudgetMonitor` 读取 Godot
 `Performance.TIME_PHYSICS_PROCESS`，采样时避开紧随规划之后的帧，以 `0.5 s` 时间常数维护基线物理
 耗时的指数移动平均，并以绝对偏差的指数移动平均表示近期波动。物理帧容量由
 `Engine.iterations_per_second` 派生：
@@ -483,28 +487,35 @@ visible_world
 = max(0, 物理帧容量 - 基线物理耗时 EMA - 2 × 物理耗时偏差 EMA) / 调度规划器数
 ```
 
-`MovementPlanner` 用 `OS.get_ticks_usec()` 测量从构建规划上下文到动作选择完成的主要规划路径。
-`PlanningDetailBudgetPolicy` 对实际规划耗时维护 EMA，并使用三级可选细节形成反馈：超出预算时下降一级；
-耗时低于预算的 `60%` 时上升一级；中间区间保持当前等级，避免来回振荡。
+`MovementPlanner` 用 `OS.get_ticks_usec()` 测量从投射物可达性过滤到动作选择完成的主要规划路径。
+`PlanningComputeBudgetPolicy` 把本轮帧余量转换成单调时钟截止；基线导航、完整派生角度的碰撞投影和至少两个
+动作的完整武器预测不因截止而省略，预算内导航评价、局部角度细分和其余武器预测只在预计单项耗时仍容纳
+于阶段截止时启动。导航评价使用总预算前 `20%`，局部动作细分使用前 `60%`，后续阶段可继承前序未使用的
+时间。
 
-```text
-可选细节等级         0    1    2
-武器精算短名单上限   2    4    6
-导航基础方向         6   12   16
-```
+基础动作角向覆盖由玩家碰撞半径和一个提交期的移动距离推导，时间采样由碰撞直径、控制期与相关曲线弹
+最大角频率推导；两者是安全下限而不是质量上限。碰撞成本先在完整派生角度上运行；随后从八方向战略
+格点及必要逃生角度形成可执行基线，并在优胜动作相邻角区间递归插入中点。战略导航同样从八方向基线开始，
+先按由近及远的目标方向扩展，再递归细分优胜角区间。二者都由截止时间而非固定最高等级终止。
 
-动作角向覆盖由玩家碰撞半径和一个提交期的移动距离推导，时间采样由碰撞直径、控制期与可见曲线弹最大
-角频率推导；两者不属于性能旋钮。碰撞成本投影先在完整派生角度上运行，完整结果只计算八方向战略格点
-以及确实提供更低碰撞风险的额外逃生角度。预算只调节战略导航广度和武器精算数量，不牺牲微操的几何
-分辨率。
+`ProjectileReachabilityFilter` 在重复战术扫掠之前，用导航时域内玩家最大位移、可见投射物当前速度、
+已观察加速度和已解析曲线速度的保守积分上界判断规划域可达性。不能影响局部可达域的投射物仍保留在
+原始观察和遥测中，但不再提高局部时间采样数，也不参与每个动作的重复碰撞计算。敌人尚无统一的最大
+机动能力契约，因此当前不对敌人做同类过滤，避免把保守性建立在不完整速度假设上。
 
-`detail_budget` 公开本轮分配和反馈状态：
+`projectile_filter` 公开过滤结果：`included_projectile_count` 与 `deferred_projectile_count` 分别记录进入
+重复规划计算和被延后的投射物数；`horizon_seconds` 是判定使用的导航时域；`mode` 记录当前保守距离判据。
+过滤后的观察只在规划包内部传递，不替换采样中的原始公共观察。
+
+`compute_budget` 公开本轮分配和反馈状态：
 
 | 字段 | 含义 |
 | --- | --- |
-| `optional_detail_level`、`next_optional_detail_level` | 本轮及反馈后下一轮的可选细节等级 |
-| `weapon_refinement_limit` | 进入完整武器预测的短名单上限 |
-| `navigation_base_direction_count` | 战略导航的均匀基础方向数；目标精确方向另行补入 |
+| `allocation_mode`、`has_deadline` | 当前使用 `deadline_gated` 计算准入，以及本轮是否已有有效帧耗时样本 |
+| `planning_started_usec`、`planning_deadline_usec` | 规划起点与全部预算内计算的最终截止 |
+| `navigation_deadline_usec`、`movement_refinement_deadline_usec` | 导航评价和局部移动细分的累计阶段截止 |
+| `planning_deadline_overrun_usec` | 实际结束时超过最终截止的微秒数；无帧样本时为 `null` |
+| `estimated_work_unit_duration_usec` | `navigation_evaluation`、`movement_refinement`、`weapon_prediction` 单次耗时的 EMA |
 | `physics_frame_capacity_usec` | 由物理帧率派生的单帧容量 |
 | `baseline_physics_duration_usec_ema` | 用于估计非规划负载的物理耗时基线 |
 | `physics_duration_deviation_usec_ema` | 物理耗时相对基线的绝对偏差估计 |
@@ -512,26 +523,13 @@ visible_world
 | `planning_duration_budget_usec` | 分配给单个规划器的本轮耗时预算 |
 | `planning_duration_usec`、`planning_duration_usec_ema` | 本轮实测规划耗时及其指数移动平均 |
 | `planning_duration_budget_utilization` | 本轮实测耗时与耗时预算之比；大于 `1` 表示超出预算 |
-| `threat_entity_count`、`influence_source_count` | 敌人与投射物总数，以及友方作用源数 |
-| `interaction_workload_proxy`、`entity_workload_proxy` | 用于解释成本变化的实体交互和总体工作量计数代理 |
 
-两个工作量代理按以下关系记录预测器可能处理的实体与成对作用规模。实测 CPU 时间由
-`planning_duration_usec` 和 `planning_duration_usec_ema` 提供：
+基础方向之外加入导航偏好方向，并单独加入零移动输入。单步动作空间使用确定性自适应角区间，不需要
+模拟退火；若以后允许多个自由动作段，组合数会指数增长，届时再考虑束搜索或交叉熵方法。
 
-```text
-interaction_workload_proxy
-= ceil((敌人数 × 友方作用源数 + 投射物数 × 有效拦截区数) / 8)
-entity_workload_proxy
-= 敌人数 + 投射物数 + interaction_workload_proxy
-```
-
-基础方向之外加入导航偏好方向，并单独加入零移动输入。单步动作空间不需要模拟退火；若以后允许多个
-自由动作段，组合数会指数增长，届时应优先考虑束搜索或交叉熵方法。
-
-可选细节等级只改变战略广度和武器短名单。EMA 权重、恢复阈值和物理基线的双偏差余量定义反馈的收敛
-速度与稳定性。Godot 性能监视器可能短暂延迟，因此控制层会跳过紧随规划之后的基线样本，
-并以规划器自身的单调时钟测量闭合反馈。反馈在下一轮规划生效，因而首次
-规划、同一帧内的突发负载和监视值更新延迟仍可能造成超预算。
+Godot 性能监视器可能短暂延迟，因此控制层会跳过紧随规划之后的基线样本。单项耗时 EMA 只能防止启动
+预计无法完成的预算内工作，不能中断已经开始的单项计算；基线工作、首次成本估计、同帧突发负载和监视值
+更新延迟仍可能造成超预算。预算为零或尚无帧样本时只执行基线工作。
 
 ## 模块责任
 
@@ -558,7 +556,9 @@ entity_workload_proxy
 | `Monitor` | 读取运行时监视值，维护平滑状态并公开上下文 | `observe_*`、`build_context` |
 | `Constraint` | 根据不可违反的语义边界形成可行域 | `apply` |
 | `Pruner` | 删除不增加能力或信息的冗余候选，不改变可行域语义 | `prune` |
-| `Policy` | 根据资源上下文选择可调策略或分配可选计算细节 | 领域动词，或 `set_frame_budget_context`、`allocate`、`observe_*` |
+| `Filter` | 按明确判据产生输入子集，并公开过滤诊断 | `apply` |
+| `Refiner` | 根据已评价候选提出更细的搜索候选，不拥有评价或停止策略 | `propose_*` |
+| `Policy` | 根据资源上下文形成计算预算或其他可调策略 | 领域动词，或 `set_frame_budget_context`、`allocate`、`observe_*` |
 | `Telemetry` | 按既定采样政策持久化诊断记录，不参与被记录的决策 | `start`、`record_decision`、`close` |
 
 数据仍按其产物命名，例如 `attack_model`、`rule_projection`、`behavior_profile` 和 `navigation_intent`；组件名
@@ -579,7 +579,7 @@ entity_workload_proxy
   `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
 - `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
   `bot/planning/weapon_engagement_model.gd` 统一定义聚合交战能力，
-  `bot/planning/weapon_attack_predictor.gd` 负责短名单动作的目标几何。
+  `bot/planning/weapon_attack_predictor.gd` 负责已获准候选动作的目标几何。
 - `bot/planning/battlefield_exposure_model.gd` 拥有环境暴露、位置域碰撞风险、友方减压、挡弹时序和动作诊断；
   `bot/planning/navigation_intent_planner.gd` 为局部预测未拥有的目标和动作窗外的价值规划战略偏好。
   规划时间域由 `bot/planning/movement_timing_model.gd` 唯一定义，体型、
@@ -603,8 +603,9 @@ entity_workload_proxy
   随机性仍由 `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 拥有，避免编译缓存混入战斗期状态。
 - `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
   边界公开帧预算上下文。
-- `bot/planning/planning_detail_budget_policy.gd` 根据控制层提供的帧预算上下文和自身实测规划耗时闭环调整可选预测细节；
-  帧预算上下文是规划包与控制层监视实现之间的依赖边界。
+- `bot/planning/planning_compute_budget_policy.gd` 把控制层提供的帧预算上下文转换成计算截止，并维护预算内
+  工作的耗时估计；`projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；
+  `adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止策略仍归调用方。
 - `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；
   `MovementPlanner` 拥有规划结果及其诊断语义，采样器不解释或改写这些数据。
 

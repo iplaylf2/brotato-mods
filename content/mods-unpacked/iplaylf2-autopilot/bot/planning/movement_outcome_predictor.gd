@@ -1,8 +1,9 @@
 extends Reference
 
 # Predicts the outcome of one feasible movement vector over a threat-timed
-# forecast. The screening pass covers exposure and goals; shortlisted actions
-# also receive automatic-weapon prediction. Scoring belongs to MovementUtilityModel.
+# forecast. Every evaluated action receives the shared base prediction; actions
+# selected for full evaluation also receive automatic-weapon prediction.
+# Scoring belongs to MovementUtilityModel.
 
 const WeaponAttackPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_attack_predictor.gd"
@@ -88,7 +89,7 @@ func predict(
 
 
 # The expensive movement, battlefield, and collision projection is independent
-# of weapon-detail level. Shortlist refinement reuses this immutable base.
+# of weapon prediction. Full weapon prediction reuses this immutable base.
 func predict_base(
 	observation: Dictionary,
 	action: Dictionary,

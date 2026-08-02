@@ -2,7 +2,7 @@
   "name": "autopilot",
   "namespace": "iplaylf2",
   "version_number": "0.0.0",
-  "description": "Automatically controls battle movement using player-visible information and rolling planning.",
+  "description": "Automatically chooses battle movement from player-available information using rolling planning.",
   "website_url": "",
   "dependencies": [
     "dami-ModOptions"

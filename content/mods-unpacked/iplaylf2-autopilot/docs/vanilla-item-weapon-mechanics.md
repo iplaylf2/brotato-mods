@@ -34,7 +34,7 @@
 | 弹匣式节奏 | Revolver、Chain Gun | 使用当前射击相位、距额外装填的剩余攻击数和装填周期安排攻击 |
 | 交替近战形态 | Fighting Stick、Sword、Vorpal Sword、Excalibur | 按下一击实际的横扫或突刺形态预测 |
 | 穿透、弹射与暴击链 | Bandana、Ricochet、Crossbow、Shuriken | 普通及暴击触发的链数、伤害衰减和当前目标密度共同决定容量 |
-| 命中后二次武器效果 | 爆炸武器、燃烧武器、Cactus Mace、Lightning Shiv、Sniper Gun、Vorpal Sword | 统一描述爆炸、燃烧、派生投射物和斩杀概率，并计入短名单动作的预期伤害 |
+| 命中后二次武器效果 | 爆炸武器、燃烧武器、Cactus Mace、Lightning Shiv、Sniper Gun、Vorpal Sword | 统一描述爆炸、燃烧、派生投射物和斩杀概率，并计入已执行完整武器预测候选的预期伤害 |
 | 动态武器数值 | Stick、Rail Gun、Ghost 武器及属性换算内容 | 直接读取 `current_stats`；已经生效的堆叠、无伤成长、套装和属性换算无需识别内容 ID |
 
 上表只是版本审计索引，不是决策模型。规划器不会接收这些内容或机制类别；所有武器统一压缩为

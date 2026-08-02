@@ -6,8 +6,14 @@ extends Reference
 const MovementActionGenerator := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_generator.gd"
 )
-const PlanningDetailBudgetPolicy := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_detail_budget_policy.gd"
+const PlanningComputeBudgetPolicy := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_compute_budget_policy.gd"
+)
+const ProjectileReachabilityFilter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/projectile_reachability_filter.gd"
+)
+const AdaptiveDirectionRefiner := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/adaptive_direction_refiner.gd"
 )
 const MovementOutcomePredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_outcome_predictor.gd"
@@ -35,7 +41,9 @@ const MovementCandidatePruner := preload(
 )
 
 var _action_generator: Reference = MovementActionGenerator.new()
-var _detail_budget_policy: Reference = PlanningDetailBudgetPolicy.new()
+var _compute_budget_policy: Reference = PlanningComputeBudgetPolicy.new()
+var _projectile_filter: Reference = ProjectileReachabilityFilter.new()
+var _direction_refiner: Reference = AdaptiveDirectionRefiner.new()
 var _outcome_predictor: Reference = MovementOutcomePredictor.new()
 var _utility_model: Reference = MovementUtilityModel.new()
 var _action_selector: Reference = MovementActionSelector.new()
@@ -46,7 +54,7 @@ var _candidate_pruner: Reference = MovementCandidatePruner.new()
 
 
 func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
-	_detail_budget_policy.set_frame_budget_context(frame_budget_context)
+	_compute_budget_policy.set_frame_budget_context(frame_budget_context)
 
 
 func plan(observation: Dictionary, previous_movement: Vector2, player_index: int) -> Dictionary:
@@ -56,21 +64,22 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 		return _empty_plan("player_dead")
 
 	var planning_started_usec := OS.get_ticks_usec()
-	var context: Dictionary = _utility_model.build_context(observation)
-	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var projectile_filter: Dictionary = _projectile_filter.apply(observation)
+	var planning_observation: Dictionary = projectile_filter.filtered_observation
+	var context: Dictionary = _utility_model.build_context(planning_observation)
+	var timing: Dictionary = MovementTimingModel.derive(planning_observation)
 	context.control_interval_seconds = timing.control_interval_seconds
-	var detail_budget: Dictionary = _detail_budget_policy.allocate(observation)
+	var compute_budget: Dictionary = _compute_budget_policy.allocate(planning_started_usec)
 	var navigation_intent: Dictionary = _navigation_intent_planner.plan(
-		observation, context, detail_budget
+		planning_observation, context, compute_budget, _compute_budget_policy
 	)
 	context.navigation_movement_preference = navigation_intent.movement_preference
-	var actions: Array = _action_generator.generate(observation, navigation_intent)
-	var weapon_refinement_limit: int = detail_budget.weapon_refinement_limit
+	var actions: Array = _action_generator.generate(planning_observation, navigation_intent)
 	var collision_costs := []
 
 	for action in actions:
 		var collision_cost: Dictionary = _outcome_predictor.predict_collision_cost(
-			observation, action, context
+			planning_observation, action, context
 		)
 		collision_costs.push_back({"action": action, "outcome": collision_cost})
 
@@ -80,52 +89,128 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 	for candidate in candidate_pruning.actions:
 		var action: Dictionary = candidate.action
 		var base_outcome: Dictionary = _outcome_predictor.predict_base(
-			observation, action, previous_movement, context
+			planning_observation, action, previous_movement, context
 		)
 		var outcome: Dictionary = _outcome_predictor.complete_prediction(
-			observation, action, base_outcome, false
+			planning_observation, action, base_outcome, false
 		)
 		var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
 		var scored_action: Dictionary = _make_scored_action(action, outcome, evaluation)
 		scored_action.base_outcome = base_outcome
 		screened_actions.push_back(scored_action)
 
-	var screening_shortlist := []
-	for scored in screened_actions:
-		_insert_descending(screening_shortlist, scored, weapon_refinement_limit)
+	var direction_scores: Array = screened_actions.duplicate()
+	var refined_action_count := 0
+	while _compute_budget_policy.can_start_budgeted_work(
+		compute_budget, _compute_budget_policy.WORK_MOVEMENT_REFINEMENT
+	):
+		var proposed_direction: Vector2 = _direction_refiner.propose_direction(direction_scores)
+		if proposed_direction == Vector2.ZERO:
+			break
+		var work_started_usec := OS.get_ticks_usec()
+		var refined_action: Dictionary = _action_generator.make_refined_action(
+			planning_observation, proposed_direction, actions[0], refined_action_count
+		)
+		refined_action_count += 1
+		actions.push_back(refined_action)
+		var refined_collision: Dictionary = _outcome_predictor.predict_collision_cost(
+			planning_observation, refined_action, context
+		)
+		collision_costs.push_back({"action": refined_action, "outcome": refined_collision})
+		if (
+			refined_collision.terminal_collision_risk
+			<= terminal_constraint.maximum_admissible_terminal_risk
+		):
+			var base_outcome: Dictionary = _outcome_predictor.predict_base(
+				planning_observation, refined_action, previous_movement, context
+			)
+			var outcome: Dictionary = _outcome_predictor.complete_prediction(
+				planning_observation, refined_action, base_outcome, false
+			)
+			var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
+			var scored_action: Dictionary = _make_scored_action(refined_action, outcome, evaluation)
+			scored_action.base_outcome = base_outcome
+			screened_actions.push_back(scored_action)
+			direction_scores.push_back(scored_action)
+		else:
+			direction_scores.push_back({"movement": refined_action.movement, "score": -INF})
+		_compute_budget_policy.observe_work_duration(
+			_compute_budget_policy.WORK_MOVEMENT_REFINEMENT,
+			float(OS.get_ticks_usec() - work_started_usec)
+		)
 
-	var weapon_scored_actions := []
-	for screened in screening_shortlist:
+	terminal_constraint = _terminal_collision_constraint.apply(collision_costs)
+	screened_actions = _retain_admissible_scored_actions(
+		screened_actions, terminal_constraint.actions
+	)
+	var ranked_screened_actions := []
+	for scored in screened_actions:
+		_insert_descending(ranked_screened_actions, scored, screened_actions.size())
+
+	var fully_scored_actions := []
+	for rank_index in ranked_screened_actions.size():
+		if (
+			rank_index >= min(2, ranked_screened_actions.size())
+			and not _compute_budget_policy.can_start_budgeted_work(
+				compute_budget, _compute_budget_policy.WORK_WEAPON_PREDICTION
+			)
+		):
+			break
+		var work_started_usec := OS.get_ticks_usec()
+		var screened: Dictionary = ranked_screened_actions[rank_index]
 		var outcome: Dictionary = _outcome_predictor.complete_prediction(
-			observation, screened.action, screened.base_outcome, true
+			planning_observation, screened.action, screened.base_outcome, true
 		)
 		var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
 		_insert_descending(
-			weapon_scored_actions,
+			fully_scored_actions,
 			_make_scored_action(screened.action, outcome, evaluation),
-			weapon_refinement_limit
+			ranked_screened_actions.size()
+		)
+		_compute_budget_policy.observe_work_duration(
+			_compute_budget_policy.WORK_WEAPON_PREDICTION,
+			float(OS.get_ticks_usec() - work_started_usec)
 		)
 
 	var rng_seed: int = int(observation.physics_frame) * 31 + player_index
-	var plan: Dictionary = _action_selector.select(weapon_scored_actions, context, rng_seed)
+	var plan: Dictionary = _action_selector.select(fully_scored_actions, context, rng_seed)
 	var planning_duration_usec := float(OS.get_ticks_usec() - planning_started_usec)
-	detail_budget.merge(
-		_detail_budget_policy.observe_planning_duration(planning_duration_usec), true
+	compute_budget.merge(
+		_compute_budget_policy.observe_planning_duration(planning_duration_usec), true
+	)
+	compute_budget.planning_deadline_overrun_usec = (
+		max(0, OS.get_ticks_usec() - int(compute_budget.planning_deadline_usec))
+		if compute_budget.has_deadline
+		else null
 	)
 	plan.status = "ready"
 	plan.context = context
-	plan.detail_budget = detail_budget.duplicate(true)
+	plan.compute_budget = compute_budget.duplicate(true)
+	plan.projectile_filter = projectile_filter.duplicate(false)
+	plan.projectile_filter.erase("filtered_observation")
 	plan.navigation_intent = navigation_intent.duplicate(true)
 	plan.action_count = actions.size()
-	plan.weapon_refinement_count = weapon_scored_actions.size()
+	plan.weapon_prediction_count = fully_scored_actions.size()
+	plan.refined_action_count = refined_action_count
 	plan.candidate_filter = terminal_constraint.duplicate(true)
 	plan.candidate_filter.erase("actions")
 	var pruning_diagnostics: Dictionary = candidate_pruning.duplicate(true)
 	pruning_diagnostics.erase("actions")
 	plan.candidate_filter.merge(pruning_diagnostics, true)
-	plan.ranked_actions = _summarize_actions(weapon_scored_actions, 5)
+	plan.ranked_actions = _summarize_actions(fully_scored_actions, 5)
 	plan.model = _model_diagnostics(observation, plan, navigation_intent)
 	return plan
+
+
+func _retain_admissible_scored_actions(scored_actions: Array, admissible: Array) -> Array:
+	var admissible_ids := {}
+	for candidate in admissible:
+		admissible_ids[candidate.action.action_id] = true
+	var result := []
+	for scored in scored_actions:
+		if admissible_ids.has(scored.action.action_id):
+			result.push_back(scored)
+	return result
 
 
 func _model_diagnostics(

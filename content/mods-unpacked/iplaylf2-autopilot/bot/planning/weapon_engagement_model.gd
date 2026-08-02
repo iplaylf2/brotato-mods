@@ -2,7 +2,7 @@ extends Reference
 
 # Shared weapon-engagement model. It converts weapon cadence, hit capacity and
 # damage into a capability estimate, then estimates output against observed
-# targets at a position. Exact shortlisted-action geometry remains in
+# targets at a position. Exact candidate-action geometry remains in
 # WeaponAttackPredictor.
 
 const ObservedMotionPredictor := preload(

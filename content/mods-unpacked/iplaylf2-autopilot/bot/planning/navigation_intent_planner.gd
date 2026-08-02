@@ -23,6 +23,9 @@ const MovementGeometryModel := preload(
 const OpportunityValuationModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_valuation_model.gd"
 )
+const AdaptiveDirectionRefiner := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/adaptive_direction_refiner.gd"
+)
 
 const MATERIAL_PULL_RADIUS := 420.0
 const CONSUMABLE_PULL_RADIUS := 360.0
@@ -32,26 +35,30 @@ const BONUS_REWARD_TARGET_PULL_RADIUS := 600.0
 const RANGED_SOURCE_PULL_RADIUS := 700.0
 const CONTACT_COMBAT_PULL_RADIUS := 420.0
 const SIMILAR_DIRECTION_DOT := 0.97
+const BASELINE_DIRECTION_COUNT := 8
 
 var _exposure_model: Reference = BattlefieldExposureModel.new()
 var _engagement_model: Reference = WeaponEngagementModel.new()
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _opportunity_valuation: Reference = OpportunityValuationModel.new()
+var _direction_refiner: Reference = AdaptiveDirectionRefiner.new()
 
 
-func plan(observation: Dictionary, context: Dictionary, detail_budget: Dictionary) -> Dictionary:
+func plan(
+	observation: Dictionary,
+	context: Dictionary,
+	compute_budget: Dictionary,
+	compute_budget_policy: Reference
+) -> Dictionary:
 	var scale: Dictionary = _spatial_scale(observation)
 	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var map_extent: Dictionary = _map_extent(observation)
 	var sampling_radius: float = min(
 		map_extent.radius, scale.command_speed * timing.maximum_navigation_horizon_seconds
 	)
-	var directions := _candidate_directions(
-		observation,
-		int(detail_budget.navigation_base_direction_count),
-		scale.local_prediction_radius
-	)
+	var baseline_directions := _uniform_directions(BASELINE_DIRECTION_COUNT)
+	var target_directions := _target_directions(observation, scale.local_prediction_radius)
 	var origin := _evaluate_position(
 		observation,
 		context,
@@ -61,28 +68,70 @@ func plan(observation: Dictionary, context: Dictionary, detail_budget: Dictionar
 		scale.navigation_distance
 	)
 	var best := origin
-	var evaluated_position_count := 1
-	for direction in directions:
-		var position: Vector2 = direction * sampling_radius
-		if not _inside_domain(position, map_extent):
-			position = _clip_to_domain(position, map_extent)
-		if position.length() <= scale.control_distance:
+	var position_evaluation_count := 1
+	var evaluated_directions := []
+	var direction_scores := []
+	var budgeted_position_evaluation_count := 0
+	for direction in baseline_directions:
+		var result := _evaluate_direction(
+			observation, context, direction, sampling_radius, map_extent, scale, timing
+		)
+		if result.empty():
 			continue
-		var forecast_seconds := min(
-			timing.maximum_navigation_horizon_seconds,
-			position.length() / max(1.0, scale.command_speed)
+		position_evaluation_count += 1
+		evaluated_directions.push_back(direction)
+		direction_scores.push_back({"movement": direction, "score": result.value})
+		if result.value > best.value:
+			best = result
+
+	for target_direction in target_directions:
+		var direction: Vector2 = target_direction.direction
+		if _has_similar_direction(evaluated_directions, direction):
+			continue
+		if not compute_budget_policy.can_start_budgeted_work(
+			compute_budget, compute_budget_policy.WORK_NAVIGATION_EVALUATION
+		):
+			break
+		var work_started_usec := OS.get_ticks_usec()
+		var result := _evaluate_direction(
+			observation, context, direction, sampling_radius, map_extent, scale, timing
 		)
-		var candidate := _evaluate_position(
-			observation,
-			context,
-			position,
-			forecast_seconds,
-			scale.local_prediction_radius,
-			scale.navigation_distance
+		compute_budget_policy.observe_work_duration(
+			compute_budget_policy.WORK_NAVIGATION_EVALUATION,
+			float(OS.get_ticks_usec() - work_started_usec)
 		)
-		evaluated_position_count += 1
-		if candidate.value > best.value:
-			best = candidate
+		if result.empty():
+			continue
+		position_evaluation_count += 1
+		budgeted_position_evaluation_count += 1
+		evaluated_directions.push_back(direction)
+		direction_scores.push_back({"movement": direction, "score": result.value})
+		if result.value > best.value:
+			best = result
+
+	while compute_budget_policy.can_start_budgeted_work(
+		compute_budget, compute_budget_policy.WORK_NAVIGATION_EVALUATION
+	):
+		var direction: Vector2 = _direction_refiner.propose_direction(direction_scores)
+		if direction == Vector2.ZERO:
+			break
+		var work_started_usec := OS.get_ticks_usec()
+		var result := _evaluate_direction(
+			observation, context, direction, sampling_radius, map_extent, scale, timing
+		)
+		compute_budget_policy.observe_work_duration(
+			compute_budget_policy.WORK_NAVIGATION_EVALUATION,
+			float(OS.get_ticks_usec() - work_started_usec)
+		)
+		if result.empty():
+			direction_scores.push_back({"movement": direction, "score": -INF})
+			continue
+		position_evaluation_count += 1
+		budgeted_position_evaluation_count += 1
+		evaluated_directions.push_back(direction)
+		direction_scores.push_back({"movement": direction, "score": result.value})
+		if result.value > best.value:
+			best = result
 
 	var value_gain: float = best.value - origin.value
 	var movement_preference := Vector2.ZERO
@@ -90,7 +139,10 @@ func plan(observation: Dictionary, context: Dictionary, detail_budget: Dictionar
 		movement_preference = best.position.normalized() * clamp(value_gain, 0.0, 1.0)
 	return {
 		"movement_preference": movement_preference,
-		"evaluated_position_count": evaluated_position_count,
+		"position_evaluation_count": position_evaluation_count,
+		"baseline_position_evaluation_count":
+		position_evaluation_count - budgeted_position_evaluation_count,
+		"budgeted_position_evaluation_count": budgeted_position_evaluation_count,
 		"origin_value": origin.value,
 		"selected_value": best.value,
 		"value_gain": value_gain,
@@ -102,6 +154,33 @@ func plan(observation: Dictionary, context: Dictionary, detail_budget: Dictionar
 		"current_engagement_estimate": scale.current_engagement_estimate,
 		"source_scope": "visible_and_remembered",
 	}
+
+
+func _evaluate_direction(
+	observation: Dictionary,
+	context: Dictionary,
+	direction: Vector2,
+	sampling_radius: float,
+	map_extent: Dictionary,
+	scale: Dictionary,
+	timing: Dictionary
+) -> Dictionary:
+	var position: Vector2 = direction * sampling_radius
+	if not _inside_domain(position, map_extent):
+		position = _clip_to_domain(position, map_extent)
+	if position.length() <= scale.control_distance:
+		return {}
+	var forecast_seconds := min(
+		timing.maximum_navigation_horizon_seconds, position.length() / max(1.0, scale.command_speed)
+	)
+	return _evaluate_position(
+		observation,
+		context,
+		position,
+		forecast_seconds,
+		scale.local_prediction_radius,
+		scale.navigation_distance
+	)
 
 
 func _evaluate_position(
@@ -214,34 +293,50 @@ func _strategic_value(
 	return _saturate_signed(value)
 
 
-func _candidate_directions(
-	observation: Dictionary, base_direction_count: int, local_prediction_radius: float
-) -> Array:
+func _target_directions(observation: Dictionary, local_prediction_radius: float) -> Array:
 	var result := []
-	for direction_index in base_direction_count:
-		result.push_back(
-			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(base_direction_count))
-		)
 	for entity in observation.get("remembered_entities", []):
 		if entity.visible and entity.relative_position.length() <= local_prediction_radius:
 			continue
 		if entity.kind in ["material", "consumable", "tree"]:
-			_append_direction(result, entity.relative_position)
+			_insert_target_direction(result, entity.relative_position)
 	for track in observation.enemy_tracks:
 		var roles: Dictionary = track.behavior_profile.strategic_roles
 		if roles.enemy_producer or roles.bonus_reward_target or roles.ranged_pressure_source:
-			_append_direction(result, track.relative_position)
+			_insert_target_direction(result, track.relative_position)
 	return result
 
 
-func _append_direction(directions: Array, displacement: Vector2) -> void:
+func _uniform_directions(direction_count: int) -> Array:
+	var result := []
+	for direction_index in direction_count:
+		var direction := Vector2.RIGHT.rotated(
+			TAU * float(direction_index) / float(direction_count)
+		)
+		result.push_back(direction)
+	return result
+
+
+func _insert_target_direction(directions: Array, displacement: Vector2) -> void:
 	if displacement.length_squared() <= 0.0:
 		return
 	var candidate := displacement.normalized()
+	for entry in directions:
+		if entry.direction.dot(candidate) > SIMILAR_DIRECTION_DOT:
+			return
+	var candidate_entry := {"direction": candidate, "distance": displacement.length()}
+	for index in directions.size():
+		if candidate_entry.distance < directions[index].distance:
+			directions.insert(index, candidate_entry)
+			return
+	directions.push_back(candidate_entry)
+
+
+func _has_similar_direction(directions: Array, candidate: Vector2) -> bool:
 	for direction in directions:
 		if direction.dot(candidate) > SIMILAR_DIRECTION_DOT:
-			return
-	directions.push_back(candidate)
+			return true
+	return false
 
 
 func _spatial_scale(observation: Dictionary) -> Dictionary:
