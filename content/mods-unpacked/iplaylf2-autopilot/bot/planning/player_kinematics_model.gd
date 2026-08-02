@@ -45,6 +45,4 @@ func _command_velocity(observation: Dictionary, movement: Vector2) -> Vector2:
 
 
 func _observed_disturbance(observation: Dictionary) -> Vector2:
-	var current_input: Vector2 = observation.player_state.movement.input_vector
-	var current_command := _command_velocity(observation, current_input)
-	return observation.player_state.movement.velocity - current_command
+	return observation.player_state.movement.knockback_velocity

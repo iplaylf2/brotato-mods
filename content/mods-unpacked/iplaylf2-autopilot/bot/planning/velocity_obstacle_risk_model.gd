@@ -27,11 +27,7 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 	var minimum_ttc := INF
 
 	for track in observation.enemy_tracks:
-		var combined_radius: float = (
-			scale.player_radius
-			+ track.last_measurement.visual_radius
-			+ track.uncertainty_radius
-		)
+		var combined_radius: float = scale.player_radius + track.last_measurement.visual_radius
 		var ttc := _time_to_collision(
 			track.relative_position, track.estimated_velocity - player_velocity, combined_radius
 		)

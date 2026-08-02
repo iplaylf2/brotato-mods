@@ -4,7 +4,6 @@ extends Reference
 # choices replayable while still breaking stable ties.
 
 const NEAR_OPTIMAL_SPREAD_BAND := 0.06
-const MINIMUM_SCORE_BAND := 0.5
 
 
 func select(scored_actions: Array, context: Dictionary, rng_seed: int) -> Dictionary:
@@ -15,7 +14,7 @@ func select(scored_actions: Array, context: Dictionary, rng_seed: int) -> Dictio
 	var worst_score: float = scored_actions.back().score
 	# A value shared by every action must not alter selection temperature or the
 	# near-optimal set. Use the action score spread, which is translation invariant.
-	var score_band := max(MINIMUM_SCORE_BAND, (best_score - worst_score) * NEAR_OPTIMAL_SPREAD_BAND)
+	var score_band := (best_score - worst_score) * NEAR_OPTIMAL_SPREAD_BAND
 	var near_optimal := []
 	for action in scored_actions:
 		if action.score >= best_score - score_band:

@@ -5,7 +5,7 @@ extends Reference
 # diagnostics. Files rotate before a long run can create one unbounded artifact.
 
 const MOD_ID := "iplaylf2-autopilot"
-const SAMPLE_DIRECTORY := "user://logs/mods/iplaylf2-autopilot/decision-samples"
+const SAMPLE_DIRECTORY := "user://logs/mods/iplaylf2-autopilot"
 const SAMPLE_INTERVAL_SECONDS := 0.5
 const MAX_FILE_BYTES := 32 * 1024 * 1024
 const FLUSH_EVERY_SAMPLES := 4

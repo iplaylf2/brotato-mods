@@ -9,8 +9,8 @@ Autopilot 是一个实验性 Brotato mod。它只使用玩家权限边界内的�
 - 目标环境为 Brotato `1.1.15.4` 和 Godot Mod Loader `6.3.0`；以 `manifest.json` 中的声明为准。
 - 当前源码已通过仓库的可移植静态检查和 Godot 3.7.dev 脚本编译检查。此前的开发构建已在
   目标环境的单玩家模式中成功加载，决策采样确认观察、规划和移动控制主链路实际运行。
-- 当前源码对战斗启动、材料与消耗品记忆和波次结束清理的修复仍需在目标环境复测；多人模式及不同
-  设备上的性能也尚未验证，因此当前版本仍是开发版。
+- 当前源码在上述运行构建之后继续修改了战斗生命周期、拾取记忆和运动规划；这些改动仍需在目标环境
+  复测。多人模式及不同设备上的性能也尚未验证，因此当前版本仍是开发版。
 - 上述运行验证只证明主链路可以工作，不表示启发式模型和参数已经完成校准。
 
 ## 安装与启用
@@ -58,16 +58,16 @@ var plan: Dictionary = main.autopilot_controller.get_current_plan(player_index)
 
 控制器会为每位玩家记录第一次决策，此后每 5 次重规划记录一次，并额外记录规划失败；按名义
 `0.1` 秒控制周期计算，常规采样间隔约为 `0.5` 秒。样本写入
-`user://logs/mods/iplaylf2-autopilot/decision-samples/` 下的 JSON Lines 文件，单个文件达到
+`user://logs/mods/iplaylf2-autopilot/` 下的 JSON Lines 文件，单个文件达到
 32 MiB 后自动分片。Windows 上 `user://` 对应 `%APPDATA%/Brotato/`，因此完整目录通常是
-`%APPDATA%/Brotato/logs/mods/iplaylf2-autopilot/decision-samples/`；Mod Loader 日志也会打印
+`%APPDATA%/Brotato/logs/mods/iplaylf2-autopilot/`；Mod Loader 日志也会打印
 当前文件的 `user://` 路径和绝对路径。游戏暂停时观察与规划停止，不会新增决策样本；恢复后继续写入
 同一会话文件。
 
 采样不包含两条样本之间的全部决策，不能作为逐帧回放；字段约定、参数证据等级和正确复盘方法见
 [决策采样与模型校准](docs/model-calibration.md)。
 
-## 维护入口
+## 维护文档
 
 文档按权威范围分工：
 

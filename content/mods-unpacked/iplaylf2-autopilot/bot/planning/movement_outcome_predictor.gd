@@ -134,7 +134,8 @@ func _predict_action_outcomes(
 func _material_acquisition_value(entities: Array, samples: Array, pickup: Dictionary) -> float:
 	var value := 0.0
 	for entity in entities:
-		var closest_distance: float = entity.relative_position.length()
+		var initial_distance: float = entity.relative_position.length()
+		var closest_distance := initial_distance
 		for sample in samples:
 			closest_distance = min(
 				closest_distance, (entity.relative_position - sample.displacement).length()
@@ -144,7 +145,13 @@ func _material_acquisition_value(entities: Array, samples: Array, pickup: Dictio
 		elif closest_distance <= pickup.attraction_radius:
 			value += 0.7
 		else:
-			value += max(0.0, 1.0 - closest_distance / 500.0) * 0.15
+			# The local predictor owns visible pickups outside attraction range as
+			# normalized progress toward the attraction boundary.
+			var approach_distance := max(1.0, initial_distance - pickup.attraction_radius)
+			value += (
+				clamp((initial_distance - closest_distance) / approach_distance, 0.0, 1.0)
+				* 0.7
+			)
 	return value
 
 

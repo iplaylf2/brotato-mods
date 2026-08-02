@@ -7,8 +7,8 @@
 ## 采样产物
 
 Autopilot 每次启用战斗控制时创建一个采样会话，将 JSON Lines 写入
-`user://logs/mods/iplaylf2-autopilot/decision-samples/`。Mod Loader 日志会报告当前文件的虚拟路径和
-绝对路径；其中 `logs` 表示诊断产物，`mods/iplaylf2-autopilot` 是完整 mod ID 拥有的目录边界。
+`user://logs/mods/iplaylf2-autopilot/`。Mod Loader 日志会报告当前文件的虚拟路径和绝对路径；该目录以
+完整 mod ID 作为诊断产物的归属边界。当前只有决策采样，无需增加采样类型子目录。
 控制器启动后也可以调用：
 
 ```gdscript
@@ -100,7 +100,7 @@ control_distance              = v × Tc
 enemy_pressure_clearance      = max(3r, v × Tdefault)
 projectile_pressure_clearance = max(2r, v × Tmin)
 encounter_margin              = v × Tdefault
-edge_margin                   = r + control_distance
+edge_margin                   = r + v × Tdefault
 ally_body_margin              = r + control_distance
 roaming_distance              = v × Tnav
 TTC e-fold time               = local forecast maximum
@@ -137,8 +137,8 @@ TTC cutoff                    = navigation forecast maximum
    破坏条件时比较生命、材料、里程计位置和可见威胁变化；其余结果标记为未知。
 3. 分开检查预测误差与决策交换率。前者校准运动、碰撞和攻击公式，后者校准效用权重；不要用调权重掩盖
    系统性的预测偏差。
-4. 检查最多五个高分候选的分数跨度、近优集合、选择概率和所选排名。若大量决策由最小分数带主导，应先
-   检查单位与归一化，而不是继续增加随机性。
+4. 检查最多五个高分候选的分数跨度、近优集合、选择概率和所选排名。若明显次优的动作频繁进入近优
+   集合，应先检查单位、归一化和近优带比例，而不是增加随机性。
 5. 按“性能反馈的可解释范围”检查帧耗时样本、预算利用率、单位搜索成本和下一次搜索强度；实体
    工作量代理负责解释成本变化。
 

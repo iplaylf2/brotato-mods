@@ -83,7 +83,11 @@ func _candidate_directions(direction_count: int, navigation_graph: Dictionary) -
 
 func _forecast_window(observation: Dictionary) -> float:
 	var nearest_encounter := INF
-	var player_velocity: Vector2 = observation.player_state.movement.velocity
+	var player_velocity: Vector2 = _player_kinematics.predict_average_velocity(
+		observation,
+		observation.player_state.movement.input_vector,
+		MovementPlanningTiming.LOCAL_FORECAST_MIN_SECONDS
+	)
 	var scale: Dictionary = _movement_scale.derive(observation)
 	for track in observation.enemy_tracks:
 		var relative_velocity: Vector2 = track.estimated_velocity - player_velocity

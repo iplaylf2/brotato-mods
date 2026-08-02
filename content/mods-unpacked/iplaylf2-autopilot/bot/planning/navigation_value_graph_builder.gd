@@ -120,9 +120,10 @@ func _sample_node(
 		(forecast.environmental_pressure - current.environmental_pressure)
 		/ forecast_seconds
 	)
-	var strategic_value := _strategic_value(
+	var strategic_values := _strategic_values(
 		observation, context, position, forecast_seconds, local_prediction_radius
 	)
+	var strategic_value: float = strategic_values.residual + strategic_values.unowned_local
 	var healing_value: float = forecast.healing_support * context.navigation_policy.healing_support
 	var engagement_estimate: Dictionary = _engagement_model.estimate_at_position(
 		observation,
@@ -139,14 +140,14 @@ func _sample_node(
 		+ 0.6 * forecast.environmental_pressure
 		+ max(0.0, eulerian_pressure_derivative) * context.navigation_policy.rising_pressure
 	)
-	# Local outcomes own the current forecast interval. The graph contributes only
-	# residual terminal value beyond it.
+	# Local outcomes own the current forecast interval. Navigation retains only
+	# goals the local predictor cannot observe plus residual value beyond the interval.
 	var terminal_horizon_weight := clamp(
 		(radius - local_prediction_radius) / max(1.0, spatial_resolution), 0.0, 1.0
 	)
 	var terminal_reward: float = (
-		(strategic_value + healing_value + engagement_utility)
-		* terminal_horizon_weight
+		strategic_values.unowned_local
+		+ (strategic_values.residual + healing_value + engagement_utility) * terminal_horizon_weight
 	)
 	return {
 		"position": position,
@@ -157,6 +158,7 @@ func _sample_node(
 		"forecast_environmental_pressure": forecast.environmental_pressure,
 		"eulerian_pressure_derivative": eulerian_pressure_derivative,
 		"strategic_value": strategic_value,
+		"unowned_local_strategic_value": strategic_values.unowned_local,
 		"healing_value": healing_value,
 		"engagement_estimate": engagement_estimate,
 		"engagement_utility": engagement_utility,
@@ -169,30 +171,35 @@ func _sample_node(
 	}
 
 
-func _strategic_value(
+func _strategic_values(
 	observation: Dictionary,
 	context: Dictionary,
 	position: Vector2,
 	time: float,
 	local_prediction_radius: float
-) -> float:
-	var value := 0.0
+) -> Dictionary:
+	var residual_value := 0.0
+	var unowned_local_value := 0.0
 	for remembered_entity in observation.get("remembered_entities", []):
-		# Static goals reachable by the local predictor belong to that predictor.
-		# The graph cannot assume they survive collection or destruction.
-		if remembered_entity.relative_position.length() <= local_prediction_radius:
+		# The local predictor owns visible, reachable static goals. Navigation owns
+		# invisible memories because they are absent from local action outcomes.
+		if (
+			remembered_entity.visible
+			and remembered_entity.relative_position.length() <= local_prediction_radius
+		):
 			continue
 		var confidence: float = remembered_entity.existence_confidence
 		var distance: float = (remembered_entity.relative_position - position).length()
+		var contribution := 0.0
 		match remembered_entity.kind:
 			"material":
-				value += (
+				contribution = (
 					_radial_pull(distance, 420.0)
 					* confidence
 					* context.navigation_policy.material
 				)
 			"consumable":
-				value += (
+				contribution = (
 					_radial_pull(distance, 360.0)
 					* confidence
 					* (
@@ -201,41 +208,51 @@ func _strategic_value(
 					)
 				)
 			"tree":
-				value += (
+				contribution = (
 					_radial_pull(distance, 500.0)
 					* confidence
 					* context.navigation_policy.tree
 				)
+		if (
+			not remembered_entity.visible
+			and remembered_entity.relative_position.length() <= local_prediction_radius
+		):
+			unowned_local_value += contribution
+		else:
+			residual_value += contribution
 
 	for track in observation.enemy_tracks:
 		var predicted_position: Vector2 = track.relative_position + track.estimated_velocity * time
 		var distance: float = (predicted_position - position).length()
 		var roles: Dictionary = track.behavior_profile.strategic_roles
 		if roles.enemy_producer:
-			value += (
+			residual_value += (
 				_radial_pull(distance, 600.0)
 				* track.recency_confidence
 				* context.navigation_policy.enemy_producer
 			)
 		if roles.loot_reward_target:
-			value += (
+			residual_value += (
 				_radial_pull(distance, 600.0)
 				* track.recency_confidence
 				* context.navigation_policy.loot_target
 			)
 		if roles.ranged_pressure_source:
-			value += (
+			residual_value += (
 				_radial_pull(distance, 700.0)
 				* track.recency_confidence
 				* context.navigation_policy.ranged_source
 			)
 		if context.navigation_policy.contact_combat > 0.0:
-			value += (
+			residual_value += (
 				_radial_pull(distance, 420.0)
 				* track.recency_confidence
 				* context.navigation_policy.contact_combat
 			)
-	return sign(value) * (1.0 - exp(-abs(value)))
+	return {
+		"residual": _saturate_signed(residual_value),
+		"unowned_local": _saturate_signed(unowned_local_value),
+	}
 
 
 func _navigation_guidance(nodes: Array) -> Vector2:
@@ -279,6 +296,7 @@ func _solve_route_values(
 					(
 						0.5
 						* (parent.traversal_cost + node.traversal_cost)
+						* context.navigation_policy.environmental_exposure_cost
 						* edge_distance
 						/ near_node_spacing
 					)
@@ -290,7 +308,10 @@ func _solve_route_values(
 					best_parent = parent_index
 			node.path_cost = best_cost
 			node.parent_index = best_parent
-			var safety_gain := max(0.0, nodes[0].traversal_cost - node.traversal_cost)
+			var safety_gain: float = (
+				max(0.0, nodes[0].traversal_cost - node.traversal_cost)
+				* context.navigation_policy.environmental_exposure_cost
+			)
 			node.route_value = node.terminal_reward + safety_gain - best_cost
 
 
@@ -446,3 +467,7 @@ func _inside_domain(position: Vector2, domain: Dictionary) -> bool:
 func _radial_pull(distance: float, radius: float) -> float:
 	var proximity := clamp((radius - distance) / radius, 0.0, 1.0)
 	return proximity * proximity
+
+
+func _saturate_signed(value: float) -> float:
+	return sign(value) * (1.0 - exp(-abs(value)))

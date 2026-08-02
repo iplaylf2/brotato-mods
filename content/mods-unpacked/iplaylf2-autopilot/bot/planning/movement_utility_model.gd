@@ -73,17 +73,17 @@ func build_context(observation: Dictionary) -> Dictionary:
 		0.0,
 		1.0
 	)
+	var environmental_exposure_cost: float = (
+		lerp(20.0, 5.0 - 2.0 * contact_combat_appetite, risk_tolerance)
+		* lerp(1.0, 0.65, wave_progress)
+	)
 
 	return {
 		"objective_weights":
 		{
 			"survival":
 			{
-				"integrated_environmental_exposure":
-				(
-					-lerp(20.0, 5.0 - 2.0 * contact_combat_appetite, risk_tolerance)
-					* lerp(1.0, 0.65, wave_progress)
-				),
+				"integrated_environmental_exposure": -environmental_exposure_cost,
 				"collision_risk":
 				(
 					-(160.0 if fatal_on_unprotected_hit else lerp(70.0, 28.0, risk_tolerance))
@@ -176,6 +176,9 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"ranged_source":
 			0.5 * wave_time_remaining_ratio * ranged_source_multiplier * ranged_engagement_appetite,
 			"rising_pressure": 0.22,
+			# Navigation shares local scoring's state-dependent risk price, normalized
+			# to the low-health endpoint.
+			"environmental_exposure_cost": environmental_exposure_cost / 20.0,
 			"travel_cost": 0.08,
 			"contact_combat": 0.65 * contact_combat_appetite,
 		},

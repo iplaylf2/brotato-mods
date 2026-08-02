@@ -41,7 +41,8 @@ func derive(observation: Dictionary) -> Dictionary:
 		"enemy_pressure_distance": max(player_radius * 3.0, default_reaction_distance),
 		"projectile_pressure_distance": max(player_radius * 2.0, minimum_reaction_distance),
 		"encounter_margin": default_reaction_distance,
-		"edge_margin": player_radius + control_distance,
+		# Reserve one default-forecast movement distance for turning near a boundary.
+		"edge_margin": player_radius + default_reaction_distance,
 		"ally_body_margin": player_radius + control_distance,
 		"roaming_distance":
 		max(1.0, command_speed * MovementPlanningTiming.NAVIGATION_FORECAST_MAX_SECONDS),
