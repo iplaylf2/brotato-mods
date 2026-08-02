@@ -23,13 +23,14 @@ mod，目录名必须与 `manifest.json` 中的 `{namespace}-{name}` 一致，�
 
 ## 开发环境
 
-Brotato 1.1.15.4 基于 Godot 3.7.dev 构建。编辑恢复工程、进行游戏内验证和打包 mod 需要：
+Brotato 1.1.15.4 基于 Godot 3.7.dev 构建。编辑恢复工程、导入自定义资源和进行游戏内验证需要：
 
 - 与目标游戏构建一致的 Godot 3.7.dev，包含项目使用的 Steam API
 - 使用 [GDRETools](https://github.com/GDRETools/gdsdecomp) 恢复的 Brotato Godot 工程
 - [Godot Mod Tool 的 `3.x` 分支](https://github.com/GodotModding/godot-mod-tool/tree/3.x)
 
-运行仓库检查还需要 [uv](https://docs.astral.sh/uv/getting-started/installation/)。脚本编译检查不运行 Steam 功能，可使用
+运行仓库的构建、检查和格式化任务还需要
+[uv](https://docs.astral.sh/uv/getting-started/installation/)。脚本编译检查不运行 Steam 功能，可使用
 [Godot 3.7-dev1 官方 headless 构建](https://godotengine.org/download/archive/3.7-dev1/)。
 
 恢复工程包含 Brotato 的版权代码与资源，只能作为本地开发材料，不能纳入仓库内容或 mod 发行包。
@@ -37,9 +38,10 @@ Brotato 1.1.15.4 基于 Godot 3.7.dev 构建。编辑恢复工程、进行游戏
 
 ### 本地配置
 
-完整检查需要 Godot 3.7.dev 可执行文件和目标版本的恢复工程。仓库不规定这些本地依赖的
-存放位置。将 `.env.example` 复制为 Git 已忽略的 `.env`，设置 `GODOT_EXECUTABLE` 和
-`BROTATO_PROJECT`。任务会读取 `.env`，但不会覆盖进程环境中已有的同名变量。
+仓库不规定本地工具、恢复工程和构建产物的目录布局。将 `.env.example` 复制为 Git 已忽略的 `.env`，
+再按任务设置变量：`build` 需要 `BROTATO_MOD_BUILD_DIR`；完整 `lint` 需要 `GODOT_EXECUTABLE` 和
+`BROTATO_PROJECT`。任务会读取 `.env`，但不会覆盖进程环境中已有的同名变量。相对路径以仓库根目录
+为基准解析。
 
 ### 编辑与打包
 
@@ -50,8 +52,19 @@ content/mods-unpacked/iplaylf2-autopilot/
   -> <recovered-project>/mods-unpacked/iplaylf2-autopilot/
 ```
 
-然后用与目标游戏一致的 Godot 3.7.dev 打开恢复工程。使用 Mod Tool 维护 manifest 并导出 ZIP；这样
-自定义图片、字体等资源对应的 Godot 3 `.import` 产物也会被正确收集。
+然后用与目标游戏一致的 Godot 3.7.dev 打开恢复工程，并使用 Mod Tool 维护 manifest。若 mod 包含自定义
+图片、字体等导入资源，保留资源旁的 `.import` 元数据，并将元数据引用的产物从恢复工程的 `.import/`
+复制到仓库的 `content/.import/`。构建任务会在引用的导入产物缺失时失败。
+
+设置 `BROTATO_MOD_BUILD_DIR` 后，从仓库根目录构建指定 mod：
+
+```bash
+uv run --locked tools/tasks.py build iplaylf2-autopilot
+```
+
+产物位于 `$BROTATO_MOD_BUILD_DIR/<namespace>-<name>.zip`。构建任务只收集指定 mod 及其 `.import`
+元数据引用的导入产物；新 ZIP 完成后才会替换同名旧文件。输出目录必须位于 `content/` 之外，避免构建
+产物混入 mod 源码。未设置 `BROTATO_MOD_BUILD_DIR` 时任务会直接报错。
 
 ## 检查与格式化
 
@@ -78,7 +91,7 @@ uv run --locked tools/tasks.py lint
 Steam API，恢复工程初始化时可能输出 Steam 单例和无窗口环境的原游戏错误；验证器会另行报告
 无法编译的 mod 脚本，并以非零状态退出。
 
-如果不使用 `.env`，也可以在 PowerShell、cmd 或 POSIX shell 的进程环境中设置这两个变量。这些任务
+如果不使用 `.env`，也可以在 PowerShell、cmd 或 POSIX shell 的进程环境中设置相应变量。这些任务
 不依赖 `sh` 或 `make`。自动格式化受管理的源码：
 
 ```bash
