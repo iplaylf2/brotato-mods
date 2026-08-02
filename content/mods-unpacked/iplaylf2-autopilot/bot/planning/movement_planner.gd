@@ -28,10 +28,6 @@ const MovementScaleModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_scale_model.gd"
 )
 
-# Bump whenever a formula, parameter meaning, or logged planning
-# contract changes. Samples use it to keep incompatible calibration groups separate.
-const MODEL_REVISION := "2026-08-02.4"
-
 var _action_generator: Reference = MovementActionGenerator.new()
 var _search_budget_policy: Reference = SearchBudgetPolicy.new()
 var _outcome_predictor: Reference = MovementOutcomePredictor.new()
@@ -105,7 +101,6 @@ func _model_diagnostics(
 ) -> Dictionary:
 	var movement_scale: Dictionary = _movement_scale.derive(observation)
 	return {
-		"revision": MODEL_REVISION,
 		"timing":
 		{
 			"control_interval_seconds": MovementPlanningTiming.CONTROL_INTERVAL_SECONDS,

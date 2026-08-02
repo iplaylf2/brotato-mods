@@ -5,7 +5,6 @@ extends Reference
 # diagnostics. Files rotate before a long run can create one unbounded artifact.
 
 const MOD_ID := "iplaylf2-autopilot"
-const SCHEMA_VERSION := 2
 const LOG_DIRECTORY := "user://autopilot/decision-samples"
 const SAMPLE_INTERVAL_SECONDS := 0.5
 const MAX_FILE_BYTES := 32 * 1024 * 1024
@@ -24,7 +23,7 @@ var _active := false
 var _current_path := ""
 
 
-func start(player_count: int, control_interval_seconds: float, model_revision: String) -> void:
+func start(player_count: int, control_interval_seconds: float) -> void:
 	_player_count = player_count
 	_sample_every_decisions = max(
 		1, int(round(SAMPLE_INTERVAL_SECONDS / max(0.001, control_interval_seconds)))
@@ -46,7 +45,7 @@ func start(player_count: int, control_interval_seconds: float, model_revision: S
 			MOD_ID
 		)
 		return
-	_active = _open_part(model_revision, control_interval_seconds, false)
+	_active = _open_part(control_interval_seconds, false)
 	if _active:
 		ModLoaderLog.info("Writing Autopilot decision samples to %s." % _current_path, MOD_ID)
 
@@ -56,7 +55,6 @@ func record_decision(
 	observation: Dictionary,
 	plan: Dictionary,
 	previous_movement: Vector2,
-	model_revision: String,
 	control_interval_seconds: float
 ) -> void:
 	if not _active or player_index < 0 or player_index >= _player_count:
@@ -74,7 +72,6 @@ func record_decision(
 	_write_record(
 		{
 			"record_type": "decision_sample",
-			"schema_version": SCHEMA_VERSION,
 			"session_id": _session_id,
 			"player_index": player_index,
 			"decision_index": _decision_counts[player_index],
@@ -90,7 +87,7 @@ func record_decision(
 		_file.flush()
 		_samples_since_flush = 0
 	if _file.get_position() >= MAX_FILE_BYTES:
-		_rotate(model_revision, control_interval_seconds)
+		_rotate(control_interval_seconds)
 
 
 func close() -> void:
@@ -99,7 +96,6 @@ func close() -> void:
 	_write_record(
 		{
 			"record_type": "session_end",
-			"schema_version": SCHEMA_VERSION,
 			"session_id": _session_id,
 			"decision_counts": _decision_counts,
 			"sample_counts": _sample_counts,
@@ -124,11 +120,10 @@ func _compact_plan(plan: Dictionary) -> Dictionary:
 	return result
 
 
-func _rotate(model_revision: String, control_interval_seconds: float) -> void:
+func _rotate(control_interval_seconds: float) -> void:
 	_write_record(
 		{
 			"record_type": "part_end",
-			"schema_version": SCHEMA_VERSION,
 			"session_id": _session_id,
 			"part_index": _part_index,
 		}
@@ -137,10 +132,10 @@ func _rotate(model_revision: String, control_interval_seconds: float) -> void:
 	_file.close()
 	_file = null
 	_part_index += 1
-	_active = _open_part(model_revision, control_interval_seconds, true)
+	_active = _open_part(control_interval_seconds, true)
 
 
-func _open_part(model_revision: String, control_interval_seconds: float, continued: bool) -> bool:
+func _open_part(control_interval_seconds: float, continued: bool) -> bool:
 	_current_path = "%s/%s-part-%03d.jsonl" % [LOG_DIRECTORY, _session_id, _part_index]
 	_file = File.new()
 	var open_error := _file.open(_current_path, File.WRITE)
@@ -153,12 +148,10 @@ func _open_part(model_revision: String, control_interval_seconds: float, continu
 	_write_record(
 		{
 			"record_type": "session_start",
-			"schema_version": SCHEMA_VERSION,
 			"session_id": _session_id,
 			"part_index": _part_index,
 			"continued": continued,
 			"target_game_version": "1.1.15.4",
-			"model_revision": model_revision,
 			"player_count": _player_count,
 			"sampling":
 			{

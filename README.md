@@ -15,11 +15,11 @@ mod，目录名必须与 `manifest.json` 中的 `{namespace}-{name}` 一致，�
 ## Mods
 
 - [Autopilot](content/mods-unpacked/iplaylf2-autopilot/README.md) — 根据玩家可合法获得的信息规划并控制战斗
-  移动；其 README 统一提供安装、兼容性与维护文档入口。
+  移动；其 README 统一提供安装、目标环境与维护文档入口。
 
 修改原版行为前，先以目标游戏版本的恢复工程确认控制点。优先使用 Mod Loader script extension，
-避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。各 mod 的目标版本由其
-`manifest.json` 声明，README 负责解释兼容性和验证状态。
+避免复制整个原版方法，以减少与其他 mod 及后续游戏版本的冲突。各 mod 的目标环境由其
+`manifest.json` 声明，README 负责解释目标环境和验证状态。
 
 ## 开发环境
 

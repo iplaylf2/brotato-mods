@@ -46,9 +46,7 @@ func initialize(observation_service: Node, players: Array) -> void:
 		_current_plans.push_back({})
 		_previous_movements.push_back(Vector2.ZERO)
 		player._current_movement_behavior = actuator
-	_decision_telemetry.start(
-		players.size(), REPLAN_INTERVAL_SECONDS, MovementPlanner.MODEL_REVISION
-	)
+	_decision_telemetry.start(players.size(), REPLAN_INTERVAL_SECONDS)
 
 
 func _physics_process(delta: float) -> void:
@@ -117,7 +115,6 @@ func _replan_all_players() -> void:
 			observation,
 			plan,
 			_previous_movements[player_index],
-			MovementPlanner.MODEL_REVISION,
 			REPLAN_INTERVAL_SECONDS
 		)
 		var movement: Vector2 = plan.movement

@@ -4,7 +4,7 @@ Autopilot 是一个实验性 Brotato mod。它在玩家权限边界内评估环�
 再通过滚动规划选择战斗移动方向。唯一的控制输出是 `MovementBehavior.get_movement()`；瞄准、
 攻击、速度、碰撞、击退、动画和移动机制仍由原版系统负责。
 
-## 兼容性与验证状态
+## 目标环境与验证状态
 
 - 目标环境为 Brotato `1.1.15.4` 和 Godot Mod Loader `6.3.0`；以 `manifest.json` 中的声明为准。
 - 游戏内加载和行为验证尚未完成，因此当前版本应视为开发版。仓库静态检查只覆盖目录结构、
@@ -16,7 +16,7 @@ Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetail
 关闭。安装依赖后，在游戏中打开 `设置 → Mods → Autopilot`，启用 **Enable Autopilot**。
 
 设置会立即作用于当前战斗并保存到后续战斗。关闭后，Autopilot 会停止移动并恢复玩家原有的
-`MovementBehavior`。启用期间还会在本地写入决策采样文件，具体路径和分片策略见“诊断与采样”。
+`MovementBehavior`。启用期间还会在本地写入决策采样文件，具体路径、采样频率和分片策略见“诊断与采样”。
 
 ## 公平边界
 
