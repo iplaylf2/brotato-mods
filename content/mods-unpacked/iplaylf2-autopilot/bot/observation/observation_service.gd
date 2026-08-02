@@ -45,15 +45,15 @@ func _physics_process(delta: float) -> void:
 func get_observation(player_index: int) -> Dictionary:
 	if player_index < 0 or player_index >= _latest_observations.size():
 		return {}
-	var observation = _latest_observations[player_index]
-	if typeof(observation) != TYPE_DICTIONARY:
+	if typeof(_latest_observations[player_index]) != TYPE_DICTIONARY:
 		return {}
+	var observation: Dictionary = _latest_observations[player_index]
 	return observation.duplicate(true)
 
 
 func _capture_observations(delta: float) -> void:
 	for player_index in _players.size():
-		var player = _players[player_index]
+		var player: Node2D = _players[player_index]
 		if not is_instance_valid(player):
 			_latest_observations[player_index] = {}
 			continue
@@ -67,8 +67,8 @@ func _build_observation(player_index: int, player: Node2D, delta: float) -> Dict
 
 	var world_observation: Dictionary = _visible_world_observer.observe(player_index, player, delta)
 	var world_memory: Reference = _world_memories[player_index]
-	var party_state := _get_party_state(player_index)
-	var player_state := _player_state_observer.observe(player_index, player)
+	var party_state: Dictionary = _get_party_state(player_index)
+	var player_state: Dictionary = _player_state_observer.observe(player_index, player)
 	world_memory.update(
 		delta,
 		position_delta,
@@ -101,7 +101,7 @@ func _get_party_state(player_index: int) -> Dictionary:
 		if index == player_index:
 			continue
 		teammate_count += 1
-		var teammate = _players[index]
+		var teammate: Node2D = _players[index]
 		if is_instance_valid(teammate) and not teammate.dead:
 			living_teammate_count += 1
 			living_teammate_player_indices.push_back(index)
@@ -113,7 +113,7 @@ func _get_party_state(player_index: int) -> Dictionary:
 
 
 func _get_wave_state() -> Dictionary:
-	var timer = _main._wave_timer
+	var timer: Timer = _main._wave_timer
 	return {
 		"number": RunData.current_wave,
 		"seconds_remaining": timer.time_left,

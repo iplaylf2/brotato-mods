@@ -269,13 +269,13 @@ func _solve_route_values(
 			if node.ring_index != ring_index:
 				continue
 			var best_parent := -1
-			var best_cost := INF
+			var best_cost: float = INF
 			for parent_index in nodes.size():
 				var parent: Dictionary = nodes[parent_index]
 				if parent.ring_index != parent_ring:
 					continue
 				var edge_distance: float = parent.position.distance_to(node.position)
-				var edge_cost := (
+				var edge_cost: float = (
 					(
 						0.5
 						* (parent.traversal_cost + node.traversal_cost)
@@ -378,12 +378,12 @@ func _spatial_scale(observation: Dictionary) -> Dictionary:
 func _ring_direction_count(
 	radius: float, local_detail_radius: float, graph_angular_resolution_scale: float
 ) -> int:
-	var local_detail := clamp(local_detail_radius / max(1.0, radius), 0.0, 1.0)
-	var unscaled_count := lerp(
+	var local_detail: float = clamp(local_detail_radius / max(1.0, radius), 0.0, 1.0)
+	var unscaled_count: float = lerp(
 		float(MIN_RING_DIRECTION_COUNT), float(REFERENCE_LOCAL_RING_DIRECTION_COUNT), local_detail
 	)
-	return max(
-		MIN_RING_DIRECTION_COUNT, int(round(unscaled_count * graph_angular_resolution_scale))
+	return int(
+		max(MIN_RING_DIRECTION_COUNT, int(round(unscaled_count * graph_angular_resolution_scale)))
 	)
 
 

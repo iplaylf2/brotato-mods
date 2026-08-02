@@ -134,7 +134,7 @@ func _predict_action_outcomes(
 func _material_acquisition_value(entities: Array, samples: Array, pickup: Dictionary) -> float:
 	var value := 0.0
 	for entity in entities:
-		var closest_distance := entity.relative_position.length()
+		var closest_distance: float = entity.relative_position.length()
 		for sample in samples:
 			closest_distance = min(
 				closest_distance, (entity.relative_position - sample.displacement).length()
@@ -151,7 +151,7 @@ func _material_acquisition_value(entities: Array, samples: Array, pickup: Dictio
 func _recovery_approach_progress(observation: Dictionary, samples: Array) -> float:
 	var progress := 0.0
 	var pickup: Dictionary = observation.player_state.pickup
-	var missing_health_ratio := 1.0 - observation.player_state.health.ratio
+	var missing_health_ratio: float = 1.0 - observation.player_state.health.ratio
 	for consumable in observation.visible_world.consumables:
 		var recovery: float = _rule_projector.project_recovery(
 			observation.player_state.effect_rules,
@@ -182,15 +182,15 @@ func _recovery_approach_progress(observation: Dictionary, samples: Array) -> flo
 
 
 func _tree_attack_opportunity(observation: Dictionary, action: Dictionary) -> float:
-	var maximum_range := _usable_weapon_range(
+	var maximum_range: float = _usable_weapon_range(
 		observation.player_state.weapons, action.movement != Vector2.ZERO
 	)
 	if maximum_range <= 0.0:
 		return 0.0
 	var interaction := 0.0
 	for tree in observation.visible_world.trees:
-		var initial_distance := tree.relative_position.length()
-		var closest_distance := initial_distance
+		var initial_distance: float = tree.relative_position.length()
+		var closest_distance: float = initial_distance
 		for sample in action.samples:
 			closest_distance = min(
 				closest_distance, (tree.relative_position - sample.displacement).length()
@@ -223,7 +223,7 @@ func _target_approach_progress(tracks: Array, samples: Array, role: String) -> f
 func _ranged_source_engagement_progress(observation: Dictionary, action: Dictionary) -> float:
 	# Movement can prepare a later stationary attack, so this strategic screening
 	# estimate considers owned weapon reach even when movement suppresses attacks.
-	var maximum_range := _maximum_weapon_range(observation.player_state.weapons)
+	var maximum_range: float = _maximum_weapon_range(observation.player_state.weapons)
 	if maximum_range <= 0.0:
 		return 0.0
 	var final_sample: Dictionary = action.samples.back()
@@ -231,14 +231,14 @@ func _ranged_source_engagement_progress(observation: Dictionary, action: Diction
 	for track in observation.enemy_tracks:
 		if not track.behavior_profile.strategic_roles.ranged_pressure_source:
 			continue
-		var attack_range := maximum_range + track.last_measurement.visual_radius
+		var attack_range: float = maximum_range + track.last_measurement.visual_radius
 		var initial_distance: float = track.relative_position.length()
-		var initial_gap := max(0.0, initial_distance - attack_range)
+		var initial_gap: float = max(0.0, initial_distance - attack_range)
 		if initial_gap <= 0.0:
 			continue
-		var predicted_position := _predict_track_position(track, final_sample.time)
+		var predicted_position: Vector2 = _predict_track_position(track, final_sample.time)
 		var final_distance: float = (predicted_position - final_sample.displacement).length()
-		var final_gap := max(0.0, final_distance - attack_range)
+		var final_gap: float = max(0.0, final_distance - attack_range)
 		progress += (
 			clamp((initial_gap - final_gap) / initial_distance, -1.0, 1.0)
 			* track.recency_confidence
@@ -257,7 +257,7 @@ func _targets_in_weapon_range(observation: Dictionary, action: Dictionary) -> fl
 	var final_sample: Dictionary = action.samples.back()
 	var opportunity := 0.0
 	for track in observation.enemy_tracks:
-		var position := (
+		var position: Vector2 = (
 			_predict_track_position(track, final_sample.time)
 			- final_sample.displacement
 		)
@@ -297,11 +297,11 @@ func _movement_damage_exposure_reduction(observation: Dictionary, action: Dictio
 	var projected: Dictionary = _movement_state_projector.project_runtime_stats(
 		observation, action.movement != Vector2.ZERO
 	)
-	var current_damage_exposure := (
+	var current_damage_exposure: float = (
 		_armor_damage_multiplier(current.armor)
 		* (1.0 - current.dodge_chance)
 	)
-	var projected_damage_exposure := (
+	var projected_damage_exposure: float = (
 		_armor_damage_multiplier(projected.armor)
 		* (1.0 - projected.dodge_chance)
 	)

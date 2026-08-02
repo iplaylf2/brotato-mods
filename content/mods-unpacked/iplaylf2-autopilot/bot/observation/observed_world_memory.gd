@@ -52,13 +52,23 @@ func update(
 
 
 func get_localization_state() -> Dictionary:
-	var map_x = _get_map_x()
-	var map_y = _get_map_y()
+	var map_x_known: bool = _observed_edge_coordinates.left != null
+	var map_y_known: bool = _observed_edge_coordinates.top != null
+	var map_x: float = (
+		_odometry_position.x - float(_observed_edge_coordinates.left)
+		if map_x_known
+		else 0.0
+	)
+	var map_y: float = (
+		_odometry_position.y - float(_observed_edge_coordinates.top)
+		if map_y_known
+		else 0.0
+	)
 	return {
 		"odometry_position": _odometry_position,
-		"map_x": map_x,
-		"map_y": map_y,
-		"map_position": null if map_x == null or map_y == null else Vector2(map_x, map_y),
+		"map_x": map_x if map_x_known else null,
+		"map_y": map_y if map_y_known else null,
+		"map_position": Vector2(map_x, map_y) if map_x_known and map_y_known else null,
 		"map_bounds": _get_map_bounds(),
 	}
 
@@ -186,11 +196,11 @@ func _update_enemy_tracks(visible_enemies: Array) -> void:
 	var observed_track_ids := {}
 	var next_visible_source_track_ids := {}
 	for observation in visible_enemies:
-		var source = observation._source
-		var track_id = _visible_source_track_ids.get(source)
-		if track_id == null or not _tracks.has(track_id):
+		var source: Object = observation._source
+		var track_id: int = _visible_source_track_ids.get(source, -1)
+		if track_id < 0 or not _tracks.has(track_id):
 			track_id = _find_reacquisition(observation, observed_track_ids)
-		if track_id == null:
+		if track_id < 0:
 			track_id = _create_track()
 
 		_update_track(_tracks[track_id], observation)
@@ -221,10 +231,10 @@ func _update_remembered_entities(
 			else (memory_record.existence_confidence * exp(-disappearance_hazard * delta_seconds))
 		)
 	for observation in visible_entities:
-		var source = observation._source
+		var source: Object = observation._source
 		var source_id: int = source.get_instance_id()
-		var memory_record_id = _source_memory_record_ids.get(source_id)
-		if memory_record_id == null or _source_reused_for_new_entity(memory_record_id, observation):
+		var memory_record_id: int = _source_memory_record_ids.get(source_id, -1)
+		if memory_record_id < 0 or _source_reused_for_new_entity(memory_record_id, observation):
 			memory_record_id = _next_memory_record_id
 			_next_memory_record_id += 1
 			_source_memory_record_ids[source_id] = memory_record_id
@@ -254,7 +264,7 @@ func _source_reused_for_new_entity(memory_record_id: int, observation: Dictionar
 		memory_record.odometry_position
 		+ remembered_velocity * seconds_since_seen
 	)
-	var plausible_distance := (
+	var plausible_distance: float = (
 		ENTITY_MEMORY_REACQUISITION_MARGIN
 		+ remembered_velocity.length() * seconds_since_seen * 0.5
 		+ memory_record.observation.get("visual_radius", 0.0)
@@ -262,9 +272,9 @@ func _source_reused_for_new_entity(memory_record_id: int, observation: Dictionar
 	return plausible_position.distance_to(observed_position) > plausible_distance
 
 
-func _find_reacquisition(observation: Dictionary, observed_track_ids: Dictionary):
+func _find_reacquisition(observation: Dictionary, observed_track_ids: Dictionary) -> int:
 	var observed_odometry_position: Vector2 = _odometry_position + observation.relative_position
-	var best_track_id = null
+	var best_track_id := -1
 	var best_distance := 1.0e20
 	for track_id in _tracks:
 		if observed_track_ids.has(track_id):
@@ -312,7 +322,7 @@ func _update_track(track: Dictionary, observation: Dictionary) -> void:
 	track.last_observed_acceleration = observation.acceleration
 	track.motion_confidence = observation.motion_confidence
 	track.last_measurement = observation.features.duplicate(true)
-	var previous_evidence := track.evidence if track.has("evidence") else {}
+	var previous_evidence: Dictionary = track.evidence if track.has("evidence") else {}
 	track.evidence = _enemy_profiler.accumulate_evidence(previous_evidence, track.last_measurement)
 	track.behavior_profile = _enemy_profiler.build_profile(track.evidence)
 
@@ -338,22 +348,6 @@ func _expire_old_tracks() -> void:
 	for track_id in _tracks.keys():
 		if _elapsed_seconds - _tracks[track_id].last_seen_at_seconds > TRACK_MEMORY_SECONDS:
 			_tracks.erase(track_id)
-
-
-func _get_map_x():
-	return (
-		null
-		if _observed_edge_coordinates.left == null
-		else _odometry_position.x - _observed_edge_coordinates.left
-	)
-
-
-func _get_map_y():
-	return (
-		null
-		if _observed_edge_coordinates.top == null
-		else _odometry_position.y - _observed_edge_coordinates.top
-	)
 
 
 func _get_map_bounds() -> Dictionary:

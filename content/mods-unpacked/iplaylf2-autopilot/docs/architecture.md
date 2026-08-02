@@ -39,8 +39,8 @@ JSON Lines。它的责任终止于序列化和存储；计划生成与动作选�
 物理耗时与耗时偏差，再把帧预算上下文交给规划器。它的输入边界是引擎计时；动作与搜索参数的决策分别归属
 `MovementPlanner` 和 `SearchBudgetPolicy`。
 
-代码依赖保持单向：`control` 依赖 `planning`，`observation` 依赖 `knowledge`，规划层的输入边界是已移除场景节点的
-观察字典。`bot/observation/observation_service.gd` 是观察的公共读取入口。
+代码依赖保持单向：`control` 依赖 `planning`，`observation` 依赖 `knowledge`。规划层只接收已经移除
+场景节点的观察字典；`bot/observation/observation_service.gd` 是观察的公共读取入口。
 
 ## 观察契约
 
@@ -49,7 +49,7 @@ JSON Lines。它的责任终止于序列化和存储；计划生成与动作选�
 启用 Autopilot 且玩家生成后，可以从主场景读取某位玩家的最新观察：
 
 ```gdscript
-var observation = main.autopilot_observation_service.get_observation(player_index)
+var observation: Dictionary = main.autopilot_observation_service.get_observation(player_index)
 ```
 
 观察由九个顶层部分组成：
@@ -243,8 +243,7 @@ visible_world
 
 新增能力优先组合已有的事件、条件、状态变换和结果通道。只有共享模型缺少必要表达能力时才扩展正交轴，
 并使现有规则能够自然复用。目标版本的原版字段映射只是局部适配代码；本文只描述规则轴、预测语义和
-扩展条件；
-按内容核对的版本覆盖分别由两份原版机制参考与审计文档维护。
+扩展条件；按内容核对的版本覆盖分别由两份原版机制参考与审计文档维护。
 
 ### 友方与构筑物作用画像
 
@@ -396,9 +395,8 @@ visible_world
 按节点距离自适应，并最多外推 1.2 秒；这描述场如何变化，不表示角色承诺移动到该节点。各通道的正负
 关系受语义约束：友方火力只能抵消当前敌人接近和远程火力形成的环境暴露，不能抵消尚未生成的警告；
 投射物拦截只能抵消拦截时刻之后该弹的反事实弹道压力。
-任何减压都不能消除实体接触、地图边缘或队友阻塞，也不能超过当时对应敌压。
-因此，友方作用区不能产生无上限的正收益。治疗和治疗增益是独立的恢复机会效用，不会
-抹掉已经预测到的伤害压力。
+任何减压都不能消除实体接触、地图边缘或队友阻塞，也不能超过当时对应敌压，因此友方作用区不能产生
+无上限的正收益。治疗和治疗增益是独立的恢复机会效用，不会抹掉已经预测到的伤害压力。
 
 ### 动态效用
 
@@ -582,7 +580,7 @@ Graphs* (1959)](https://www.cs.yale.edu/homes/lans/readings/routing/dijkstra-rou
 Eikonal/Fast Marching 工作](https://pmc.ncbi.nlm.nih.gov/articles/PMC39986/)。完整 HJ reachability 可以
 给出更强安全集合，但其状态维度和实时求解成本不适合当前逐玩家、逐 0.1 秒规划预算。
 
-## 验证状态
+## 尚未完成的验证
 
 - 原始压力通道、合成暴露和动态权重尚未由实际伤害、无敌帧与游戏内动作回放完成校准。
 - 运动估计的平滑、限幅和衰减参数尚未完成游戏内校准。

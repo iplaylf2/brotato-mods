@@ -124,7 +124,7 @@ func _append_consumable_rules(rules: Array, effects: Dictionary, player_index: i
 	for entry in effects[Keys.decaying_stats_on_consumable_hash]:
 		if entry.size() < 3:
 			continue
-		var stat_name := _stat_vocabulary.get_stat_name(entry[0])
+		var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
 		if stat_name.empty():
 			continue
 		rules.push_back(
@@ -149,12 +149,14 @@ func _append_consumable_explosion_rules(rules: Array, effects: Array, player_ind
 	for effect in effects:
 		if effect == null or effect.stats == null:
 			continue
-		var damage := (
+		var damage: float = (
 			WeaponService.get_explosion_damage(effect.stats, player_index)
 			+ effect.get_additional_scaling_damage(player_index)
 		)
-		var size_bonus := Utils.get_stat(Keys.explosion_size_hash, player_index) / 100.0
-		var radius := max(1.0, effect.stats.max_range * effect.scale * max(0.1, 1.0 + size_bonus))
+		var size_bonus: float = Utils.get_stat(Keys.explosion_size_hash, player_index) / 100.0
+		var radius: float = max(
+			1.0, effect.stats.max_range * effect.scale * max(0.1, 1.0 + size_bonus)
+		)
 		rules.push_back(
 			{
 				"event": "consumable_pickup",
@@ -178,7 +180,7 @@ func _append_trait_stat_rules(rules: Array, entries: Array, trait: String) -> vo
 	for entry in entries:
 		if entry.size() < 3:
 			continue
-		var stat_name := _stat_vocabulary.get_stat_name(entry[0])
+		var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
 		if stat_name.empty():
 			continue
 		rules.push_back(
@@ -214,8 +216,13 @@ func _append_consumable_recovery_rule(rules: Array, recovery_offset: float) -> v
 
 
 func _stat_damage_value(entry: Array, player_index: int) -> float:
-	var base_damage := floor(max(1.0, entry[1] / 100.0 * Utils.get_stat(entry[0], player_index)))
-	var percent_damage := 1.0 + Utils.get_stat(Keys.stat_percent_damage_hash, player_index) / 100.0
+	var base_damage: float = floor(
+		max(1.0, entry[1] / 100.0 * Utils.get_stat(entry[0], player_index))
+	)
+	var percent_damage: float = (
+		1.0
+		+ Utils.get_stat(Keys.stat_percent_damage_hash, player_index) / 100.0
+	)
 	return round(base_damage * percent_damage)
 
 
@@ -241,7 +248,7 @@ func _enemy_delivery(anchor_on_event_entity: bool, radius: float, capacity: floa
 func _append_consumable_stat_rule(rules: Array, entry: Array, duration_seconds: float) -> void:
 	if entry.size() < 2:
 		return
-	var stat_name := _stat_vocabulary.get_stat_name(entry[0])
+	var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
 	if stat_name.empty():
 		return
 	var consequence := {

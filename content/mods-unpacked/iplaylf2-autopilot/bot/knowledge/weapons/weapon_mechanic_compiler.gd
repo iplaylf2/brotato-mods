@@ -28,7 +28,7 @@ func _adapt_timing(
 	var reload_every: int = stats.additional_cooldown_every_x_shots
 	var reload_multiplier: float = stats.additional_cooldown_multiplier
 	var attacks_until_long_cycle := -1
-	var long_cycle_seconds := stats.get_cooldown_value(player_index, 1.0)
+	var long_cycle_seconds: float = stats.get_cooldown_value(player_index, 1.0)
 	if reload_every > 0 and reload_multiplier > 1.0:
 		var phase: int = weapon._nb_shots_taken % reload_every
 		attacks_until_long_cycle = reload_every if phase == 0 else reload_every - phase
@@ -118,10 +118,12 @@ func _append_material_reload_rule(rules: Array, effects: Array) -> void:
 
 
 func _append_critical_delivery_rules(rules: Array, effects: Array, player_index: int) -> void:
-	var penetration := max(
+	var penetration: int = max(
 		0, int(RunData.get_player_effect(Keys.pierce_on_crit_hash, player_index))
 	)
-	var retarget := max(0, int(RunData.get_player_effect(Keys.bounce_on_crit_hash, player_index)))
+	var retarget: int = max(
+		0, int(RunData.get_player_effect(Keys.bounce_on_crit_hash, player_index))
+	)
 	for effect in effects:
 		if effect.key_hash == Keys.pierce_on_crit_hash:
 			penetration += max(0, int(effect.value))
@@ -180,7 +182,7 @@ func _append_hit_result_rules(
 	if hitbox == null or hitbox.projectiles_on_hit.size() < 2:
 		return
 	var projectile_stats: Resource = hitbox.projectiles_on_hit[1]
-	var critical_multiplier := (
+	var critical_multiplier: float = (
 		1.0
 		+ projectile_stats.crit_chance * max(0.0, projectile_stats.crit_damage - 1.0)
 	)
@@ -248,7 +250,7 @@ func _adapt_scaling(scaling_stats: Array) -> Array:
 	for scaling in scaling_stats:
 		if scaling.size() < 2:
 			continue
-		var stat_name := _stat_vocabulary.get_stat_name(scaling[0])
+		var stat_name: String = _stat_vocabulary.get_stat_name(scaling[0])
 		if stat_name.empty():
 			continue
 		result.push_back({"stat": stat_name, "coefficient": scaling[1]})

@@ -2,23 +2,37 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 REPOSITORY = Path(__file__).resolve().parents[1]
+load_dotenv(REPOSITORY / ".env")
+
 MODS = REPOSITORY / "content" / "mods-unpacked"
 THIS_FILE = Path(__file__).relative_to(REPOSITORY)
 PKG_RESOURCES_WARNING = "ignore:pkg_resources is deprecated as an API:UserWarning"
+GODOT_VALIDATOR = REPOSITORY / "tools" / "validate_godot_scripts.gd"
 
 
-def run(*command: str, suppress_pkg_resources_warning: bool = False) -> None:
+def run(
+    *command: str,
+    suppress_pkg_resources_warning: bool = False,
+    environment_overrides: dict[str, str] | None = None,
+) -> None:
     environment = os.environ.copy()
     if suppress_pkg_resources_warning:
         existing_warnings = environment.get("PYTHONWARNINGS")
         environment["PYTHONWARNINGS"] = ",".join(
             filter(None, (PKG_RESOURCES_WARNING, existing_warnings))
         )
+    if environment_overrides:
+        environment.update(environment_overrides)
     subprocess.run(command, cwd=REPOSITORY, env=environment, check=True)
 
 
@@ -61,21 +75,80 @@ def validate_manifests() -> None:
             )
 
 
-def lint() -> None:
+def resolve_godot() -> str:
+    for command in ("godotsteam", "godot3", "godot"):
+        executable = shutil.which(command)
+        if executable:
+            return executable
+    raise SystemExit("error: Godot 3.6 was not found on PATH")
+
+
+def validate_godot_scripts() -> None:
+    configured_project = os.environ.get("BROTATO_PROJECT")
+    if not configured_project:
+        raise SystemExit(
+            "error: BROTATO_PROJECT must point to a locally recovered Brotato project"
+        )
+
+    project = Path(configured_project).expanduser()
+    if not (project / "project.godot").is_file():
+        raise SystemExit(
+            f"error: BROTATO_PROJECT does not contain project.godot: {project}"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="brotato-mod-lint-") as temp_directory:
+        temporary_root = Path(temp_directory)
+        archive = temporary_root / "mods.zip"
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            for source in sorted(MODS.rglob("*")):
+                if source.is_file():
+                    output.write(source, source.relative_to(REPOSITORY / "content"))
+
+        user_data_environment = {
+            "APPDATA" if os.name == "nt" else "XDG_DATA_HOME": str(
+                temporary_root / "user-data"
+            )
+        }
+        run(
+            resolve_godot(),
+            "--path",
+            str(project.resolve()),
+            "--script",
+            str(GODOT_VALIDATOR),
+            "--",
+            str(archive),
+            environment_overrides=user_data_environment,
+        )
+
+
+def lint_portable() -> None:
     validate_manifests()
     run("ruff", "check", "tools")
     run("ruff", "format", "--check", "tools")
-    run("gdlint", str(MODS), suppress_pkg_resources_warning=True)
-    run("gdformat", "--check", str(MODS), suppress_pkg_resources_warning=True)
+    run("gdlint", str(MODS), str(GODOT_VALIDATOR), suppress_pkg_resources_warning=True)
+    run(
+        "gdformat",
+        "--check",
+        str(MODS),
+        str(GODOT_VALIDATOR),
+        suppress_pkg_resources_warning=True,
+    )
+
+
+def lint() -> None:
+    lint_portable()
+    validate_godot_scripts()
 
 
 def format_sources() -> None:
     run("ruff", "format", "tools")
-    run("gdformat", str(MODS), suppress_pkg_resources_warning=True)
+    run(
+        "gdformat", str(MODS), str(GODOT_VALIDATOR), suppress_pkg_resources_warning=True
+    )
 
 
 def main() -> None:
-    tasks = {"lint": lint, "format": format_sources}
+    tasks = {"lint": lint, "lint-portable": lint_portable, "format": format_sources}
     try:
         task = tasks[sys.argv[1]]
     except (IndexError, KeyError):

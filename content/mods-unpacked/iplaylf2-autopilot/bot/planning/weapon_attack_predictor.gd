@@ -113,10 +113,10 @@ func _accumulate_weapon_attack(
 ) -> void:
 	var displacement := _sample_displacement(action.samples, shot_time)
 	var targets := _targets_at_time(observation.enemy_tracks, displacement, shot_time)
-	var primary = _nearest_legal_target(
+	var primary: Dictionary = _nearest_legal_target(
 		targets, attack_model.delivery.minimum_range, attack_model.delivery.maximum_range + 50.0
 	)
-	if primary == null:
+	if primary.empty():
 		return
 
 	var attack_outcome := _predict_attack(targets, primary, attack_model)
@@ -133,7 +133,7 @@ func _accumulate_weapon_attack(
 		attack_outcome.expected_kill_weight
 		* clamp(attack_model.impact.critical_chance, 0.0, 1.0)
 	)
-	var expected_lifesteal_events := (
+	var expected_lifesteal_events: float = (
 		attack_outcome.expected_hits
 		* clamp(attack_model.impact.lifesteal, 0.0, 1.0)
 	)
@@ -379,8 +379,10 @@ func _targets_at_time(tracks: Array, displacement: Vector2, time: float) -> Arra
 	return targets
 
 
-func _nearest_legal_target(targets: Array, minimum_range: float, maximum_range: float):
-	var nearest = null
+func _nearest_legal_target(
+	targets: Array, minimum_range: float, maximum_range: float
+) -> Dictionary:
+	var nearest := {}
 	var nearest_distance := INF
 	for target in targets:
 		var distance: float = target.position.length()

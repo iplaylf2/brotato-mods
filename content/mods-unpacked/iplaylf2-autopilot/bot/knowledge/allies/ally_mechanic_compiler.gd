@@ -42,10 +42,10 @@ func _compile_combat_zone(agent: Node) -> Dictionary:
 		var projectiles := max(
 			1.0, float(stats.get("nb_projectiles") if "nb_projectiles" in stats else 1)
 		)
-		var accuracy := clamp(
+		var accuracy: float = clamp(
 			float(stats.get("accuracy") if "accuracy" in stats else 1.0), 0.2, 1.0
 		)
-		var cycle_seconds := (
+		var cycle_seconds: float = (
 			max(1.0, float(stats.get("cooldown") if "cooldown" in stats else 60))
 			/ 60.0
 		)
@@ -101,7 +101,7 @@ func _compile_interception_zone(agent: Node) -> Dictionary:
 func _get_collision_radius(agent: Node, path: String) -> float:
 	if not agent.has_node(path):
 		return 0.0
-	var collision = agent.get_node(path)
+	var collision: Node = agent.get_node(path)
 	if not collision is CollisionShape2D or not collision.shape is CircleShape2D:
 		return 0.0
 	return (

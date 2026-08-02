@@ -1,4 +1,4 @@
-name: Static checks
+name: Portable checks
 
 on:
   push:
@@ -17,5 +17,5 @@ jobs:
           python-version: "3.12"
       - name: Install locked development tools
         run: uv sync --locked
-      - name: Run static checks
-        run: uv run --locked tools/tasks.py lint
+      - name: Run portable checks
+        run: uv run --locked tools/tasks.py lint-portable

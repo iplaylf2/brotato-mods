@@ -7,8 +7,8 @@ Autopilot 是一个实验性 Brotato mod。它在玩家权限边界内评估环�
 ## 目标环境与验证状态
 
 - 目标环境为 Brotato `1.1.15.4` 和 Godot Mod Loader `6.3.0`；以 `manifest.json` 中的声明为准。
-- 游戏内加载和行为验证尚未完成，因此当前版本应视为开发版。仓库静态检查只覆盖目录结构、
-  manifest 数据、源码格式和静态规则，不代表游戏内兼容性。
+- 源码已通过 Godot 3.6 编译检查，但尚未在目标游戏环境完成加载和行为验证，因此当前版本仍应视为
+  开发版。编译通过不代表游戏内兼容性或模型已经完成校准。
 
 ## 安装与启用
 
@@ -55,8 +55,8 @@ Autopilot 根据当前物理帧余量和实测规划耗时分配搜索强度，�
 启用后，可以读取某位玩家的最新观察和计划：
 
 ```gdscript
-var observation = main.autopilot_observation_service.get_observation(player_index)
-var plan = main.autopilot_controller.get_current_plan(player_index)
+var observation: Dictionary = main.autopilot_observation_service.get_observation(player_index)
+var plan: Dictionary = main.autopilot_controller.get_current_plan(player_index)
 ```
 
 计划包含所选动作、移动方向、结果字段、字段级与目标级效用账本、动态上下文、导航价值图、搜索预算和

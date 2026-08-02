@@ -21,7 +21,7 @@ func _ready() -> void:
 		ModLoaderLog.error("Autopilot mod entrypoint was not found; runtime disabled.", MOD_ID)
 		return
 
-	var connect_error := _autopilot_mod.connect(
+	var connect_error: int = _autopilot_mod.connect(
 		"enabled_changed", self, "_on_autopilot_enabled_changed"
 	)
 	if connect_error != OK:

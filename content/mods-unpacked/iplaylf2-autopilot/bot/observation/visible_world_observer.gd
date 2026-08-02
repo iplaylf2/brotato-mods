@@ -175,7 +175,7 @@ func _infer_ranged_attacks(enemies: Array, projectiles: Array) -> Dictionary:
 	for projectile in projectiles:
 		if projectile.velocity.length_squared() == 0.0:
 			continue
-		var best_enemy = null
+		var best_enemy := {}
 		var best_distance_squared := max_distance_squared
 		for enemy in enemies:
 			var enemy_to_projectile: Vector2 = (
@@ -192,7 +192,7 @@ func _infer_ranged_attacks(enemies: Array, projectiles: Array) -> Dictionary:
 			if moving_away:
 				best_distance_squared = distance_squared
 				best_enemy = enemy
-		if best_enemy != null:
+		if not best_enemy.empty():
 			likely_sources[best_enemy._source] = true
 	return likely_sources
 
@@ -241,8 +241,8 @@ func _append_allied_agent(
 
 
 func _get_player_pickup_geometry(player: Node) -> Dictionary:
-	var attract_shape = player._item_attract_area.get_node("CollisionShape2D").shape
-	var pickup_shape = player._item_pickup_area.get_node("CollisionShape2D").shape
+	var attract_shape: Shape2D = player._item_attract_area.get_node("CollisionShape2D").shape
+	var pickup_shape: Shape2D = player._item_pickup_area.get_node("CollisionShape2D").shape
 	return {
 		"attraction_radius": attract_shape.radius,
 		"collection_radius": pickup_shape.radius,
@@ -362,12 +362,12 @@ func _is_node_visible(node, visible_rect: Rect2) -> bool:
 
 
 func _is_in_fog_light(world_position: Vector2) -> bool:
-	var fog = _main._fog_viewport
+	var fog: Node = _main._fog_viewport
 	if not is_instance_valid(fog):
 		return false
 
 	for player_index in _players.size():
-		var player = _players[player_index]
+		var player: Node2D = _players[player_index]
 		if not is_instance_valid(player) or player.dead:
 			continue
 		var bonus := 1.0
@@ -375,7 +375,7 @@ func _is_in_fog_light(world_position: Vector2) -> bool:
 			bonus += fog._player_bonus[player_index]
 		if player_index >= fog.player_lights.size():
 			continue
-		var light = fog.player_lights[player_index]
+		var light: Node = fog.player_lights[player_index]
 		if not is_instance_valid(light):
 			continue
 		var radius := _get_fog_light_radius(light, bonus)
@@ -400,13 +400,13 @@ func _get_fog_light_radius(light: Node, visibility_multiplier: float) -> float:
 		max(abs(texture_size.x * visual_scale.x), abs(texture_size.y * visual_scale.y))
 		/ 2.0
 	)
-	var fog = _main._fog_viewport
+	var fog: Node = _main._fog_viewport
 	return texture_radius * fog._base_fog_scale.x * fog._wave_fog_scale * visibility_multiplier
 
 
 func _get_visible_rect() -> Rect2:
-	var camera = _main._camera
-	var size := Vector2(Utils.project_width, Utils.project_height) * camera.zoom
+	var camera: Camera2D = _main._camera
+	var size: Vector2 = Vector2(Utils.project_width, Utils.project_height) * camera.zoom
 	return Rect2(camera.global_position - size / 2.0, size)
 
 
@@ -467,7 +467,7 @@ func _get_closest_point_on_edge(edge: String, position: Vector2, zone_rect: Rect
 
 
 func _get_other_fog_light_sources() -> Array:
-	var fog = _main._fog_viewport
+	var fog: Node = _main._fog_viewport
 	var light_sources := []
 	light_sources.append_array(fog.fire_lights.keys())
 	light_sources.append_array(fog.structure_and_pet_lights.keys())

@@ -47,7 +47,7 @@ func _append_conditional_stats(
 		if entry.size() < 2:
 			continue
 		var consequence := {}
-		var cadence_seconds = null
+		var cadence_seconds := -1.0
 		if entry[0] == Keys.percent_materials_hash:
 			consequence = {
 				"target": "materials",
@@ -58,7 +58,7 @@ func _append_conditional_stats(
 			}
 			cadence_seconds = 1.0
 		else:
-			var stat_name := _stat_vocabulary.get_stat_name(entry[0])
+			var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
 			if stat_name.empty():
 				continue
 			consequence = {
@@ -72,7 +72,7 @@ func _append_conditional_stats(
 				"event": "movement_state",
 				"condition": {"is_moving": moving},
 				"consequences": [consequence],
-				"cadence_seconds": cadence_seconds,
+				"cadence_seconds": cadence_seconds if cadence_seconds >= 0.0 else null,
 				"active": active,
 			}
 		)

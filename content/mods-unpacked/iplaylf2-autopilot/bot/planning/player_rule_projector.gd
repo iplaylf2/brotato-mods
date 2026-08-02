@@ -12,7 +12,7 @@ func project(observation: Dictionary) -> Dictionary:
 		if not event_outcome_channels.has(event):
 			event_outcome_channels[event] = {}
 		for consequence in rule.consequences:
-			var probability := clamp(consequence.get("probability", 1.0), 0.0, 1.0)
+			var probability: float = clamp(consequence.get("probability", 1.0), 0.0, 1.0)
 			for channel in consequence.get("outcome_channels", {}):
 				event_outcome_channels[event][channel] = (
 					event_outcome_channels[event].get(channel, 0.0)

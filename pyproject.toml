@@ -7,6 +7,7 @@ dependencies = []
 [dependency-groups]
 dev = [
   "gdtoolkit==3.6.0",
+  "python-dotenv>=1.2.2",
   "ruff",
   # gdtoolkit 3 imports pkg_resources without declaring setuptools.
   "setuptools<81",

@@ -10,7 +10,7 @@ Autopilot 每次启用战斗控制时创建一个采样会话，将 JSON Lines �
 `user://autopilot/decision-samples/`。Mod Loader 日志会报告当前文件，也可以在控制器启动后调用：
 
 ```gdscript
-var path = main.autopilot_controller.get_decision_sample_path()
+var path: String = main.autopilot_controller.get_decision_sample_path()
 ```
 
 每位玩家的第一次决策必定采样，之后每 5 次重规划采样一次；按名义 `0.1` 秒控制周期计算，常规间隔约为

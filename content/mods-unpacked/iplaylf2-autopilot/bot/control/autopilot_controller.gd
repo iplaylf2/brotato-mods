@@ -71,8 +71,8 @@ func shutdown() -> void:
 	_shut_down = true
 	_decision_telemetry.close()
 	for player_index in _players.size():
-		var player = _players[player_index]
-		var actuator = _actuators[player_index]
+		var player: Node = _players[player_index]
+		var actuator: Node = _actuators[player_index]
 		actuator.set_movement(Vector2.ZERO)
 		if is_instance_valid(player) and player._current_movement_behavior == actuator:
 			player._current_movement_behavior = _original_movement_behaviors[player_index]
@@ -97,11 +97,11 @@ func _replan_all_players() -> void:
 	for player in _players:
 		if is_instance_valid(player):
 			scheduled_planner_count += 1
-	var frame_budget_context := _planning_frame_budget_monitor.build_context(
+	var frame_budget_context: Dictionary = _planning_frame_budget_monitor.build_context(
 		scheduled_planner_count
 	)
 	for player_index in _players.size():
-		var player = _players[player_index]
+		var player: Node = _players[player_index]
 		if not is_instance_valid(player):
 			continue
 		_movement_planners[player_index].set_frame_budget_context(frame_budget_context)

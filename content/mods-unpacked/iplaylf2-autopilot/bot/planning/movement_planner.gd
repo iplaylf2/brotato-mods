@@ -79,8 +79,8 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 			weapon_prediction_limit
 		)
 
-	var seed: int = int(observation.physics_frame) * 31 + player_index
-	var plan: Dictionary = _action_selector.select(weapon_scored_actions, context, seed)
+	var rng_seed: int = int(observation.physics_frame) * 31 + player_index
+	var plan: Dictionary = _action_selector.select(weapon_scored_actions, context, rng_seed)
 	var planning_duration_usec := float(OS.get_ticks_usec() - planning_started_usec)
 	search_budget.merge(
 		_search_budget_policy.observe_planning_duration(planning_duration_usec), true

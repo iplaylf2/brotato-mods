@@ -18,10 +18,10 @@ func _init() -> void:
 
 
 func _ready() -> void:
-	var config: ModConfig = ModLoaderConfig.get_current_config(MOD_ID)
+	var config: ModConfig = _get_or_repair_current_config()
 	_apply_config(config)
 
-	var current_config_error := ModLoader.connect(
+	var current_config_error: int = ModLoader.connect(
 		"current_config_changed", self, "_on_current_config_changed"
 	)
 	if current_config_error != OK:
@@ -32,7 +32,7 @@ func _ready() -> void:
 		ModLoaderLog.error("Required Mod Options interface was not found.", MOD_ID)
 		return
 
-	var setting_error := _mod_options.connect(
+	var setting_error: int = _mod_options.connect(
 		"setting_changed", self, "_on_mod_options_setting_changed"
 	)
 	if setting_error != OK:
@@ -44,8 +44,9 @@ func is_enabled() -> bool:
 
 
 func _on_current_config_changed(config: ModConfig) -> void:
-	if config.mod_id == MOD_ID:
-		_apply_config(config)
+	if config == null or config.mod_id != MOD_ID:
+		return
+	_apply_config(config)
 
 
 func _on_mod_options_setting_changed(setting_name, value, mod_id) -> void:
@@ -64,15 +65,33 @@ func _apply_config(config: ModConfig) -> void:
 	_set_enabled(bool(config.data.get(ENABLED_SETTING, false)))
 
 
-func _save_setting(setting_name: String, value) -> bool:
+func _get_or_repair_current_config() -> ModConfig:
 	var config: ModConfig = ModLoaderConfig.get_current_config(MOD_ID)
+	if config != null:
+		return config
+
+	config = ModLoaderConfig.get_default_config(MOD_ID)
+	if config == null:
+		ModLoaderLog.error("No valid default config is available; runtime disabled.", MOD_ID)
+		return null
+
+	# ModLoader 6.3 profiles created before a mod gained a config schema can lack
+	# current_config. Selecting the generated default repairs and persists that
+	# profile entry through ModData's current_config setter.
+	ModLoaderConfig.set_current_config(config)
+	ModLoaderLog.info("Repaired the missing current config with the default config.", MOD_ID)
+	return config
+
+
+func _save_setting(setting_name: String, value) -> bool:
+	var config: ModConfig = _get_or_repair_current_config()
 	if config == null:
 		return false
 
 	if config.name == ModLoaderConfig.DEFAULT_CONFIG_NAME:
-		var config_data := config.data.duplicate(true)
+		var config_data: Dictionary = config.data.duplicate(true)
 		config_data[setting_name] = value
-		var configs := ModLoaderConfig.get_configs(MOD_ID)
+		var configs: Dictionary = ModLoaderConfig.get_configs(MOD_ID)
 
 		if configs.has(CUSTOM_CONFIG_NAME):
 			config = configs[CUSTOM_CONFIG_NAME]

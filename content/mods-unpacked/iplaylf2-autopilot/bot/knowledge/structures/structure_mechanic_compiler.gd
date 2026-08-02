@@ -101,7 +101,7 @@ func _get_circle_radius(collision: CollisionShape2D) -> float:
 func _get_landmine_activation_radius(structure: Node) -> float:
 	if not structure.has_node("Area2D/Collision"):
 		return 24.0
-	var collision = structure.get_node("Area2D/Collision")
+	var collision: Node = structure.get_node("Area2D/Collision")
 	if not collision is CollisionShape2D:
 		return 24.0
 	if collision.shape is CapsuleShape2D:

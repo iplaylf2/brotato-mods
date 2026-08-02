@@ -73,7 +73,7 @@ func allocate(observation: Dictionary) -> Dictionary:
 
 
 func observe_planning_duration(planning_duration_usec: float) -> Dictionary:
-	var observed_usec_per_effort := (
+	var observed_usec_per_effort: float = (
 		planning_duration_usec
 		/ max(1.0, _allocated_search_effort_scale)
 	)

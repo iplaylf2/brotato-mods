@@ -26,9 +26,9 @@ func estimate_capacity(observation: Dictionary, horizon_seconds: float) -> Dicti
 		var weapon: Dictionary = _movement_state_projector.project_attack_model(
 			observed_weapon, observation, false
 		)
-		var attacks := _scheduled_attack_count(weapon, 0.0, horizon_seconds)
-		var hit_capacity := _hit_capacity_per_attack(weapon)
-		var damage_capacity := (
+		var attacks: float = _scheduled_attack_count(weapon, 0.0, horizon_seconds)
+		var hit_capacity: float = _hit_capacity_per_attack(weapon)
+		var damage_capacity: float = (
 			attacks
 			* hit_capacity
 			* weapon.impact.damage

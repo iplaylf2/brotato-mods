@@ -128,7 +128,7 @@ func _sample_enemy_pressure(
 	tracks: Array, sample: Dictionary, channels: Dictionary, scale: Dictionary
 ) -> void:
 	for track in tracks:
-		var position := _predict_track_position(track, sample.time) - sample.displacement
+		var position: Vector2 = _predict_track_position(track, sample.time) - sample.displacement
 		var uncertain_clearance: float = (
 			position.length()
 			- scale.player_radius
@@ -185,7 +185,7 @@ func _sample_spawn_pressure(
 	for warning in warnings:
 		if warning.disposition != "hostile":
 			continue
-		var clearance := (
+		var clearance: float = (
 			(warning.relative_position - sample.displacement).length()
 			- scale.player_radius
 		)
@@ -260,12 +260,12 @@ func _source_suppression(
 	var covered_pressure := 0.0
 	var strongest_relief := 0.0
 	for track in tracks:
-		var enemy_position := _predict_track_position(track, sample.time)
-		var support_distance := (enemy_position - source_position).length()
+		var enemy_position: Vector2 = _predict_track_position(track, sample.time)
+		var support_distance: float = (enemy_position - source_position).length()
 		if support_distance > relief.radius + track.last_measurement.visual_radius:
 			continue
-		var player_distance := (enemy_position - sample.displacement).length()
-		var pressure := clamp(
+		var player_distance: float = (enemy_position - sample.displacement).length()
+		var pressure: float = clamp(
 			(
 				(scale.enemy_pressure_distance * 2.0 - player_distance)
 				/ (scale.enemy_pressure_distance * 2.0)
@@ -300,9 +300,9 @@ func _has_single_use_trigger(
 func _source_healing_support(
 	observation: Dictionary, source: Dictionary, healing: Dictionary, sample: Dictionary
 ) -> float:
-	var source_position := _predict_source_position(source, sample.time)
-	var distance := (source_position - sample.displacement).length()
-	var coverage := clamp((healing.radius - distance) / healing.radius, 0.0, 1.0)
+	var source_position: Vector2 = _predict_source_position(source, sample.time)
+	var distance: float = (source_position - sample.displacement).length()
+	var coverage: float = clamp((healing.radius - distance) / healing.radius, 0.0, 1.0)
 	var opportunity := 1.0
 	if healing.get("requires_recovery_opportunity", false):
 		var effective_stats: Dictionary = observation.player_state.effective_stats
@@ -313,13 +313,15 @@ func _source_healing_support(
 
 
 func _ally_body_pressure(ally: Dictionary, sample: Dictionary, scale: Dictionary) -> float:
-	var ally_position := _predict_source_position(ally, sample.time)
-	var clearance := (
+	var ally_position: Vector2 = _predict_source_position(ally, sample.time)
+	var clearance: float = (
 		(ally_position - sample.displacement).length()
 		- scale.player_radius
 		- ally.visual_radius
 	)
-	var proximity := clamp((scale.ally_body_margin - clearance) / scale.ally_body_margin, 0.0, 1.0)
+	var proximity: float = clamp(
+		(scale.ally_body_margin - clearance) / scale.ally_body_margin, 0.0, 1.0
+	)
 	return proximity * proximity
 
 
@@ -334,23 +336,30 @@ func _sample_projectile_pressure(
 ) -> void:
 	for projectile_index in projectiles.size():
 		var projectile: Dictionary = projectiles[projectile_index]
-		var position := _predict_projectile_position(projectile, sample.time) - sample.displacement
-		var interception_sample = interception_samples.get(projectile_index)
-		var closest_position := _closest_point_to_origin(
+		var position: Vector2 = (
+			_predict_projectile_position(projectile, sample.time)
+			- sample.displacement
+		)
+		var interception_sample: int = interception_samples.get(projectile_index, -1)
+		var closest_position: Vector2 = _closest_point_to_origin(
 			previous_positions[projectile_index], position
 		)
-		var clearance := closest_position.length() - scale.player_radius - projectile.visual_radius
-		var proximity := clamp(
+		var clearance: float = (
+			closest_position.length()
+			- scale.player_radius
+			- projectile.visual_radius
+		)
+		var proximity: float = clamp(
 			(scale.projectile_pressure_distance - clearance) / scale.projectile_pressure_distance,
 			0.0,
 			1.0
 		)
-		var projectile_pressure := proximity * proximity
+		var projectile_pressure: float = proximity * proximity
 		channels.projectile += projectile_pressure
 		channels.projectile_contact = max(
 			channels.projectile_contact, clamp(-clearance / scale.player_radius, 0.0, 1.0)
 		)
-		if interception_sample != null and sample_index >= interception_sample:
+		if interception_sample >= 0 and sample_index >= interception_sample:
 			channels.projectile_interception += projectile_pressure
 			channels.projectile_contact_interception = max(
 				channels.projectile_contact_interception, channels.projectile_contact
@@ -362,9 +371,12 @@ func _sample_projectile_point_pressure(
 	projectiles: Array, sample: Dictionary, channels: Dictionary, scale: Dictionary
 ) -> void:
 	for projectile in projectiles:
-		var position := _predict_projectile_position(projectile, sample.time) - sample.displacement
-		var clearance := position.length() - scale.player_radius - projectile.visual_radius
-		var proximity := clamp(
+		var position: Vector2 = (
+			_predict_projectile_position(projectile, sample.time)
+			- sample.displacement
+		)
+		var clearance: float = position.length() - scale.player_radius - projectile.visual_radius
+		var proximity: float = clamp(
 			(scale.projectile_pressure_distance - clearance) / scale.projectile_pressure_distance,
 			0.0,
 			1.0
@@ -381,17 +393,17 @@ func _find_projectile_interception_samples(
 	var result := {}
 	for projectile_index in observation.visible_world.enemy_projectiles.size():
 		var projectile: Dictionary = observation.visible_world.enemy_projectiles[projectile_index]
-		var earliest_sample = null
+		var earliest_sample := -1
 		for ally in observation.visible_world.get("allied_agents", []):
 			var interception: Dictionary = ally.influence.projectile_interception
 			if not interception.active or interception.radius <= 0.0:
 				continue
-			var sample_index := _find_interception_sample(
+			var sample_index: int = _find_interception_sample(
 				ally, interception, projectile, samples, scale
 			)
-			if sample_index != null and (earliest_sample == null or sample_index < earliest_sample):
+			if sample_index >= 0 and (earliest_sample < 0 or sample_index < earliest_sample):
 				earliest_sample = sample_index
-		if earliest_sample != null:
+		if earliest_sample >= 0:
 			result[projectile_index] = earliest_sample
 	return result
 
@@ -402,28 +414,28 @@ func _find_interception_sample(
 	projectile: Dictionary,
 	samples: Array,
 	scale: Dictionary
-):
+) -> int:
 	var previous_projectile: Vector2 = projectile.relative_position
 	var previous_ally: Vector2 = ally.relative_position
 	var previous_player_relative: Vector2 = projectile.relative_position
 	for sample_index in samples.size():
 		var sample: Dictionary = samples[sample_index]
-		var projectile_position := _predict_projectile_position(projectile, sample.time)
-		var ally_position := _predict_source_position(ally, sample.time)
+		var projectile_position: Vector2 = _predict_projectile_position(projectile, sample.time)
+		var ally_position: Vector2 = _predict_source_position(ally, sample.time)
 		var player_relative: Vector2 = projectile_position - sample.displacement
-		var shield_relative_start := previous_projectile - previous_ally
-		var shield_relative_end := projectile_position - ally_position
-		var shield_fraction := _closest_fraction_to_origin(
+		var shield_relative_start: Vector2 = previous_projectile - previous_ally
+		var shield_relative_end: Vector2 = projectile_position - ally_position
+		var shield_fraction: float = _closest_fraction_to_origin(
 			shield_relative_start, shield_relative_end
 		)
-		var player_fraction := _closest_fraction_to_origin(
+		var player_fraction: float = _closest_fraction_to_origin(
 			previous_player_relative, player_relative
 		)
-		var crosses_shield := (
+		var crosses_shield: bool = (
 			(shield_relative_start.linear_interpolate(shield_relative_end, shield_fraction)).length()
 			<= interception.radius + projectile.visual_radius
 		)
-		var threatens_player := (
+		var threatens_player: bool = (
 			(previous_player_relative.linear_interpolate(player_relative, player_fraction)).length()
 			<= (scale.projectile_pressure_distance + scale.player_radius + projectile.visual_radius)
 		)
@@ -432,36 +444,41 @@ func _find_interception_sample(
 		previous_projectile = projectile_position
 		previous_ally = ally_position
 		previous_player_relative = player_relative
-	return null
+	return -1
 
 
 func _evaluate_channels(channels: Dictionary, policy: Dictionary) -> Dictionary:
-	var collision_hostile := (
+	var collision_hostile: float = (
 		channels.contact * policy.enemy_contact
 		+ channels.projectile_contact * policy.projectile_contact
 	)
-	var suppressible_enemy_ambient := (
+	var suppressible_enemy_ambient: float = (
 		channels.enemy_proximity * policy.enemy_proximity
 		+ channels.ranged * policy.ranged_source
 	)
-	var spawn_exposure := channels.spawn * policy.spawn_warning
-	var positional := (
+	var spawn_exposure: float = channels.spawn * policy.spawn_warning
+	var positional: float = (
 		channels.edge * policy.map_edge
 		+ channels.ally_body * policy.allied_body_proximity
 	)
-	var ambient_relief := min(
+	var ambient_relief: float = min(
 		suppressible_enemy_ambient, channels.allied_suppression * policy.allied_pressure_relief
 	)
-	var interception_relief := min(
+	var interception_relief: float = min(
 		channels.projectile_contact * policy.projectile_contact,
 		channels.projectile_contact_interception * policy.projectile_interception_relief
 	)
-	var collision := _saturate(max(0.0, collision_hostile - interception_relief))
-	var environmental := max(
+	var collision: float = _saturate(max(0.0, collision_hostile - interception_relief))
+	var environmental: float = max(
 		0.0, suppressible_enemy_ambient + spawn_exposure + positional - ambient_relief
 	)
-	var relief := ambient_relief + interception_relief
-	var hostile := collision_hostile + suppressible_enemy_ambient + spawn_exposure + positional
+	var relief: float = ambient_relief + interception_relief
+	var hostile: float = (
+		collision_hostile
+		+ suppressible_enemy_ambient
+		+ spawn_exposure
+		+ positional
+	)
 	return {
 		"hostile_exposure": hostile,
 		"exposure_relief": relief,

@@ -20,13 +20,13 @@ func update(observations: Array, delta_seconds: float) -> void:
 
 
 func _update_observation(observation: Dictionary) -> void:
-	var source = observation._source
+	var source: Object = observation._source
 	var position: Vector2 = observation._world_position
 	var velocity: Vector2 = observation.velocity
 	var acceleration := Vector2.ZERO
 	var sample_count := 1
-	var previous = _samples.get(source)
-	if previous != null:
+	var previous: Dictionary = _samples.get(source, {})
+	if not previous.empty():
 		var elapsed: float = _elapsed_seconds - previous.observed_at_seconds
 		if elapsed > 0.0 and elapsed <= MAX_SAMPLE_GAP_SECONDS:
 			velocity = (position - previous.position) / elapsed

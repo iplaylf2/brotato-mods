@@ -18,7 +18,7 @@ var _movement_scale: Reference = MovementScaleModel.new()
 
 func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 	var scale: Dictionary = _movement_scale.derive(observation)
-	var player_velocity := _player_kinematics.predict_average_velocity(
+	var player_velocity: Vector2 = _player_kinematics.predict_average_velocity(
 		observation, action.movement, scale.ttc_risk_seconds
 	)
 	var enemy_risk := 0.0

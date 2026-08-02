@@ -15,7 +15,7 @@ var _weapon_mechanic_compiler: Reference = WeaponMechanicCompiler.new()
 
 
 func observe(player_index: int, player: Node) -> Dictionary:
-	var adapted_effects := _player_effect_adapter.adapt(player_index, player)
+	var adapted_effects: Dictionary = _player_effect_adapter.adapt(player_index, player)
 	return {
 		"dead": player.dead,
 		"health":

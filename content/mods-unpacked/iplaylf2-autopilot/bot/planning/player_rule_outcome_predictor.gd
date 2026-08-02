@@ -67,8 +67,8 @@ func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Di
 		0.0, observation.player_state.health.maximum - observation.player_state.health.current
 	)
 	outcome.expected_recovery = min(missing_health, outcome.expected_recovery)
-	var incoming_hit_event = _first_incoming_hit_event(observation, action.samples)
-	if incoming_hit_event != null:
+	var incoming_hit_event: Dictionary = _first_incoming_hit_event(observation, action.samples)
+	if not incoming_hit_event.empty():
 		incoming_hit_event.event_weight = incoming_hit_event.damage_probability
 		_apply_event_rules(observation, "damage_taken", incoming_hit_event, outcome)
 		incoming_hit_event.event_weight = incoming_hit_event.dodge_probability
@@ -109,7 +109,7 @@ func _apply_event_rules(
 func _apply_consequence(
 	observation: Dictionary, consequence: Dictionary, event: Dictionary, outcome: Dictionary
 ) -> void:
-	var expected_occurrences := (
+	var expected_occurrences: float = (
 		clamp(consequence.get("probability", 1.0), 0.0, 1.0)
 		* event.get("event_weight", 1.0)
 	)
@@ -175,14 +175,14 @@ func _pickup_events(entities: Array, samples: Array, pickup: Dictionary) -> Arra
 	return result
 
 
-func _first_incoming_hit_event(observation: Dictionary, samples: Array):
+func _first_incoming_hit_event(observation: Dictionary, samples: Array) -> Dictionary:
 	var dodge_failure: float = 1.0 - observation.player_state.runtime_stats.dodge_chance
 	for sample in samples:
 		for track in observation.enemy_tracks:
 			if not track.visible:
 				continue
-			var enemy_position := _predict_track_position(track, sample.time)
-			var collision_radius := (
+			var enemy_position: Vector2 = _predict_track_position(track, sample.time)
+			var collision_radius: float = (
 				observation.player_state.collision_radius
 				+ track.last_measurement.visual_radius
 			)
@@ -199,7 +199,7 @@ func _first_incoming_hit_event(observation: Dictionary, samples: Array):
 				projectile.relative_position
 				+ projectile.velocity * sample.time
 			)
-			var collision_radius := (
+			var collision_radius: float = (
 				observation.player_state.collision_radius
 				+ projectile.visual_radius
 			)
@@ -211,7 +211,7 @@ func _first_incoming_hit_event(observation: Dictionary, samples: Array):
 					"damage_probability": dodge_failure,
 					"dodge_probability": 1.0 - dodge_failure,
 				}
-	return null
+	return {}
 
 
 func _delivered_enemy_weight(tracks: Array, delivery: Dictionary, event: Dictionary) -> float:

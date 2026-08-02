@@ -41,12 +41,12 @@ func build_context(observation: Dictionary) -> Dictionary:
 	var projectile_density := clamp(
 		observation.visible_world.enemy_projectiles.size() / 12.0, 0.0, 1.0
 	)
-	var ranged_engagement_appetite := (
+	var ranged_engagement_appetite: float = (
 		lerp(0.25, 1.0, risk_tolerance)
 		* lerp(1.0, 0.35, projectile_density)
 	)
 	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
-	var fatal_on_unprotected_hit := (
+	var fatal_on_unprotected_hit: bool = (
 		player_rule_projection.survival.terminal_on_positive_damage
 		and observation.player_state.runtime_stats.hit_protection <= 0
 	)
