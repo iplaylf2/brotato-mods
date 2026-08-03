@@ -17,7 +17,7 @@ const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
 
-const BASELINE_DIRECTION_COUNT := 8
+const FULL_BASELINE_DIRECTION_COUNT := 8
 const MAX_PROJECTILE_PHASE_STEP := PI / 2.0
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
@@ -35,6 +35,7 @@ func generate(
 	var directions := _candidate_directions(
 		direction_count, navigation_intent, compute_budget.get("quality_mode", "full")
 	)
+	var quality_mode: String = compute_budget.get("quality_mode", "full")
 	var actions := [
 		_make_action(
 			observation, "no_movement_input", Vector2.ZERO, forecast_seconds, sample_count, true
@@ -49,7 +50,7 @@ func generate(
 				direction,
 				forecast_seconds,
 				sample_count,
-				_is_baseline_direction(direction, navigation_intent)
+				quality_mode != "full" or _is_baseline_direction(direction, navigation_intent)
 			)
 		)
 	return actions
@@ -107,29 +108,36 @@ func _candidate_directions(
 	direction_count: int, navigation_intent: Dictionary, quality_mode: String
 ) -> Array:
 	var result := []
+	# Near-field control keeps an octant safety baseline in every quality mode.
+	# Only full quality adds the geometry-derived fine lattice; compute pressure is
+	# absorbed more aggressively by the longer-horizon navigation search.
 	var effective_direction_count := (
 		direction_count
 		if quality_mode == "full"
-		else BASELINE_DIRECTION_COUNT
+		else FULL_BASELINE_DIRECTION_COUNT
 	)
 	for direction_index in effective_direction_count:
 		result.push_back(
 			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(effective_direction_count))
 		)
-	# The geometry-derived lattice owns escape resolution. The octants own smooth
-	# baseline comparison and are added independently when the two grids do not
-	# share an angle.
-	for baseline_index in BASELINE_DIRECTION_COUNT:
-		var baseline_direction := Vector2.RIGHT.rotated(
-			TAU * float(baseline_index) / float(BASELINE_DIRECTION_COUNT)
-		)
-		if not _has_similar_direction(result, baseline_direction):
-			result.push_back(baseline_direction)
+	# Keep the value-derived navigation direction in every quality mode. It is one
+	# bounded candidate, not an expanded angular search, and preserves observed
+	# opportunity seeking when compute is constrained.
 	var movement_preference: Vector2 = navigation_intent.movement_preference
 	if movement_preference != Vector2.ZERO:
 		var preferred_direction := movement_preference.normalized()
 		if not _has_similar_direction(result, preferred_direction):
 			result.push_back(preferred_direction)
+	# Full-quality geometry also retains exact octants for smooth comparison when
+	# the derived fine lattice does not share those angles.
+	if quality_mode != "full":
+		return result
+	for baseline_index in FULL_BASELINE_DIRECTION_COUNT:
+		var baseline_direction := Vector2.RIGHT.rotated(
+			TAU * float(baseline_index) / float(FULL_BASELINE_DIRECTION_COUNT)
+		)
+		if not _has_similar_direction(result, baseline_direction):
+			result.push_back(baseline_direction)
 	return result
 
 
@@ -211,7 +219,7 @@ func _forecast_sample_count(
 
 
 func _is_baseline_direction(direction: Vector2, navigation_intent: Dictionary) -> bool:
-	var baseline_step := TAU / float(BASELINE_DIRECTION_COUNT)
+	var baseline_step := TAU / float(FULL_BASELINE_DIRECTION_COUNT)
 	var nearest_baseline_angle := round(direction.angle() / baseline_step) * baseline_step
 	if abs(wrapf(direction.angle() - nearest_baseline_angle, -PI, PI)) <= 0.001:
 		return true

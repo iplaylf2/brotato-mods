@@ -59,7 +59,7 @@ func predict(
 			geometry
 		)
 		var exposure := _evaluate_channels(channels, exposure_policy)
-		_accumulate_result(result, channels, exposure, sample, step_seconds)
+		_accumulate_result(result, channels, exposure, step_seconds)
 		previous_time = sample.time
 	var final_sample: Dictionary = samples.back()
 	var terminal: Dictionary = sample_point(
@@ -81,14 +81,17 @@ func predict_collision(
 	observation: Dictionary, action_forecast: Dictionary, exposure_policy: Dictionary
 ) -> Dictionary:
 	var peak_path_collision_risk := 0.0
+	var integrated_hostile_collision_risk := 0.0
 	var maximum_path_collision_damage := 0.0
 	var samples: Array = action_forecast.samples
 	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var previous_projectile_positions := []
 	for projectile in observation.visible_world.enemy_projectiles:
 		previous_projectile_positions.push_back(projectile.relative_position)
+	var previous_time := 0.0
 	for sample_index in samples.size():
 		var sample: Dictionary = samples[sample_index]
+		var step_seconds: float = max(0.0, sample.time - previous_time)
 		var channels := _empty_channels()
 		_sample_enemy_pressure(observation.enemy_tracks, sample, channels, geometry)
 		_sample_projectile_pressure(
@@ -102,9 +105,12 @@ func predict_collision(
 		)
 		var exposure: Dictionary = _evaluate_channels(channels, exposure_policy)
 		peak_path_collision_risk = max(peak_path_collision_risk, exposure.path_collision_risk)
+		integrated_hostile_collision_risk += exposure.path_collision_risk * step_seconds
 		maximum_path_collision_damage = max(maximum_path_collision_damage, channels.contact_damage)
+		previous_time = sample.time
 	return {
 		"peak_path_collision_risk": peak_path_collision_risk,
+		"integrated_hostile_collision_risk": integrated_hostile_collision_risk,
 		"maximum_path_collision_damage": maximum_path_collision_damage,
 	}
 
@@ -631,11 +637,7 @@ func _evaluate_channels(channels: Dictionary, policy: Dictionary) -> Dictionary:
 
 
 func _accumulate_result(
-	result: Dictionary,
-	channels: Dictionary,
-	exposure: Dictionary,
-	sample: Dictionary,
-	step_seconds: float
+	result: Dictionary, channels: Dictionary, exposure: Dictionary, step_seconds: float
 ) -> void:
 	result.integrated_enemy_proximity_pressure += channels.enemy_proximity * step_seconds
 	result.integrated_projectile_proximity_pressure += channels.projectile * step_seconds
@@ -662,20 +664,9 @@ func _accumulate_result(
 	result.peak_path_collision_risk = max(
 		result.peak_path_collision_risk, exposure.path_collision_risk
 	)
+	result.integrated_hostile_collision_risk += exposure.path_collision_risk * step_seconds
 	result.maximum_path_collision_damage = max(
 		result.maximum_path_collision_damage, channels.contact_damage
-	)
-	result.battlefield_exposure_trace.push_back(
-		{
-			"time": sample.time,
-			"displacement": sample.displacement,
-			"hostile_exposure": exposure.hostile_exposure,
-			"exposure_relief": exposure.exposure_relief,
-			"signed_exposure_relief": -exposure.exposure_relief,
-			"environmental_pressure": exposure.environmental_pressure,
-			"path_collision_risk": exposure.path_collision_risk,
-			"channels": channels.duplicate(true),
-		}
 	)
 
 
@@ -759,11 +750,11 @@ func _empty_result() -> Dictionary:
 		"integrated_environmental_exposure": 0.0,
 		"peak_environmental_pressure": 0.0,
 		"peak_path_collision_risk": 0.0,
+		"integrated_hostile_collision_risk": 0.0,
 		"maximum_path_collision_damage": 0.0,
 		"initial_environmental_pressure": 0.0,
 		"terminal_environmental_pressure": 0.0,
 		"mean_environmental_pressure_derivative": 0.0,
-		"battlefield_exposure_trace": [],
 	}
 
 

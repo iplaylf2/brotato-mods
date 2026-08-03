@@ -5,21 +5,25 @@ extends Reference
 # and the context contract passed across the control -> planning boundary.
 
 const PHYSICS_DURATION_ESTIMATE_TIME_CONSTANT_SECONDS := 0.5
-const POST_PLANNING_EXCLUDED_SAMPLES := 3
-
 var _baseline_physics_seconds_ema := 0.0
 var _physics_duration_deviation_seconds_ema := 0.0
 var _has_frame_time_sample := false
-var _excluded_samples_remaining := 0
+var _last_observed_idle_frame := -1
+var _exclude_through_idle_frame := -1
 
 
 func observe_physics_duration(delta_seconds: float) -> void:
-	# Godot's performance monitor is updated after physics work and can expose a
-	# planning spike for more than one subsequent callback. Keep that delayed work
-	# out of the baseline instead of teaching the budget that a missed frame is
-	# ordinary game cost.
-	if _excluded_samples_remaining > 0:
-		_excluded_samples_remaining -= 1
+	# Performance.TIME_PHYSICS_PROCESS is a rendered-frame monitor. During catch-up
+	# Godot can run several physics callbacks while exposing the same value; sample
+	# each completed rendered frame once rather than feeding duplicates to the EMA.
+	var idle_frame := int(Engine.get_idle_frames())
+	if idle_frame == _last_observed_idle_frame:
+		return
+	_last_observed_idle_frame = idle_frame
+	# A plan executed before the next rendered frame is part of that frame's
+	# physics monitor. Excluding the corresponding monitor generation prevents the
+	# planner from being learned as immutable base-game cost.
+	if idle_frame <= _exclude_through_idle_frame:
 		return
 	var observed_seconds := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
 	if observed_seconds <= 0.0:
@@ -42,7 +46,9 @@ func observe_physics_duration(delta_seconds: float) -> void:
 
 
 func mark_planning_completed() -> void:
-	_excluded_samples_remaining = POST_PLANNING_EXCLUDED_SAMPLES
+	_exclude_through_idle_frame = max(
+		_exclude_through_idle_frame, int(Engine.get_idle_frames()) + 1
+	)
 
 
 func build_context(scheduled_planner_count: int) -> Dictionary:

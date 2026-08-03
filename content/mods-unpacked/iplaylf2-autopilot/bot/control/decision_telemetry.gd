@@ -174,32 +174,28 @@ func _write_record(record: Dictionary) -> void:
 
 
 func _compact_observation(observation: Dictionary) -> Dictionary:
-	var result: Dictionary = observation.duplicate(true)
+	var result: Dictionary = observation.duplicate(false)
 	# behavior_profile is the planner contract. The evidence and stable profile
 	# nested under last_measurement duplicate that same compiled mechanic for every
 	# tracked enemy and made crowded-wave samples dominate frame time.
-	var tracks: Array = result.get("enemy_tracks", [])
-	for track_index in tracks.size():
-		var track: Dictionary = tracks[track_index]
+	var tracks := []
+	for observed_track in result.get("enemy_tracks", []):
+		var track: Dictionary = observed_track.duplicate(false)
 		track.erase("behavior_evidence")
-		var measurement: Dictionary = track.get("last_measurement", {})
+		var measurement: Dictionary = track.get("last_measurement", {}).duplicate(false)
 		measurement.erase("stable_mechanic_profile")
 		measurement.erase("next_volley_window")
 		track.last_measurement = measurement
-		tracks[track_index] = track
+		tracks.push_back(track)
 	result.enemy_tracks = tracks
 	return result
 
 
 func _compact_plan(plan: Dictionary) -> Dictionary:
-	var result: Dictionary = plan.duplicate(true)
-	# Aggregated exposure channels and collision diagnostics are sufficient for
-	# calibration; the per-sample trace can be reconstructed from the action path
-	# and observation and was the largest repeated decision payload.
-	var outcome: Dictionary = result.get("outcome", {})
-	outcome.erase("battlefield_exposure_trace")
-	result.outcome = outcome
-	return result
+	# JSON conversion already constructs a detached value graph. A second deep
+	# copy here only extends the sampled physics frame and duplicates immutable
+	# planning state.
+	return plan.duplicate(false)
 
 
 func _to_json_value(value):

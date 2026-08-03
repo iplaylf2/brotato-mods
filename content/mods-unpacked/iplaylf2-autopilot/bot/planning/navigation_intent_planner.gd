@@ -22,7 +22,12 @@ const SpatialOpportunityValueModel := preload(
 )
 
 const SIMILAR_DIRECTION_DOT := 0.97
+# Far-field navigation yields angular resolution before near-field control: it
+# shapes terminal intent, while local collision projection still retains its
+# octant safety baseline in every quality mode.
 const BASELINE_DIRECTION_COUNT := 8
+const CONSTRAINED_DIRECTION_COUNT := 6
+const CRITICAL_DIRECTION_COUNT := 4
 
 var _exposure_model: Reference = BattlefieldExposureModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
@@ -44,11 +49,12 @@ func plan(
 	var sampling_radius: float = min(
 		map_extent.radius, scale.command_speed * navigation_horizon_seconds
 	)
-	var baseline_direction_count: int = (
-		BASELINE_DIRECTION_COUNT
-		if compute_budget.get("quality_mode", "full") == "full"
-		else 4
-	)
+	var quality_mode: String = compute_budget.get("quality_mode", "full")
+	var baseline_direction_count := BASELINE_DIRECTION_COUNT
+	if quality_mode == "constrained":
+		baseline_direction_count = CONSTRAINED_DIRECTION_COUNT
+	elif quality_mode == "critical":
+		baseline_direction_count = CRITICAL_DIRECTION_COUNT
 	var baseline_directions: Array = _uniform_directions(baseline_direction_count)
 	var opportunity_directions: Array = _spatial_opportunity_value_model.candidate_directions(
 		observation, context

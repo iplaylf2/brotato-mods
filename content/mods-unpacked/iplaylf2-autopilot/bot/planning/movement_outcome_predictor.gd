@@ -79,6 +79,7 @@ func predict_collision_outcome(
 			observation,
 			action,
 			result.hostile_collision_risk,
+			result.integrated_hostile_collision_risk,
 			predicted_hit_damage,
 			planning_context.state_factors.positive_damage_is_terminal_rule
 		),
@@ -161,6 +162,7 @@ func predict_base(
 			observation,
 			action,
 			outcome.hostile_collision_risk,
+			outcome.integrated_hostile_collision_risk,
 			predicted_hit_damage,
 			planning_context.state_factors.positive_damage_is_terminal_rule
 		),
@@ -183,7 +185,10 @@ func complete_prediction(
 	include_weapon_prediction: bool,
 	planning_context: Dictionary
 ) -> Dictionary:
-	var outcome: Dictionary = base_outcome.duplicate(true)
+	# Completion only updates scalar outcome fields. Keep immutable arrays and
+	# dictionaries shared instead of recursively copying the whole forecast for
+	# every screening and exact-scoring pass.
+	var outcome: Dictionary = base_outcome.duplicate(false)
 	outcome.weapon_prediction_included = include_weapon_prediction
 	if include_weapon_prediction:
 		_weapon_attack_predictor.accumulate_outcome(observation, action, outcome, planning_context)
@@ -235,7 +240,26 @@ func _predict_action_outcomes(
 	else:
 		outcome.moving_seconds = action.forecast_seconds
 	if previous_movement.length_squared() > 0.0 and action.movement.length_squared() > 0.0:
-		outcome.heading_continuity = previous_movement.normalized().dot(action.movement)
+		var committed_sample: Dictionary = committed_samples.back()
+		var zero_input_displacement: Vector2 = _player_kinematics_model.predict_displacement(
+			observation, Vector2.ZERO, committed_sample.time
+		)
+		var controlled_displacement: Vector2 = (
+			committed_sample.displacement
+			- zero_input_displacement
+		)
+		if controlled_displacement.length_squared() > 0.0:
+			var intended_control_distance: float = (
+				_movement_geometry.derive(observation).command_speed
+				* committed_sample.time
+			)
+			var control_effectiveness := clamp(
+				controlled_displacement.length() / max(1.0, intended_control_distance), 0.0, 1.0
+			)
+			outcome.heading_continuity = (
+				previous_movement.normalized().dot(controlled_displacement.normalized())
+				* control_effectiveness
+			)
 
 
 func _material_acquisition_value(observation: Dictionary, samples: Array) -> float:

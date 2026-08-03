@@ -7,7 +7,7 @@ func select(scored_actions: Array) -> Dictionary:
 	# The generator always contributes the zero-input action. An empty list is an
 	# internal planner contract failure, not a recoverable gameplay condition.
 	assert(not scored_actions.empty())
-	var selected: Dictionary = scored_actions[0].duplicate(true)
+	var selected: Dictionary = scored_actions[0].duplicate(false)
 	selected.selection_diagnostics = {
 		"mode": "maximum_utility",
 		"best_score": selected.score,

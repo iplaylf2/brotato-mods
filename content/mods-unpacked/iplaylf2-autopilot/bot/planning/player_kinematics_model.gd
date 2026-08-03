@@ -22,7 +22,11 @@ func predict_displacement(
 		(1.0 - exp(-KNOCKBACK_DECAY_RATE * time_seconds))
 		/ KNOCKBACK_DECAY_RATE
 	)
-	return command_velocity * time_seconds + disturbance * disturbance_integral
+	var unconstrained_displacement := (
+		command_velocity * time_seconds
+		+ disturbance * disturbance_integral
+	)
+	return _clamp_to_observed_zone(observation, unconstrained_displacement)
 
 
 func predict_average_velocity(
@@ -46,3 +50,21 @@ func _command_velocity(observation: Dictionary, movement: Vector2) -> Vector2:
 
 func _observed_disturbance(observation: Dictionary) -> Vector2:
 	return observation.player_state.movement.knockback_velocity
+
+
+func _clamp_to_observed_zone(observation: Dictionary, displacement: Vector2) -> Vector2:
+	# Vanilla Unit clamps the next body origin to the zone rectangle on each
+	# physics tick. A known boundary therefore removes displacement; it is not an
+	# obstacle that a utility penalty may choose to cross. Unknown boundaries stay
+	# unconstrained until the player has legally observed them.
+	var bounds: Dictionary = observation.localization.map_bounds
+	var result := displacement
+	if bounds.seen_left:
+		result.x = max(result.x, -float(bounds.distance_to_left))
+	if bounds.seen_right:
+		result.x = min(result.x, float(bounds.distance_to_right))
+	if bounds.seen_top:
+		result.y = max(result.y, -float(bounds.distance_to_top))
+	if bounds.seen_bottom:
+		result.y = min(result.y, float(bounds.distance_to_bottom))
+	return result

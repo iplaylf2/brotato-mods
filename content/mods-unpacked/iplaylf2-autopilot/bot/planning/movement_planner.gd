@@ -305,9 +305,7 @@ func _summarize_actions(entries: Array, limit: int) -> Array:
 
 
 func _summarize_outcome(outcome: Dictionary) -> Dictionary:
-	var result := outcome.duplicate(false)
-	result.erase("battlefield_exposure_trace")
-	return result
+	return outcome.duplicate(false)
 
 
 func _empty_plan(status: String) -> Dictionary:
