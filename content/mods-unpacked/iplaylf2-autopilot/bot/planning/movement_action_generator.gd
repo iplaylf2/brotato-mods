@@ -174,13 +174,14 @@ func _forecast_window(observation: Dictionary, timing: Dictionary) -> float:
 				geometry.player_radius + projectile.visual_radius + geometry.encounter_margin
 			)
 		)
-	if nearest_encounter == INF:
-		return timing.default_local_horizon_seconds
-	return clamp(
-		nearest_encounter + timing.control_interval_seconds,
-		timing.default_local_horizon_seconds,
-		timing.maximum_local_horizon_seconds
-	)
+	var forecast_seconds: float = timing.default_local_horizon_seconds
+	if nearest_encounter != INF:
+		forecast_seconds = clamp(
+			nearest_encounter + timing.control_interval_seconds,
+			timing.default_local_horizon_seconds,
+			timing.maximum_local_horizon_seconds
+		)
+	return MovementTimingModel.clip_to_wave_remaining(observation, forecast_seconds)
 
 
 func _forecast_sample_count(

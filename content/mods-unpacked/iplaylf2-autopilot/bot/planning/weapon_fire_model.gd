@@ -1,8 +1,9 @@
 extends Reference
 
-# Owns target-independent automatic-weapon firing mechanics: attack cadence,
-# long-cycle timing and expected damage of one delivered hit. Target geometry
-# and multi-target delivery remain in WeaponAttackPredictor.
+# Owns target-independent automatic-weapon firing capacity: attack cadence,
+# long-cycle timing, expected damage per delivered hit, and aggregate hit,
+# damage, and lifesteal rates. Target geometry and multi-target delivery remain
+# in WeaponAttackPredictor.
 
 
 func scheduled_attack_times(
@@ -39,6 +40,47 @@ func expected_damage_per_hit(weapon: Dictionary) -> float:
 	return weapon.impact.damage * _critical_damage_multiplier(weapon)
 
 
+func expected_damage_rate(weapons: Array, is_moving: bool = false) -> float:
+	var result := 0.0
+	for weapon_state in weapons:
+		var weapon: Dictionary = weapon_state.attack_model
+		if is_moving and not weapon.timing.permitted_while_moving:
+			continue
+		result += (
+			expected_damage_per_hit(weapon)
+			* _expected_primary_hits_per_attack(weapon)
+			/ max(0.05, weapon.timing.cycle_seconds)
+		)
+	return result
+
+
+func expected_hit_rate(weapons: Array, is_moving: bool = false) -> float:
+	var result := 0.0
+	for weapon_state in weapons:
+		var weapon: Dictionary = weapon_state.attack_model
+		if is_moving and not weapon.timing.permitted_while_moving:
+			continue
+		result += (
+			_expected_primary_hits_per_attack(weapon)
+			/ max(0.05, weapon.timing.cycle_seconds)
+		)
+	return result
+
+
+func expected_lifesteal_rate(weapons: Array, is_moving: bool = false) -> float:
+	var result := 0.0
+	for weapon_state in weapons:
+		var weapon: Dictionary = weapon_state.attack_model
+		if is_moving and not weapon.timing.permitted_while_moving:
+			continue
+		result += (
+			_expected_primary_hits_per_attack(weapon)
+			* clamp(weapon.impact.lifesteal, 0.0, 1.0)
+			/ max(0.05, weapon.timing.cycle_seconds)
+		)
+	return result
+
+
 func rule_delta(rules: Array, event: String, target: String) -> float:
 	var result := 0.0
 	for rule in rules:
@@ -53,3 +95,10 @@ func rule_delta(rules: Array, event: String, target: String) -> float:
 func _critical_damage_multiplier(weapon: Dictionary) -> float:
 	var chance: float = clamp(weapon.impact.critical_chance, 0.0, 1.0)
 	return 1.0 + chance * max(0.0, weapon.impact.critical_damage_multiplier - 1.0)
+
+
+func _expected_primary_hits_per_attack(weapon: Dictionary) -> float:
+	return (
+		max(1.0, float(weapon.delivery.paths.count))
+		* clamp(weapon.delivery.paths.primary_probability_floor, 0.05, 1.0)
+	)

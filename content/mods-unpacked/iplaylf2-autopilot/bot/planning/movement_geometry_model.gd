@@ -41,6 +41,11 @@ func derive(observation: Dictionary) -> Dictionary:
 		# Reserve one default-local-horizon movement distance for turning near a boundary.
 		"edge_margin": player_radius + default_local_horizon_distance,
 		"ally_body_margin": player_radius + control_distance,
+		"local_prediction_radius": command_speed * timing.effective_local_horizon_seconds,
+		"opportunity_reach_distance":
+		# Structural range for map discovery; unlike actionable opportunity reach,
+		max(1.0, command_speed * timing.effective_navigation_horizon_seconds),
+		# unknown map extent must not collapse as the wave clock expires.
 		"roaming_distance": max(1.0, command_speed * timing.maximum_navigation_horizon_seconds),
 	}
 	return _cached_geometry

@@ -11,9 +11,13 @@ const PlayerRuleProjector := preload(
 const StatOpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
 )
+const WeaponFireModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
+)
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
+var _weapon_fire_model: Reference = WeaponFireModel.new()
 
 
 func material_collection_value(observation: Dictionary) -> float:
@@ -42,7 +46,15 @@ func tree_harvest_feasibility(observation: Dictionary, tree: Dictionary) -> floa
 		1.0, tree.get("destructible_profile", {}).get("destruction", {}).get("required_hits", 1.0)
 	)
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
-	return clamp(weapon_hit_rate(observation) * remaining_seconds / required_hits, 0.0, 1.0)
+	return clamp(
+		(
+			_weapon_fire_model.expected_hit_rate(observation.player_state.weapons)
+			* remaining_seconds
+			/ required_hits
+		),
+		0.0,
+		1.0
+	)
 
 
 func build_enemy_removal_value_ledger(
@@ -115,7 +127,9 @@ func enemy_removal_value(enemy_removal_value_ledger: Dictionary, track: Dictiona
 func enemy_kill_feasibility(observation: Dictionary, track: Dictionary) -> float:
 	var maximum_health: float = max(1.0, float(track.behavior_profile.durability.maximum_health))
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
-	var damage_rate := _weapon_damage_rate(observation)
+	var damage_rate: float = _weapon_fire_model.expected_damage_rate(
+		observation.player_state.weapons
+	)
 	return clamp(damage_rate * remaining_seconds / maximum_health, 0.0, 1.0)
 
 
@@ -257,45 +271,4 @@ func _living_tree_preservation_value(observation: Dictionary) -> float:
 		for consequence in rule.consequences:
 			if consequence.target == "materials_and_experience_per_living_tree":
 				result += max(0.0, consequence.get("value", 0.0))
-	return result
-
-
-func _weapon_damage_rate(observation: Dictionary) -> float:
-	var result := 0.0
-	for weapon in observation.player_state.weapons:
-		var attack: Dictionary = weapon.attack_model
-		var cycle_seconds: float = max(0.05, attack.timing.cycle_seconds)
-		var path_count: float = max(1.0, float(attack.delivery.paths.count))
-		var hit_probability: float = clamp(
-			attack.delivery.paths.primary_probability_floor, 0.05, 1.0
-		)
-		var critical_multiplier: float = (
-			1.0
-			+ (
-				clamp(attack.impact.critical_chance, 0.0, 1.0)
-				* max(0.0, attack.impact.critical_damage_multiplier - 1.0)
-			)
-		)
-		result += (
-			attack.impact.damage
-			* path_count
-			* hit_probability
-			* critical_multiplier
-			/ cycle_seconds
-		)
-	return result
-
-
-func weapon_hit_rate(observation: Dictionary, is_moving: bool = false) -> float:
-	var result := 0.0
-	for weapon in observation.player_state.weapons:
-		var attack: Dictionary = weapon.attack_model
-		if is_moving and not attack.timing.permitted_while_moving:
-			continue
-		var cycle_seconds: float = max(0.05, attack.timing.cycle_seconds)
-		var path_count: float = max(1.0, float(attack.delivery.paths.count))
-		var hit_probability: float = clamp(
-			attack.delivery.paths.primary_probability_floor, 0.05, 1.0
-		)
-		result += path_count * hit_probability / cycle_seconds
 	return result

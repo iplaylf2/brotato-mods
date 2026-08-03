@@ -26,8 +26,10 @@ var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var local_horizon_seconds: float = timing.effective_local_horizon_seconds
+	var navigation_horizon_seconds: float = timing.effective_navigation_horizon_seconds
 	var player_velocity: Vector2 = _player_kinematics.predict_average_velocity(
-		observation, action.movement, timing.maximum_local_horizon_seconds
+		observation, action.movement, max(0.01, local_horizon_seconds)
 	)
 	var enemy_risk := 0.0
 	var projectile_risk := 0.0
@@ -40,10 +42,10 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 		var ttc := _time_to_collision(
 			track.relative_position, track.estimated_velocity - player_velocity, combined_radius
 		)
-		if ttc <= timing.maximum_navigation_horizon_seconds:
+		if ttc <= navigation_horizon_seconds:
 			minimum_ttc = min(minimum_ttc, ttc)
 			enemy_risk += (
-				_ttc_risk(ttc, timing.maximum_local_horizon_seconds)
+				_ttc_risk(ttc, max(0.01, local_horizon_seconds))
 				* track.recency_confidence
 			)
 			maximum_collision_damage = max(
@@ -52,11 +54,11 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 
 	for projectile in observation.visible_world.enemy_projectiles:
 		var predicted_projectile_position: Vector2 = _projectile_motion_predictor.predict_position(
-			projectile, timing.maximum_local_horizon_seconds
+			projectile, local_horizon_seconds
 		)
 		var projectile_velocity: Vector2 = (
 			(predicted_projectile_position - projectile.relative_position)
-			/ max(0.01, timing.maximum_local_horizon_seconds)
+			/ max(0.01, local_horizon_seconds)
 		)
 		var ttc := _time_to_collision(
 			projectile.relative_position,
@@ -64,12 +66,12 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 			geometry.player_radius + projectile.visual_radius
 		)
 		if (
-			ttc > timing.maximum_navigation_horizon_seconds
+			ttc > navigation_horizon_seconds
 			or _intercepted_before_player(observation, projectile, ttc)
 		):
 			continue
 		minimum_ttc = min(minimum_ttc, ttc)
-		projectile_risk += 1.5 * _ttc_risk(ttc, timing.maximum_local_horizon_seconds)
+		projectile_risk += 1.5 * _ttc_risk(ttc, max(0.01, local_horizon_seconds))
 		maximum_collision_damage = max(
 			maximum_collision_damage, projectile.get("contact_damage", 1.0)
 		)
@@ -82,10 +84,10 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 			ally.velocity - player_velocity,
 			geometry.player_radius + ally.visual_radius
 		)
-		if ttc <= timing.maximum_navigation_horizon_seconds:
+		if ttc <= navigation_horizon_seconds:
 			minimum_ttc = min(minimum_ttc, ttc)
 			# Do not assume a human or independently controlled ally will reciprocate.
-			ally_risk += _ttc_risk(ttc, timing.maximum_local_horizon_seconds)
+			ally_risk += _ttc_risk(ttc, max(0.01, local_horizon_seconds))
 
 	return {
 		"velocity_obstacle_risk": _saturate(enemy_risk + projectile_risk + ally_risk),

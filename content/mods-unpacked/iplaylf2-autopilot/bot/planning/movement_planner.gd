@@ -40,6 +40,8 @@ const MovementCandidatePruner := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_candidate_pruner.gd"
 )
 
+const MIN_COMPARABLE_WEAPON_PREDICTIONS := 2
+
 var _action_generator: Reference = MovementActionGenerator.new()
 var _compute_budget_policy: Reference = PlanningComputeBudgetPolicy.new()
 var _projectile_filter: Reference = ProjectileReachabilityFilter.new()
@@ -153,11 +155,11 @@ func plan(observation: Dictionary, previous_movement: Vector2) -> Dictionary:
 		_insert_descending(ranked_screened_actions, scored, screened_actions.size())
 
 	var fully_scored_actions := []
-	var required_weapon_predictions := (
-		2
-		if compute_budget.get("quality_mode", "full") == "full"
-		else 1
-	)
+	# One exact prediction cannot affect selection: its action already ranked first
+	# under the screening proxy and would win by default. Always exact-score a
+	# second candidate when one exists so exact weapon outcomes can change the
+	# decision instead of only changing its telemetry.
+	var required_weapon_predictions := MIN_COMPARABLE_WEAPON_PREDICTIONS
 	for rank_index in ranked_screened_actions.size():
 		if (
 			rank_index >= min(required_weapon_predictions, ranked_screened_actions.size())
@@ -230,20 +232,19 @@ func _model_diagnostics(
 	observation: Dictionary, plan: Dictionary, navigation_intent: Dictionary
 ) -> Dictionary:
 	var movement_geometry: Dictionary = _movement_geometry.derive(observation)
+	var timing: Dictionary = MovementTimingModel.derive(observation)
 	return {
 		"timing":
 		{
 			"derivation": "physics_ticks_and_collision_traversal",
 			"replan_physics_ticks": MovementTimingModel.REPLAN_PHYSICS_TICKS,
 			"control_interval_seconds": MovementTimingModel.control_interval_seconds(),
-			"near_term_horizon_seconds":
-			MovementTimingModel.derive(observation).near_term_horizon_seconds,
-			"default_local_horizon_seconds":
-			MovementTimingModel.derive(observation).default_local_horizon_seconds,
-			"maximum_local_horizon_seconds":
-			MovementTimingModel.derive(observation).maximum_local_horizon_seconds,
-			"maximum_navigation_horizon_seconds":
-			MovementTimingModel.derive(observation).maximum_navigation_horizon_seconds,
+			"near_term_horizon_seconds": timing.near_term_horizon_seconds,
+			"default_local_horizon_seconds": timing.default_local_horizon_seconds,
+			"maximum_local_horizon_seconds": timing.maximum_local_horizon_seconds,
+			"maximum_navigation_horizon_seconds": timing.maximum_navigation_horizon_seconds,
+			"effective_local_horizon_seconds": timing.effective_local_horizon_seconds,
+			"effective_navigation_horizon_seconds": timing.effective_navigation_horizon_seconds,
 		},
 		"derived":
 		{

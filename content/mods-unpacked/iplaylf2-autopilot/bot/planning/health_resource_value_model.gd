@@ -9,6 +9,9 @@ const PlayerRuleProjector := preload(
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
+const WeaponFireModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
+)
 
 const RECOVERY_LOOKAHEAD_SECONDS := 8.0
 const BASE_HEALTH_VALUE := 0.75
@@ -16,51 +19,71 @@ const SURVIVAL_BUFFER_VALUE := 12.0
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _weapon_fire_model: Reference = WeaponFireModel.new()
 
 
 func estimate(observation: Dictionary, rule_projection: Dictionary) -> Dictionary:
 	var current_health: float = observation.player_state.health.current
 	var maximum_health: float = max(1.0, observation.player_state.health.maximum)
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
+	var wave_duration: float = max(0.01, observation.wave_state.duration_seconds)
+	var remaining_fraction: float = clamp(remaining_seconds / wave_duration, 0.0, 1.0)
 	var horizon_seconds := min(remaining_seconds, RECOVERY_LOOKAHEAD_SECONDS)
 	var consumable_recovery: float = rule_projection.recovery.maximum_consumable_recovery
 	var observed_supply := _observed_consumable_supply(observation)
+	var reachable_observed_supply := _reachable_observed_consumable_supply(
+		observation, horizon_seconds
+	)
 	var expected_drop_supply := _expected_drop_supply(
 		observation, consumable_recovery, horizon_seconds
 	)
-	var passive_supply := max(0.0, rule_projection.survival.recovery_rate) * horizon_seconds
-	var replacement_supply := observed_supply + expected_drop_supply + passive_supply
+	var passive_health_rate: float = (
+		rule_projection.survival.health_rate
+		+ rule_projection.survival.recovery_rate
+	)
+	var passive_supply := max(0.0, passive_health_rate) * horizon_seconds
+	var passive_drain := max(0.0, -passive_health_rate) * horizon_seconds
+	var lifesteal_supply := _expected_lifesteal_supply(observation, horizon_seconds)
+	var replacement_supply := (
+		reachable_observed_supply
+		+ expected_drop_supply
+		+ passive_supply
+		+ lifesteal_supply
+	)
 	var survival_reserve := _observed_hit_reserve(observation)
-	# Remote and stochastic recovery cannot absorb the next collision, so it only
-	# partially softens the marginal price of current health.
-	var effective_buffer := max(
-		1.0, current_health + 0.25 * (expected_drop_supply + passive_supply) - survival_reserve
-	)
-	var exposure_fraction := clamp(remaining_seconds / 60.0, 0.0, 1.0)
-	var marginal_health_value := (
+	var unreplaced_buffer := max(1.0, current_health - passive_drain - survival_reserve)
+	var effective_buffer := max(1.0, unreplaced_buffer + replacement_supply)
+	var unreplaced_health_value := (
 		BASE_HEALTH_VALUE
-		+ SURVIVAL_BUFFER_VALUE * (1.0 + exposure_fraction) / effective_buffer
+		+ SURVIVAL_BUFFER_VALUE * (1.0 + remaining_fraction) / unreplaced_buffer
 	)
-	# Non-terminal health is a wave-local resource: vanilla reconstructs the
-	# player's configured starting health next wave. Its opportunity cost therefore
-	# follows the remaining exposure horizon, while terminal collision keeps the
-	# full value below.
-	var nonterminal_health_value := (
-		marginal_health_value
-		* clamp(remaining_seconds / RECOVERY_LOOKAHEAD_SECONDS, 0.0, 1.0)
-	)
-	var recovery_supply_buffer := max(1.0, current_health + replacement_supply - survival_reserve)
-	var undiscounted_recovery_supply_value := (
+	var replacement_adjusted_health_value := (
 		BASE_HEALTH_VALUE
-		+ SURVIVAL_BUFFER_VALUE * (1.0 + exposure_fraction) / recovery_supply_buffer
+		+ SURVIVAL_BUFFER_VALUE * (1.0 + remaining_fraction) / effective_buffer
 	)
-	var recovery_supply_value := (
-		undiscounted_recovery_supply_value
-		* clamp(remaining_seconds / RECOVERY_LOOKAHEAD_SECONDS, 0.0, 1.0)
+	# Non-terminal health and replacement supply are wave-local resources. Their
+	# shadow prices decline over the whole remaining wave because any reserve left
+	# at cleanup is discarded. Immediate lethal damage keeps the undiscounted price.
+	var nonterminal_health_value := replacement_adjusted_health_value * remaining_fraction
+	var unreplaced_nonterminal_health_value := unreplaced_health_value * remaining_fraction
+	var terminal_health_value := (
+		BASE_HEALTH_VALUE
+		+ (
+			SURVIVAL_BUFFER_VALUE
+			* (1.0 + remaining_fraction)
+			/ max(1.0, current_health - survival_reserve)
+		)
 	)
+	var recovery_supply_value := nonterminal_health_value
 	var scarcity := clamp(
 		(
-			(survival_reserve + maximum_health * 0.35 - current_health - replacement_supply)
+			(
+				survival_reserve
+				+ maximum_health * 0.35
+				+ passive_drain
+				- current_health
+				- replacement_supply
+			)
 			/ maximum_health
 		),
 		0.0,
@@ -68,15 +91,20 @@ func estimate(observation: Dictionary, rule_projection: Dictionary) -> Dictionar
 	)
 	return {
 		"marginal_health_value": nonterminal_health_value,
-		"terminal_health_value": marginal_health_value,
+		"terminal_health_value": terminal_health_value,
 		"recovery_supply_value": recovery_supply_value,
-		"recovery_conversion_value": max(0.0, nonterminal_health_value - recovery_supply_value),
+		"recovery_conversion_value":
+		max(0.0, unreplaced_nonterminal_health_value - nonterminal_health_value),
 		"observed_recovery_supply": observed_supply,
+		"reachable_observed_recovery_supply": reachable_observed_supply,
 		"expected_drop_recovery_supply": expected_drop_supply,
 		"passive_recovery_supply": passive_supply,
+		"expected_lifesteal_recovery_supply": lifesteal_supply,
+		"expected_passive_health_drain": passive_drain,
 		"replacement_health_supply": replacement_supply,
 		"observed_hit_reserve": survival_reserve,
 		"effective_survival_buffer": effective_buffer,
+		"wave_remaining_fraction": remaining_fraction,
 		"health_scarcity": scarcity,
 	}
 
@@ -88,6 +116,44 @@ func _observed_consumable_supply(observation: Dictionary) -> float:
 			continue
 		result += _consumable_recovery(observation, entity) * entity.existence_confidence
 	return result
+
+
+func _reachable_observed_consumable_supply(
+	observation: Dictionary, horizon_seconds: float
+) -> float:
+	if horizon_seconds <= 0.0:
+		return 0.0
+	var result := 0.0
+	var travel_capacity: float = (
+		max(1.0, observation.player_state.runtime_stats.move_speed)
+		* horizon_seconds
+	)
+	var collection_radius: float = observation.player_state.pickup.collection_radius
+	for entity in observation.get("remembered_entities", []):
+		if entity.kind != "consumable":
+			continue
+		var interaction_gap: float = max(
+			0.0,
+			entity.relative_position.length() - collection_radius - entity.get("visual_radius", 0.0)
+		)
+		var accessibility: float = clamp(1.0 - interaction_gap / travel_capacity, 0.0, 1.0)
+		result += (
+			_consumable_recovery(observation, entity)
+			* entity.existence_confidence
+			* accessibility
+		)
+	return result
+
+
+func _expected_lifesteal_supply(observation: Dictionary, horizon_seconds: float) -> float:
+	if horizon_seconds <= 0.0 or observation.enemy_tracks.empty():
+		return 0.0
+	# Context pricing uses target-independent moving fire capacity only when a
+	# tracked target exists. Exact per-action target geometry owns realized healing.
+	return (
+		_weapon_fire_model.expected_lifesteal_rate(observation.player_state.weapons, true)
+		* horizon_seconds
+	)
 
 
 func _expected_drop_supply(

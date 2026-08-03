@@ -8,6 +8,9 @@ extends Reference
 const WeaponAttackPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_attack_predictor.gd"
 )
+const WeaponFireModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
+)
 const ObservedMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
 )
@@ -32,11 +35,15 @@ const MovementGeometryModel := preload(
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
+const SpatialOpportunityValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/spatial_opportunity_value_model.gd"
+)
 const CollisionHealthImpactModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/collision_health_impact_model.gd"
 )
 
 var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
+var _weapon_fire_model: Reference = WeaponFireModel.new()
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
 var _battlefield_exposure_model: Reference = BattlefieldExposureModel.new()
 var _velocity_obstacle_risk_model: Reference = VelocityObstacleRiskModel.new()
@@ -45,6 +52,7 @@ var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _spatial_opportunity_value_model: Reference = SpatialOpportunityValueModel.new()
 var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
 
 
@@ -196,9 +204,11 @@ func _predict_action_outcomes(
 	)
 	outcome.tree_opportunity_progress = _tree_opportunity_progress(observation, action)
 	outcome.tree_harvest_value_in_range = _tree_harvest_value_in_range(observation, action)
-	outcome.enemy_removal_value_approach_progress = _enemy_removal_value_approach_progress(
-		observation, action, planning_context
+	var final_sample: Dictionary = samples.back()
+	var enemy_approach_value: float = _spatial_opportunity_value_model.local_enemy_value_delta(
+		observation, planning_context, final_sample.displacement, final_sample.time
 	)
+	outcome.enemy_removal_value_approach_progress = enemy_approach_value
 	outcome.enemy_removal_value_in_range = _enemy_removal_value_in_range(
 		observation, action, planning_context
 	)
@@ -225,19 +235,52 @@ func _material_acquisition_value(observation: Dictionary, samples: Array) -> flo
 
 
 func _material_approach_progress(observation: Dictionary, samples: Array) -> float:
-	var result := 0.0
 	var collection_value: float = _opportunity_value_model.material_collection_value(observation)
-	var reach_distance: float = _movement_geometry.derive(observation).roaming_distance
+	var reach_distance: float = _movement_geometry.derive(observation).opportunity_reach_distance
+	var collection_radius: float = observation.player_state.pickup.collection_radius
+	# The reachable frontier is the number of pickup diameters that fit in the
+	# remaining opportunity horizon. This lets dense fields retain proportionate
+	# value without summing every material (which would reward indecisive motion
+	# between mutually exclusive targets).
+	var frontier_capacity := int(max(1.0, ceil(reach_distance / max(1.0, collection_radius * 2.0))))
+	var final_displacement: Vector2 = samples.back().displacement
+	var initial_potentials := []
+	var final_potentials := []
 	for material in observation.visible_world.materials:
-		result += (
-			_pickup_approach_progress(
-				material.relative_position,
-				samples,
-				observation.player_state.pickup.collection_radius,
+		var initial_distance: float = material.relative_position.length()
+		var closest_distance := initial_distance
+		for sample in samples:
+			closest_distance = min(
+				closest_distance, (material.relative_position - sample.displacement).length()
+			)
+		# Acquired materials are owned by material_acquisition_value. Compare the
+		# same uncollected entity set so approach value cannot double-count them.
+		if closest_distance <= collection_radius:
+			continue
+		initial_potentials.push_back(
+			_interaction_potential(initial_distance, collection_radius, reach_distance)
+		)
+		final_potentials.push_back(
+			_interaction_potential(
+				(material.relative_position - final_displacement).length(),
+				collection_radius,
 				reach_distance
 			)
-			* collection_value
 		)
+	return (
+		(
+			_sum_largest(final_potentials, frontier_capacity)
+			- _sum_largest(initial_potentials, frontier_capacity)
+		)
+		* collection_value
+	)
+
+
+func _sum_largest(values: Array, capacity: int) -> float:
+	values.sort()
+	var result := 0.0
+	for index in range(max(0, values.size() - capacity), values.size()):
+		result += values[index]
 	return result
 
 
@@ -268,22 +311,6 @@ func _consumable_recovery_approach_progress(observation: Dictionary, samples: Ar
 	return progress
 
 
-func _pickup_approach_progress(
-	relative_position: Vector2, samples: Array, collection_radius: float, reach_distance: float
-) -> float:
-	var initial_distance := relative_position.length()
-	var closest_distance := initial_distance
-	for sample in samples:
-		closest_distance = min(closest_distance, (relative_position - sample.displacement).length())
-	if closest_distance <= collection_radius:
-		return 0.0
-	var final_distance: float = (relative_position - samples.back().displacement).length()
-	return (
-		_interaction_potential(final_distance, collection_radius, reach_distance)
-		- _interaction_potential(initial_distance, collection_radius, reach_distance)
-	)
-
-
 func _tree_opportunity_progress(observation: Dictionary, action: Dictionary) -> float:
 	var maximum_range: float = _usable_weapon_range(
 		observation.player_state.weapons, action.movement != Vector2.ZERO
@@ -291,7 +318,7 @@ func _tree_opportunity_progress(observation: Dictionary, action: Dictionary) -> 
 	if maximum_range <= 0.0:
 		return 0.0
 	var interaction := 0.0
-	var reach_distance: float = _movement_geometry.derive(observation).roaming_distance
+	var reach_distance: float = _movement_geometry.derive(observation).opportunity_reach_distance
 	for tree in observation.visible_world.trees:
 		var initial_distance: float = tree.relative_position.length()
 		var final_distance: float = (tree.relative_position - action.samples.back().displacement).length()
@@ -313,7 +340,9 @@ func _tree_harvest_value_in_range(observation: Dictionary, action: Dictionary) -
 		return 0.0
 	var final_displacement: Vector2 = action.samples.back().displacement
 	var hit_capacity: float = (
-		_opportunity_value_model.weapon_hit_rate(observation, action.movement != Vector2.ZERO)
+		_weapon_fire_model.expected_hit_rate(
+			observation.player_state.weapons, action.movement != Vector2.ZERO
+		)
 		* action.forecast_seconds
 	)
 	var result := 0.0
@@ -339,54 +368,83 @@ func _interaction_potential(
 	return exp(-gap / max(1.0, reach_distance))
 
 
-func _enemy_removal_value_approach_progress(
-	observation: Dictionary, action: Dictionary, planning_context: Dictionary
-) -> float:
-	var progress := 0.0
-	var final_sample: Dictionary = action.samples.back()
-	var maximum_range: float = _maximum_weapon_range(observation.player_state.weapons)
-	var enemy_removal_value_ledger: Dictionary = planning_context.enemy_removal_value_ledger
-	for track in observation.enemy_tracks:
-		var initial_distance: float = track.relative_position.length()
-		if initial_distance <= 0.0:
-			continue
-		var attack_range: float = maximum_range + track.last_measurement.visual_radius
-		var initial_gap: float = max(0.0, initial_distance - attack_range)
-		var predicted_position: Vector2 = _predict_track_position(track, final_sample.time)
-		var final_distance: float = (predicted_position - final_sample.displacement).length()
-		var final_gap: float = max(0.0, final_distance - attack_range)
-		if initial_gap <= 0.0 or final_gap <= 0.0:
-			continue
-		progress += (
-			clamp((initial_gap - final_gap) / initial_distance, -1.0, 1.0)
-			* track.recency_confidence
-			* _opportunity_value_model.enemy_removal_value(enemy_removal_value_ledger, track)
-			* _opportunity_value_model.enemy_kill_feasibility(observation, track)
-		)
-	return progress
-
-
 func _enemy_removal_value_in_range(
 	observation: Dictionary, action: Dictionary, planning_context: Dictionary
 ) -> float:
-	var maximum_range: float = _maximum_weapon_range(observation.player_state.weapons)
-	if maximum_range <= 0.0:
-		return 0.0
-	var final_sample: Dictionary = action.samples.back()
+	var remaining_health := {}
+	for track in observation.enemy_tracks:
+		if not track.visible:
+			continue
+		remaining_health[track.track_id] = max(
+			1.0, float(track.behavior_profile.durability.maximum_health)
+		)
 	var value := 0.0
 	var enemy_removal_value_ledger: Dictionary = planning_context.enemy_removal_value_ledger
-	for track in observation.enemy_tracks:
-		var attack_range: float = maximum_range + track.last_measurement.visual_radius
-		var predicted_position: Vector2 = _predict_track_position(track, final_sample.time)
-		var final_distance: float = (predicted_position - final_sample.displacement).length()
-		if final_distance > attack_range:
+	var is_moving: bool = action.movement != Vector2.ZERO
+	for weapon in observation.player_state.weapons:
+		if is_moving and not weapon.attack_model.timing.permitted_while_moving:
 			continue
-		value += (
-			track.recency_confidence
-			* _opportunity_value_model.enemy_removal_value(enemy_removal_value_ledger, track)
-			* _opportunity_value_model.enemy_kill_feasibility(observation, track)
+		var attack: Dictionary = _movement_state_projector.project_attack_model(
+			weapon, observation, is_moving
 		)
+		var attack_times: Array = _weapon_fire_model.scheduled_attack_times(
+			attack, 0.0, action.forecast_seconds
+		)
+		if attack_times.empty():
+			continue
+		var damage_per_attack: float = (
+			_weapon_fire_model.expected_damage_per_hit(attack)
+			* max(1.0, float(attack.delivery.paths.count))
+			* clamp(attack.delivery.paths.primary_probability_floor, 0.05, 1.0)
+		)
+		for attack_time in attack_times:
+			var player_displacement: Vector2 = _sample_displacement(action.samples, attack_time)
+			var targets := []
+			for track in observation.enemy_tracks:
+				if not track.visible:
+					continue
+				var predicted_position: Vector2 = _predict_track_position(track, attack_time)
+				var distance: float = (predicted_position - player_displacement).length()
+				if (
+					distance < attack.delivery.minimum_range
+					or distance > attack.delivery.maximum_range + 50.0
+				):
+					continue
+				targets.push_back({"track": track, "distance": distance})
+			targets.sort_custom(self, "_closer_proxy_target")
+			var damage_capacity := damage_per_attack
+			for target in targets:
+				if damage_capacity <= 0.0:
+					break
+				var track: Dictionary = target.track
+				var maximum_health: float = max(
+					1.0, float(track.behavior_profile.durability.maximum_health)
+				)
+				var applied_damage: float = min(
+					damage_capacity, float(remaining_health[track.track_id])
+				)
+				remaining_health[track.track_id] -= applied_damage
+				damage_capacity -= applied_damage
+				value += (
+					applied_damage
+					/ maximum_health
+					* track.recency_confidence
+					* _opportunity_value_model.enemy_removal_value(
+						enemy_removal_value_ledger, track
+					)
+				)
 	return value
+
+
+func _closer_proxy_target(left: Dictionary, right: Dictionary) -> bool:
+	return left.distance < right.distance
+
+
+func _sample_displacement(samples: Array, time: float) -> Vector2:
+	for sample in samples:
+		if sample.time >= time:
+			return sample.displacement
+	return samples.back().displacement
 
 
 func _predict_track_position(track: Dictionary, time: float) -> Vector2:
@@ -404,13 +462,6 @@ func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:
 	for weapon in weapons:
 		if is_moving and not weapon.attack_model.timing.permitted_while_moving:
 			continue
-		result = max(result, float(weapon.attack_model.delivery.maximum_range))
-	return result
-
-
-func _maximum_weapon_range(weapons: Array) -> float:
-	var result := 0.0
-	for weapon in weapons:
 		result = max(result, float(weapon.attack_model.delivery.maximum_range))
 	return result
 

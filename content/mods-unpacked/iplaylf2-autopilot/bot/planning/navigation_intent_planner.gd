@@ -39,9 +39,10 @@ func plan(
 ) -> Dictionary:
 	var scale: Dictionary = _spatial_scale(observation)
 	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var navigation_horizon_seconds: float = timing.effective_navigation_horizon_seconds
 	var map_extent: Dictionary = _map_extent(observation)
 	var sampling_radius: float = min(
-		map_extent.radius, scale.command_speed * timing.maximum_navigation_horizon_seconds
+		map_extent.radius, scale.command_speed * navigation_horizon_seconds
 	)
 	var baseline_direction_count: int = (
 		BASELINE_DIRECTION_COUNT
@@ -52,9 +53,7 @@ func plan(
 	var opportunity_directions: Array = _spatial_opportunity_value_model.candidate_directions(
 		observation, context
 	)
-	var origin: Dictionary = _evaluate_position(
-		observation, context, Vector2.ZERO, 0.0, scale.local_prediction_radius
-	)
+	var origin: Dictionary = _evaluate_position(observation, context, Vector2.ZERO, 0.0)
 	var best: Dictionary = origin
 	var position_evaluation_count: int = 1
 	var evaluated_directions := []
@@ -62,7 +61,13 @@ func plan(
 	var budgeted_position_evaluation_count: int = 0
 	for direction in baseline_directions:
 		var result: Dictionary = _evaluate_direction(
-			observation, context, direction, sampling_radius, map_extent, scale, timing
+			observation,
+			context,
+			direction,
+			sampling_radius,
+			map_extent,
+			scale,
+			navigation_horizon_seconds
 		)
 		if result.empty():
 			continue
@@ -82,7 +87,13 @@ func plan(
 			break
 		var work_started_usec: int = OS.get_ticks_usec()
 		var result: Dictionary = _evaluate_direction(
-			observation, context, direction, sampling_radius, map_extent, scale, timing
+			observation,
+			context,
+			direction,
+			sampling_radius,
+			map_extent,
+			scale,
+			navigation_horizon_seconds
 		)
 		compute_budget_policy.observe_work_duration(
 			compute_budget_policy.WORK_NAVIGATION_EVALUATION,
@@ -105,7 +116,13 @@ func plan(
 			break
 		var work_started_usec: int = OS.get_ticks_usec()
 		var result: Dictionary = _evaluate_direction(
-			observation, context, direction, sampling_radius, map_extent, scale, timing
+			observation,
+			context,
+			direction,
+			sampling_radius,
+			map_extent,
+			scale,
+			navigation_horizon_seconds
 		)
 		compute_budget_policy.observe_work_duration(
 			compute_budget_policy.WORK_NAVIGATION_EVALUATION,
@@ -152,7 +169,7 @@ func _evaluate_direction(
 	sampling_radius: float,
 	map_extent: Dictionary,
 	scale: Dictionary,
-	timing: Dictionary
+	navigation_horizon_seconds: float
 ) -> Dictionary:
 	var position: Vector2 = direction * sampling_radius
 	if not _inside_domain(position, map_extent):
@@ -160,37 +177,34 @@ func _evaluate_direction(
 	if position.length() <= scale.control_distance:
 		return {}
 	var forecast_seconds: float = min(
-		timing.maximum_navigation_horizon_seconds, position.length() / max(1.0, scale.command_speed)
+		navigation_horizon_seconds, position.length() / max(1.0, scale.command_speed)
 	)
-	return _evaluate_position(
-		observation, context, position, forecast_seconds, scale.local_prediction_radius
-	)
+	return _evaluate_position(observation, context, position, forecast_seconds)
 
 
 func _evaluate_position(
-	observation: Dictionary,
-	context: Dictionary,
-	position: Vector2,
-	time: float,
-	local_prediction_radius: float
+	observation: Dictionary, context: Dictionary, position: Vector2, time: float
 ) -> Dictionary:
 	var exposure: Dictionary = _exposure_model.sample_point(
 		observation, position, time, context.exposure_policy
 	)
+	var stationary_exposure: Dictionary = _exposure_model.sample_point(
+		observation, Vector2.ZERO, time, context.exposure_policy
+	)
 	var opportunity_delta: Dictionary = _spatial_opportunity_value_model.value_delta(
-		observation, context, position, time, local_prediction_radius
+		observation, context, position, time
 	)
 	var information_value: float = (
 		_map_information_value_model.value_delta(observation, position)
 		* context.state_factors.information_value_per_viewport
 	)
-	var exposure_cost: float = (
-		exposure.environmental_pressure
+	var exposure_cost_delta: float = (
+		(exposure.environmental_pressure - stationary_exposure.environmental_pressure)
 		* context.state_factors.environmental_exposure_value
 	)
 	return {
 		"position": position,
-		"value": opportunity_delta.total + information_value - exposure_cost,
+		"value": opportunity_delta.total + information_value - exposure_cost_delta,
 		"value_breakdown":
 		{
 			"material_opportunity": opportunity_delta.material_opportunity,
@@ -198,7 +212,7 @@ func _evaluate_position(
 			"tree_opportunity": opportunity_delta.tree_opportunity,
 			"enemy_opportunity": opportunity_delta.enemy_opportunity,
 			"map_information": information_value,
-			"environmental_exposure": -exposure_cost,
+			"environmental_exposure": -exposure_cost_delta,
 		},
 	}
 
@@ -225,8 +239,7 @@ func _spatial_scale(observation: Dictionary) -> Dictionary:
 	return {
 		"command_speed": command_speed,
 		"control_distance": movement_geometry.control_distance,
-		"local_prediction_radius":
-		command_speed * MovementTimingModel.derive(observation).maximum_local_horizon_seconds,
+		"local_prediction_radius": movement_geometry.local_prediction_radius,
 	}
 
 

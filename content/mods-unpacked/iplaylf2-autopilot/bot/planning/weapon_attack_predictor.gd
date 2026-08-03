@@ -56,6 +56,43 @@ func accumulate_outcome(
 				outcome,
 				planning_context
 			)
+	_cap_forecast_outcome(observation, outcome, planning_context)
+
+
+func _cap_forecast_outcome(
+	observation: Dictionary, outcome: Dictionary, planning_context: Dictionary
+) -> void:
+	var total_enemy_health := 0.0
+	var positive_removal_value := 0.0
+	var negative_removal_value := 0.0
+	var visible_enemy_count := 0.0
+	var enemy_removal_value_ledger: Dictionary = planning_context.enemy_removal_value_ledger
+	for track in observation.enemy_tracks:
+		if not track.visible:
+			continue
+		visible_enemy_count += 1.0
+		total_enemy_health += max(1.0, float(track.behavior_profile.durability.maximum_health))
+		var removal_value: float = _opportunity_value_model.enemy_removal_value(
+			enemy_removal_value_ledger, track
+		)
+		positive_removal_value += max(0.0, removal_value)
+		negative_removal_value += min(0.0, removal_value)
+	outcome.expected_weapon_damage = min(outcome.expected_weapon_damage, total_enemy_health)
+	outcome.expected_enemy_removal_value_progress = clamp(
+		outcome.expected_enemy_removal_value_progress,
+		negative_removal_value,
+		positive_removal_value
+	)
+	outcome.expected_kill_weight = min(outcome.expected_kill_weight, visible_enemy_count)
+	outcome.expected_critical_kill_weight = min(
+		outcome.expected_critical_kill_weight, outcome.expected_kill_weight
+	)
+	var total_tree_harvest_value := 0.0
+	for tree in observation.visible_world.trees:
+		total_tree_harvest_value += _opportunity_value_model.tree_reward_value(observation, tree)
+	outcome.expected_tree_harvest_value_progress = clamp(
+		outcome.expected_tree_harvest_value_progress, 0.0, total_tree_harvest_value
+	)
 
 
 func _has_global_material_reload(observation: Dictionary) -> bool:

@@ -17,7 +17,7 @@ var _movement_geometry: Reference = MovementGeometryModel.new()
 func apply(observation: Dictionary) -> Dictionary:
 	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var geometry: Dictionary = _movement_geometry.derive(observation)
-	var horizon_seconds: float = timing.maximum_navigation_horizon_seconds
+	var horizon_seconds: float = timing.effective_navigation_horizon_seconds
 	var included_projectiles := []
 	var deferred_projectile_count := 0
 	for projectile in observation.visible_world.enemy_projectiles:
