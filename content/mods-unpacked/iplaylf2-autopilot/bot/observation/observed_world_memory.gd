@@ -25,6 +25,8 @@ var _next_track_id := 1
 var _next_memory_record_id := 1
 var _odometry_position := Vector2.ZERO
 var _observed_edge_coordinates := {"left": null, "right": null, "top": null, "bottom": null}
+var _observation_cell_size := 0.0
+var _observation_cell_last_seen := {}
 var _tracks := {}
 var _visible_source_track_ids := {}
 var _remembered_entities := {}
@@ -41,11 +43,13 @@ func update(
 	visible_entities: Array,
 	party_state: Dictionary,
 	visible_allied_agents: Array,
-	player_pickup: Dictionary
+	player_pickup: Dictionary,
+	visibility: Dictionary
 ) -> void:
 	_elapsed_seconds += delta_seconds
 	_odometry_position += position_delta
 	_record_visible_edges(visible_edges)
+	_update_observation_coverage(visibility.viewport_size, visibility.viewport_offset_from_player)
 	_update_enemy_tracks(visible_enemies)
 	_entity_existence_estimator.update(delta_seconds, position_delta, visible_allied_agents)
 	_update_remembered_entities(delta_seconds, visible_entities, party_state, player_pickup)
@@ -70,7 +74,49 @@ func get_localization_state() -> Dictionary:
 		"map_y": map_y if map_y_known else null,
 		"map_position": Vector2(map_x, map_y) if map_x_known and map_y_known else null,
 		"map_bounds": _get_map_bounds(),
+		"observation_grid_cell_size": _observation_cell_size,
+		"observation_cells": _get_observation_cells(),
 	}
+
+
+func _update_observation_coverage(
+	viewport_size: Vector2, viewport_offset_from_player: Vector2
+) -> void:
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+	if _observation_cell_size <= 0.0:
+		# Half a viewport keeps the coverage state bounded by arena geometry while
+		# still representing overlap between adjacent observations.
+		_observation_cell_size = max(1.0, min(viewport_size.x, viewport_size.y) * 0.5)
+	var visible_rect := Rect2(_odometry_position + viewport_offset_from_player, viewport_size)
+	var first_x := int(floor(visible_rect.position.x / _observation_cell_size))
+	var last_x := int(floor((visible_rect.end.x - 0.001) / _observation_cell_size))
+	var first_y := int(floor(visible_rect.position.y / _observation_cell_size))
+	var last_y := int(floor((visible_rect.end.y - 0.001) / _observation_cell_size))
+	for grid_x in range(first_x, last_x + 1):
+		for grid_y in range(first_y, last_y + 1):
+			_observation_cell_last_seen[_observation_cell_key(grid_x, grid_y)] = {
+				"grid_x": grid_x,
+				"grid_y": grid_y,
+				"last_seen_at_seconds": _elapsed_seconds,
+			}
+
+
+func _get_observation_cells() -> Array:
+	var result := []
+	for cell in _observation_cell_last_seen.values():
+		result.push_back(
+			{
+				"grid_x": cell.grid_x,
+				"grid_y": cell.grid_y,
+				"seconds_since_observed": _elapsed_seconds - cell.last_seen_at_seconds,
+			}
+		)
+	return result
+
+
+func _observation_cell_key(grid_x: int, grid_y: int) -> String:
+	return "%s:%s" % [grid_x, grid_y]
 
 
 func get_enemy_tracks() -> Array:

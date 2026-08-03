@@ -65,6 +65,7 @@ func plan(
 	var evaluated_directions := []
 	var direction_scores := []
 	var extra_position_evaluation_count: int = 0
+	var baseline_opportunity_evaluation_count: int = 0
 	for direction in baseline_directions:
 		var result: Dictionary = _evaluate_direction(
 			observation,
@@ -84,6 +85,34 @@ func plan(
 		direction_scores.push_back({"movement": direction, "score": result.value})
 		if result.value > best.value:
 			best = result
+
+	# The strongest observed opportunity is part of the bounded baseline search.
+	# Treating every value-derived direction as optional made frame pressure erase
+	# the only heading that could actually reach a sparse pickup or enemy.
+	for candidate in opportunity_directions:
+		var direction: Vector2 = candidate.direction
+		if _has_similar_direction(evaluated_directions, direction):
+			continue
+		var result: Dictionary = _evaluate_direction(
+			observation,
+			context,
+			direction,
+			sampling_radius,
+			map_extent,
+			scale,
+			navigation_horizon_seconds,
+			stationary_exposure_by_time,
+			stationary_opportunity_by_time
+		)
+		if result.empty():
+			continue
+		position_evaluation_count += 1
+		baseline_opportunity_evaluation_count += 1
+		evaluated_directions.push_back(direction)
+		direction_scores.push_back({"movement": direction, "score": result.value})
+		if result.value > best.value:
+			best = result
+		break
 
 	for candidate in opportunity_directions:
 		if extra_position_evaluation_count >= extra_evaluation_limit:
@@ -167,6 +196,7 @@ func plan(
 		"position_evaluation_count": position_evaluation_count,
 		"baseline_position_evaluation_count":
 		position_evaluation_count - extra_position_evaluation_count,
+		"baseline_opportunity_evaluation_count": baseline_opportunity_evaluation_count,
 		"extra_position_evaluation_count": extra_position_evaluation_count,
 		"extra_position_evaluation_limit": extra_evaluation_limit,
 		"origin_value": origin.value,

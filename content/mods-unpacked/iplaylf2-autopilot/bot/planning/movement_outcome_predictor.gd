@@ -8,12 +8,6 @@ extends Reference
 const WeaponAttackPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_attack_predictor.gd"
 )
-const WeaponFireModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
-)
-const EnemyMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
-)
 const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 )
@@ -46,8 +40,6 @@ const CollisionHealthImpactModel := preload(
 )
 
 var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
-var _weapon_fire_model: Reference = WeaponFireModel.new()
-var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
 var _velocity_obstacle_risk_model: Reference = VelocityObstacleRiskModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
@@ -61,30 +53,18 @@ var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
 
 
 func predict(
-	observation: Dictionary,
-	action: Dictionary,
-	previous_movement: Vector2,
-	include_weapon_prediction: bool,
-	planning_context: Dictionary
+	observation: Dictionary, action: Dictionary, planning_context: Dictionary
 ) -> Dictionary:
-	var base_outcome: Dictionary = predict_base(
-		observation, action, previous_movement, planning_context
-	)
-	return complete_prediction(
-		observation, action, base_outcome, include_weapon_prediction, planning_context
-	)
+	var base_outcome: Dictionary = predict_base(observation, action, planning_context)
+	return complete_prediction(observation, action, base_outcome, planning_context)
 
 
 # The expensive movement, battlefield, and collision projection is independent
 # of weapon prediction. Full weapon prediction reuses this immutable base.
 func predict_base(
-	observation: Dictionary,
-	action: Dictionary,
-	previous_movement: Vector2,
-	planning_context: Dictionary
+	observation: Dictionary, action: Dictionary, planning_context: Dictionary
 ) -> Dictionary:
 	var outcome := {
-		"weapon_prediction_included": false,
 		"material_acquisition_value": 0.0,
 		"material_approach_progress": 0.0,
 		"consumable_recovery_approach_progress": 0.0,
@@ -95,13 +75,10 @@ func predict_base(
 		"expected_allied_damage": 0.0,
 		"expected_enemy_removal_value_progress": 0.0,
 		"enemy_removal_value_approach_progress": 0.0,
-		"enemy_removal_value_in_range": 0.0,
 		"tree_opportunity_progress": 0.0,
-		"tree_harvest_value_in_range": 0.0,
 		"expected_tree_harvest_value_progress": 0.0,
 		"standing_seconds": 0.0,
 		"moving_seconds": 0.0,
-		"heading_continuity": 0.0,
 		"navigation_terminal_value_gain": 0.0,
 		"expected_attack_hits": 0.0,
 		"expected_rule_damage": 0.0,
@@ -123,7 +100,7 @@ func predict_base(
 	)
 	outcome.merge(battlefield_outcome, true)
 	outcome.merge(_velocity_obstacle_risk_model.evaluate(observation, action), true)
-	_predict_action_outcomes(observation, action, previous_movement, planning_context, outcome)
+	_predict_action_outcomes(observation, action, planning_context, outcome)
 	outcome.collision_risk = max(outcome.peak_path_collision_risk, outcome.velocity_obstacle_risk)
 	outcome.hostile_collision_risk = max(
 		outcome.peak_path_collision_risk, outcome.hostile_velocity_obstacle_risk
@@ -156,16 +133,13 @@ func complete_prediction(
 	observation: Dictionary,
 	action: Dictionary,
 	base_outcome: Dictionary,
-	include_weapon_prediction: bool,
 	planning_context: Dictionary
 ) -> Dictionary:
 	# Completion only updates scalar outcome fields. Keep immutable arrays and
 	# dictionaries shared instead of recursively copying the whole forecast for
-	# every screening and exact-scoring pass.
+	# the base forecast and its semantic completion.
 	var outcome: Dictionary = base_outcome.duplicate(false)
-	outcome.weapon_prediction_included = include_weapon_prediction
-	if include_weapon_prediction:
-		_weapon_attack_predictor.accumulate_outcome(observation, action, outcome, planning_context)
+	_weapon_attack_predictor.accumulate_outcome(observation, action, outcome, planning_context)
 	_player_rule_outcome_predictor.accumulate_outcome(
 		observation,
 		action,
@@ -176,11 +150,7 @@ func complete_prediction(
 
 
 func _predict_action_outcomes(
-	observation: Dictionary,
-	action: Dictionary,
-	previous_movement: Vector2,
-	planning_context: Dictionary,
-	outcome: Dictionary
+	observation: Dictionary, action: Dictionary, planning_context: Dictionary, outcome: Dictionary
 ) -> void:
 	var samples: Array = action.samples
 	assert(not samples.empty())
@@ -197,43 +167,16 @@ func _predict_action_outcomes(
 	outcome.tree_opportunity_progress = _tree_opportunity_progress(
 		observation, action, committed_samples.back().displacement, planning_context
 	)
-	outcome.tree_harvest_value_in_range = _weapon_attack_predictor.estimate_tree_harvest_value(
-		observation, action, planning_context
-	)
 	var final_sample: Dictionary = samples.back()
 	var enemy_approach_value: float = _spatial_opportunity_value_model.local_enemy_value_delta(
 		observation, planning_context, final_sample.displacement, final_sample.time
 	)
 	outcome.enemy_removal_value_approach_progress = enemy_approach_value
-	outcome.enemy_removal_value_in_range = _enemy_removal_value_in_range(
-		observation, action, planning_context
-	)
 
 	if action.movement == Vector2.ZERO:
 		outcome.standing_seconds = action.forecast_seconds
 	else:
 		outcome.moving_seconds = action.forecast_seconds
-	if previous_movement.length_squared() > 0.0 and action.movement.length_squared() > 0.0:
-		var committed_sample: Dictionary = committed_samples.back()
-		var zero_input_displacement: Vector2 = _player_kinematics_model.predict_displacement(
-			observation, Vector2.ZERO, committed_sample.time
-		)
-		var controlled_displacement: Vector2 = (
-			committed_sample.displacement
-			- zero_input_displacement
-		)
-		if controlled_displacement.length_squared() > 0.0:
-			var intended_control_distance: float = (
-				_movement_geometry.derive(observation).command_speed
-				* committed_sample.time
-			)
-			var control_effectiveness := clamp(
-				controlled_displacement.length() / max(1.0, intended_control_distance), 0.0, 1.0
-			)
-			outcome.heading_continuity = (
-				previous_movement.normalized().dot(controlled_displacement.normalized())
-				* control_effectiveness
-			)
 
 
 func _material_acquisition_value(observation: Dictionary, samples: Array) -> float:
@@ -344,93 +287,6 @@ func _interaction_potential(
 ) -> float:
 	var gap: float = max(0.0, distance - interaction_radius)
 	return exp(-gap / max(1.0, reach_distance))
-
-
-func _enemy_removal_value_in_range(
-	observation: Dictionary, action: Dictionary, planning_context: Dictionary
-) -> float:
-	var remaining_health := {}
-	for track in observation.enemy_tracks:
-		if not track.visible:
-			continue
-		remaining_health[track.track_id] = max(
-			1.0, float(track.behavior_profile.durability.maximum_health)
-		)
-	var value := 0.0
-	var enemy_removal_value_ledger: Dictionary = planning_context.enemy_removal_value_ledger
-	var is_moving: bool = action.movement != Vector2.ZERO
-	for weapon in observation.player_state.weapons:
-		if is_moving and not weapon.attack_model.timing.permitted_while_moving:
-			continue
-		var attack: Dictionary = _movement_state_projector.project_attack_model(
-			weapon, observation, is_moving
-		)
-		var attack_times: Array = _weapon_fire_model.scheduled_attack_times(
-			attack, 0.0, action.forecast_seconds
-		)
-		if attack_times.empty():
-			continue
-		var damage_per_attack: float = (
-			_weapon_fire_model.expected_damage_per_hit(attack)
-			* max(1.0, float(attack.delivery.paths.count))
-			* clamp(attack.delivery.paths.primary_probability_floor, 0.05, 1.0)
-		)
-		for attack_time in attack_times:
-			var player_displacement: Vector2 = _sample_displacement(action.samples, attack_time)
-			var targets := []
-			for track in observation.enemy_tracks:
-				if not track.visible:
-					continue
-				var predicted_position: Vector2 = _predict_enemy_position(
-					track, attack_time, player_displacement
-				)
-				var distance: float = (predicted_position - player_displacement).length()
-				if (
-					distance < attack.delivery.minimum_range
-					or distance > attack.delivery.maximum_range + 50.0
-				):
-					continue
-				targets.push_back({"track": track, "distance": distance})
-			targets.sort_custom(self, "_closer_proxy_target")
-			var damage_capacity := damage_per_attack
-			for target in targets:
-				if damage_capacity <= 0.0:
-					break
-				var track: Dictionary = target.track
-				var maximum_health: float = max(
-					1.0, float(track.behavior_profile.durability.maximum_health)
-				)
-				var applied_damage: float = min(
-					damage_capacity, float(remaining_health[track.track_id])
-				)
-				remaining_health[track.track_id] -= applied_damage
-				damage_capacity -= applied_damage
-				value += (
-					applied_damage
-					/ maximum_health
-					* track.recency_confidence
-					* _opportunity_value_model.enemy_removal_value(
-						enemy_removal_value_ledger, track
-					)
-				)
-	return value
-
-
-func _closer_proxy_target(left: Dictionary, right: Dictionary) -> bool:
-	return left.distance < right.distance
-
-
-func _sample_displacement(samples: Array, time: float) -> Vector2:
-	for sample in samples:
-		if sample.time >= time:
-			return sample.displacement
-	return samples.back().displacement
-
-
-func _predict_enemy_position(
-	track: Dictionary, time: float, player_displacement := Vector2.ZERO
-) -> Vector2:
-	return _enemy_motion_predictor.predict_position(track, time, player_displacement)
 
 
 func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:

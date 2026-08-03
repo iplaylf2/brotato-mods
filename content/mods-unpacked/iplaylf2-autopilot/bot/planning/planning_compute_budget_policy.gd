@@ -11,7 +11,6 @@ const DEFAULT_WORK_UNIT_DURATION_USEC := 150.0
 const DEADLINE_GUARD_MULTIPLIER := 1.5
 const WORK_NAVIGATION_EVALUATION := "navigation_evaluation"
 const WORK_MOVEMENT_REFINEMENT := "movement_refinement"
-const WORK_WEAPON_PREDICTION := "weapon_prediction"
 
 var _planning_duration_usec_ema := 0.0
 var _has_planning_duration_estimate := false

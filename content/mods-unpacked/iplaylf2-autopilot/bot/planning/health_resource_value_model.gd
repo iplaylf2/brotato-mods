@@ -110,6 +110,31 @@ func estimate(observation: Dictionary, rule_projection: Dictionary) -> Dictionar
 	}
 
 
+func loss_value(expected_health_loss: float, health_value: Dictionary) -> float:
+	var loss := max(0.0, expected_health_loss)
+	if loss <= 0.0:
+		return 0.0
+	var buffer: float = max(1.0, health_value.effective_survival_buffer)
+	var remaining_fraction: float = health_value.wave_remaining_fraction
+	var priced_within_buffer := min(loss, max(0.0, buffer - 1.0))
+	# Integrate the same reciprocal scarcity curve used by estimate(). A linear
+	# shadow price materially understates an action that consumes most of the
+	# remaining hit buffer, even when its expected loss is not literally lethal.
+	var value := (
+		remaining_fraction
+		* (
+			BASE_HEALTH_VALUE * priced_within_buffer
+			+ (
+				SURVIVAL_BUFFER_VALUE
+				* (1.0 + remaining_fraction)
+				* log(buffer / max(1.0, buffer - priced_within_buffer))
+			)
+		)
+	)
+	var buffer_overrun := max(0.0, loss - priced_within_buffer)
+	return value + buffer_overrun * health_value.terminal_health_value
+
+
 func _observed_consumable_supply(observation: Dictionary) -> float:
 	var result := 0.0
 	for entity in observation.get("remembered_entities", []):

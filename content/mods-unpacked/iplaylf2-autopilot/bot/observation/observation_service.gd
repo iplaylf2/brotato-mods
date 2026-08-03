@@ -77,7 +77,8 @@ func _build_observation(player_index: int, player: Node2D, delta: float) -> Dict
 		world_observation.entity_memory_observations,
 		party_state,
 		world_observation.visible_world.allied_agents,
-		player_state.pickup
+		player_state.pickup,
+		world_observation.visibility
 	)
 
 	return {

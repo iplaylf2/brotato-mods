@@ -1,7 +1,7 @@
 extends Reference
 
-# Public planning boundary. It performs budgeted screening followed by weapon-aware
-# movement-action scoring and returns a complete, inspectable score ledger.
+# Public planning boundary. It scores every retained movement action with one
+# complete semantic model and returns an inspectable utility ledger.
 
 const MovementActionGenerator := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_generator.gd"
@@ -36,8 +36,6 @@ const MovementTimingModel := preload(
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
 )
-const COMPARABLE_WEAPON_PREDICTION_COUNT := 2
-
 var _action_generator: Reference = MovementActionGenerator.new()
 var _compute_budget_policy: Reference = PlanningComputeBudgetPolicy.new()
 var _search_fidelity_allocator: Reference = PlanningSearchFidelityAllocator.new()
@@ -54,7 +52,7 @@ func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
 	_compute_budget_policy.set_frame_budget_context(frame_budget_context)
 
 
-func plan(observation: Dictionary, previous_movement: Vector2) -> Dictionary:
+func plan(observation: Dictionary) -> Dictionary:
 	if observation.empty() or not observation.has("player_state"):
 		return _empty_plan("observation_unavailable")
 	if observation.player_state.dead:
@@ -85,31 +83,13 @@ func plan(observation: Dictionary, previous_movement: Vector2) -> Dictionary:
 	var actions: Array = _action_generator.generate(
 		planning_observation, navigation_intent, search_fidelity
 	)
-	var base_predictions := []
-
+	var scored_actions := []
 	for action in actions:
-		var base_outcome: Dictionary = _outcome_predictor.predict_base(
-			planning_observation, action, previous_movement, context
-		)
-		base_predictions.push_back({"action": action, "outcome": base_outcome})
-	phase_duration_usec.baseline_prediction = OS.get_ticks_usec() - phase_started_usec
+		scored_actions.push_back(_score_action(planning_observation, action, context))
+	phase_duration_usec.action_evaluation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
 
-	var screened_actions := []
-	for candidate in base_predictions:
-		var action: Dictionary = candidate.action
-		var base_outcome: Dictionary = candidate.outcome
-		var outcome: Dictionary = _outcome_predictor.complete_prediction(
-			planning_observation, action, base_outcome, false, context
-		)
-		var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
-		var scored_action: Dictionary = _make_scored_action(action, outcome, evaluation)
-		scored_action.base_outcome = base_outcome
-		screened_actions.push_back(scored_action)
-	phase_duration_usec.screening_completion = OS.get_ticks_usec() - phase_started_usec
-	phase_started_usec = OS.get_ticks_usec()
-
-	var direction_scores: Array = screened_actions.duplicate()
+	var direction_scores: Array = scored_actions.duplicate()
 	var refined_action_count := 0
 	while (
 		refined_action_count < search_fidelity.movement_refinement_limit
@@ -126,73 +106,19 @@ func plan(observation: Dictionary, previous_movement: Vector2) -> Dictionary:
 		)
 		refined_action_count += 1
 		actions.push_back(refined_action)
-		var refined_base_outcome: Dictionary = _outcome_predictor.predict_base(
-			planning_observation, refined_action, previous_movement, context
-		)
-		var outcome: Dictionary = _outcome_predictor.complete_prediction(
-			planning_observation, refined_action, refined_base_outcome, false, context
-		)
-		var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
-		var scored_action: Dictionary = _make_scored_action(refined_action, outcome, evaluation)
-		scored_action.base_outcome = refined_base_outcome
-		screened_actions.push_back(scored_action)
+		var scored_action: Dictionary = _score_action(planning_observation, refined_action, context)
+		scored_actions.push_back(scored_action)
 		direction_scores.push_back(scored_action)
 		_compute_budget_policy.observe_work_duration(
 			_compute_budget_policy.WORK_MOVEMENT_REFINEMENT,
 			float(OS.get_ticks_usec() - work_started_usec)
 		)
 
-	var ranked_screened_actions := []
-	for scored in screened_actions:
-		_insert_descending(ranked_screened_actions, scored, screened_actions.size())
+	var ranked_actions := []
+	for scored in scored_actions:
+		_insert_descending(ranked_actions, scored, scored_actions.size())
 	phase_duration_usec.refinement = OS.get_ticks_usec() - phase_started_usec
-	phase_started_usec = OS.get_ticks_usec()
-
-	var exact_scored_actions := []
-	# One exact prediction cannot affect selection: its action already ranked first
-	# under the screening proxy and would win by default. Exact prediction starts
-	# only when the deadline can admit two comparable candidates; otherwise every
-	# candidate keeps the same screening-proxy semantics.
-	var can_compare_exact_weapon_outcomes: bool = (
-		ranked_screened_actions.size() >= COMPARABLE_WEAPON_PREDICTION_COUNT
-		and _compute_budget_policy.can_start_budgeted_work(
-			compute_budget,
-			_compute_budget_policy.WORK_WEAPON_PREDICTION,
-			COMPARABLE_WEAPON_PREDICTION_COUNT
-		)
-	)
-	if can_compare_exact_weapon_outcomes:
-		for rank_index in ranked_screened_actions.size():
-			if (
-				rank_index >= COMPARABLE_WEAPON_PREDICTION_COUNT
-				and not _compute_budget_policy.can_start_budgeted_work(
-					compute_budget, _compute_budget_policy.WORK_WEAPON_PREDICTION
-				)
-			):
-				break
-			var work_started_usec := OS.get_ticks_usec()
-			var screened: Dictionary = ranked_screened_actions[rank_index]
-			var outcome: Dictionary = _outcome_predictor.complete_prediction(
-				planning_observation, screened.action, screened.base_outcome, true, context
-			)
-			var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
-			_insert_descending(
-				exact_scored_actions,
-				_make_scored_action(screened.action, outcome, evaluation),
-				ranked_screened_actions.size()
-			)
-			_compute_budget_policy.observe_work_duration(
-				_compute_budget_policy.WORK_WEAPON_PREDICTION,
-				float(OS.get_ticks_usec() - work_started_usec)
-			)
-	phase_duration_usec.weapon_prediction = OS.get_ticks_usec() - phase_started_usec
-
-	var selectable_actions: Array = (
-		exact_scored_actions
-		if can_compare_exact_weapon_outcomes
-		else ranked_screened_actions
-	)
-	var plan: Dictionary = _action_selector.select(selectable_actions)
+	var plan: Dictionary = _action_selector.select(ranked_actions)
 	var planning_duration_usec := float(OS.get_ticks_usec() - planning_started_usec)
 	compute_budget.merge(
 		_compute_budget_policy.observe_planning_duration(planning_duration_usec), true
@@ -215,14 +141,8 @@ func plan(observation: Dictionary, previous_movement: Vector2) -> Dictionary:
 	plan.projectile_filter.erase("filtered_observation")
 	plan.navigation_intent = navigation_intent.duplicate(true)
 	plan.action_count = actions.size()
-	plan.weapon_prediction_count = exact_scored_actions.size()
-	plan.weapon_scoring_mode = (
-		"exact_comparison"
-		if can_compare_exact_weapon_outcomes
-		else "screening_proxy"
-	)
 	plan.refined_action_count = refined_action_count
-	plan.ranked_actions = _summarize_actions(selectable_actions, 3)
+	plan.ranked_actions = _summarize_actions(ranked_actions, 3)
 	plan.model = _model_diagnostics(observation, plan, navigation_intent)
 	return plan
 
@@ -269,6 +189,15 @@ func _make_scored_action(
 		"field_utility_breakdown": evaluation.field_utility_breakdown,
 		"objective_utility_breakdown": evaluation.objective_utility_breakdown,
 	}
+
+
+func _score_action(observation: Dictionary, action: Dictionary, context: Dictionary) -> Dictionary:
+	var base_outcome: Dictionary = _outcome_predictor.predict_base(observation, action, context)
+	var outcome: Dictionary = _outcome_predictor.complete_prediction(
+		observation, action, base_outcome, context
+	)
+	var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
+	return _make_scored_action(action, outcome, evaluation)
 
 
 func _insert_descending(entries: Array, entry: Dictionary, limit: int) -> void:

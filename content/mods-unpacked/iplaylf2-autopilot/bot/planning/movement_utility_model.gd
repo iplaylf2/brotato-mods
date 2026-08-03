@@ -51,7 +51,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"integrated_environmental_exposure": -health_price,
 				"terminal_collision_risk":
 				-terminal_health_price * max(1.0, health_value.observed_hit_reserve),
-				"expected_health_loss": -health_price,
+				"health_resource_loss_value": -1.0,
 				"movement_damage_exposure_reduction": health_price,
 			},
 			"recovery":
@@ -91,15 +91,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"expected_allied_damage": removal_value_ledger.mean_value_per_health,
 			},
 			"navigation": {"navigation_terminal_value_gain": 1.0},
-			# This is a switching cost, not a goal preference.
-			"control_stability": {"heading_continuity": 0.1},
-		},
-		# Proxies estimate the same target values before exact weapon geometry is
-		# available; they disappear from fully evaluated actions.
-		"screening_proxy_weights":
-		{
-			"economy": {"tree_harvest_value_in_range": 1.0},
-			"combat": {"enemy_removal_value_in_range": 1.0},
 		},
 		"environmental_pressure_weights":
 		{
@@ -135,6 +126,10 @@ func build_context(observation: Dictionary) -> Dictionary:
 
 
 func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
+	var scored_outcome := outcome.duplicate(false)
+	scored_outcome.health_resource_loss_value = _health_resource_value_model.loss_value(
+		outcome.expected_health_loss, context.state_factors.health_resource_value
+	)
 	var field_utility_breakdown := {}
 	var objective_utility_breakdown := {}
 	var score := 0.0
@@ -142,23 +137,13 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 		var objective_score := 0.0
 		for name in context.objective_weights[objective_name]:
 			var contribution: float = (
-				outcome.get(name, 0.0)
+				scored_outcome.get(name, 0.0)
 				* context.objective_weights[objective_name][name]
 			)
 			field_utility_breakdown[name] = contribution
 			objective_score += contribution
 			objective_utility_breakdown[objective_name] = objective_score
 			score += contribution
-	if not outcome.weapon_prediction_included:
-		for objective_name in context.screening_proxy_weights:
-			for name in context.screening_proxy_weights[objective_name]:
-				var contribution: float = (
-					outcome.get(name, 0.0)
-					* context.screening_proxy_weights[objective_name][name]
-				)
-				field_utility_breakdown[name] = contribution
-				objective_utility_breakdown[objective_name] += contribution
-				score += contribution
 	return {
 		"score": score,
 		"field_utility_breakdown": field_utility_breakdown,
@@ -170,11 +155,6 @@ func _assert_valid_scoring_schema(context: Dictionary) -> void:
 	var field_owners := {}
 	for objective_name in context.objective_weights:
 		for field_name in context.objective_weights[objective_name]:
-			assert(not field_owners.has(field_name))
-			field_owners[field_name] = objective_name
-	for objective_name in context.screening_proxy_weights:
-		assert(context.objective_weights.has(objective_name))
-		for field_name in context.screening_proxy_weights[objective_name]:
 			assert(not field_owners.has(field_name))
 			field_owners[field_name] = objective_name
 

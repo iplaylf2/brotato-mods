@@ -23,55 +23,6 @@ var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
 
 
-# Screening uses the same current cooldown, legal primary target, and movement
-# permission as exact prediction. It estimates only direct tree hits and avoids
-# the old average-fire-rate proxy that routinely collapsed to zero in exact scoring.
-func estimate_tree_harvest_value(
-	observation: Dictionary, action: Dictionary, planning_context: Dictionary
-) -> float:
-	var result := 0.0
-	var harvested_hits := {}
-	for observed_weapon in observation.player_state.weapons:
-		if (
-			action.movement != Vector2.ZERO
-			and not observed_weapon.attack_model.timing.permitted_while_moving
-		):
-			continue
-		var attack_model: Dictionary = _movement_state_projector.project_attack_model(
-			observed_weapon, observation, action.movement != Vector2.ZERO
-		)
-		var shot_times: Array = _weapon_fire_model.scheduled_attack_times(
-			attack_model, 0.0, action.forecast_seconds
-		)
-		for shot_time in shot_times:
-			var displacement: Vector2 = _sample_displacement(action.samples, shot_time)
-			var targets := _targets_at_time(observation, displacement, shot_time, planning_context)
-			var primary: Dictionary = _nearest_legal_target(
-				targets,
-				attack_model.delivery.minimum_range,
-				attack_model.delivery.maximum_range + 50.0
-			)
-			if primary.empty() or primary.kind != "tree":
-				continue
-			var required_hits: float = max(1.0, primary.required_hits)
-			var remaining_hits: float = max(
-				0.0, required_hits - harvested_hits.get(primary.track_id, 0.0)
-			)
-			var expected_hits: float = min(
-				remaining_hits,
-				(
-					max(1.0, float(attack_model.delivery.paths.count))
-					* clamp(attack_model.delivery.paths.primary_probability_floor, 0.0, 1.0)
-				)
-			)
-			harvested_hits[primary.track_id] = (
-				harvested_hits.get(primary.track_id, 0.0)
-				+ expected_hits
-			)
-			result += expected_hits / required_hits * primary.harvest_value
-	return result
-
-
 func accumulate_outcome(
 	observation: Dictionary, action: Dictionary, outcome: Dictionary, planning_context: Dictionary
 ) -> void:
