@@ -3,10 +3,18 @@ extends Reference
 # Projects movement-conditioned player rules from the observed active state to
 # a candidate movement state. It never mutates the player or observed weapons.
 
+var _cache_physics_frame := -1
+var _attack_models_by_state_and_slot := {}
+var _runtime_stats_by_state := {}
+
 
 func project_attack_model(
 	observed_weapon: Dictionary, observation: Dictionary, is_moving: bool
 ) -> Dictionary:
+	_prepare_cache(observation)
+	var cache_key := "%s:%s" % [int(is_moving), observed_weapon.slot]
+	if _attack_models_by_state_and_slot.has(cache_key):
+		return _attack_models_by_state_and_slot[cache_key]
 	var projected: Dictionary = observed_weapon.attack_model.duplicate(true)
 	var stat_deltas := _movement_stat_deltas(observation.player_state.effect_rules, is_moving)
 	var effective_stats: Dictionary = observation.player_state.effective_stats
@@ -38,9 +46,8 @@ func project_attack_model(
 		_attack_speed_cooldown_factor(current_attack_speed + attack_speed_delta)
 		/ _attack_speed_cooldown_factor(current_attack_speed)
 	)
-	projected.timing.cycle_seconds = max(0.05, projected.timing.cycle_seconds * attack_speed_factor)
-	projected.timing.long_cycle_seconds = max(
-		projected.timing.cycle_seconds, projected.timing.long_cycle_seconds * attack_speed_factor
+	projected.timing.expected_attack_interval_seconds = max(
+		0.05, projected.timing.expected_attack_interval_seconds * attack_speed_factor
 	)
 	projected.impact.critical_chance = clamp(
 		projected.impact.critical_chance + stat_deltas.get("critical_chance", 0.0) / 100.0, 0.0, 1.0
@@ -56,10 +63,15 @@ func project_attack_model(
 	projected.delivery.paths.maximum_travel_distance = max(
 		0.0, projected.delivery.paths.maximum_travel_distance + range_delta
 	)
+	_attack_models_by_state_and_slot[cache_key] = projected
 	return projected
 
 
 func project_runtime_stats(observation: Dictionary, is_moving: bool) -> Dictionary:
+	_prepare_cache(observation)
+	var cache_key := int(is_moving)
+	if _runtime_stats_by_state.has(cache_key):
+		return _runtime_stats_by_state[cache_key]
 	var projected: Dictionary = observation.player_state.runtime_stats.duplicate(true)
 	var stat_deltas := _movement_stat_deltas(observation.player_state.effect_rules, is_moving)
 	projected.armor += stat_deltas.get("armor", 0.0)
@@ -67,7 +79,17 @@ func project_runtime_stats(observation: Dictionary, is_moving: bool) -> Dictiona
 		projected.dodge_chance + stat_deltas.get("dodge", 0.0) / 100.0, 0.0, 1.0
 	)
 	projected.move_speed = max(0.0, projected.move_speed + stat_deltas.get("speed", 0.0))
+	_runtime_stats_by_state[cache_key] = projected
 	return projected
+
+
+func _prepare_cache(observation: Dictionary) -> void:
+	var physics_frame: int = observation.get("physics_frame", -1)
+	if physics_frame >= 0 and physics_frame == _cache_physics_frame:
+		return
+	_cache_physics_frame = physics_frame
+	_attack_models_by_state_and_slot.clear()
+	_runtime_stats_by_state.clear()
 
 
 func _attack_speed_cooldown_factor(attack_speed: float) -> float:

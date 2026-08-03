@@ -33,7 +33,10 @@ var _shared_projectile_positions := []
 
 
 func predict(
-	observation: Dictionary, action_forecast: Dictionary, influence_weights: Dictionary
+	observation: Dictionary,
+	action_forecast: Dictionary,
+	influence_weights: Dictionary,
+	committed_seconds: float
 ) -> Dictionary:
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := _empty_result()
@@ -66,6 +69,11 @@ func predict(
 		)
 		var exposure := _evaluate_channels(channels, influence_weights)
 		_accumulate_result(result, channels, exposure, step_seconds)
+		var committed_step_seconds: float = max(
+			0.0, min(sample.time, committed_seconds) - previous_time
+		)
+		if committed_step_seconds > 0.0:
+			_accumulate_committed_collision(result, channels, exposure, committed_step_seconds)
 		terminal_environmental_pressure = exposure.environmental_pressure
 		previous_time = sample.time
 	result.terminal_environmental_pressure = terminal_environmental_pressure
@@ -721,6 +729,21 @@ func _accumulate_result(
 	)
 
 
+func _accumulate_committed_collision(
+	result: Dictionary, channels: Dictionary, exposure: Dictionary, step_seconds: float
+) -> void:
+	result.committed_peak_path_collision_risk = max(
+		result.committed_peak_path_collision_risk, exposure.path_collision_risk
+	)
+	result.committed_integrated_hostile_collision_risk += (
+		exposure.path_collision_risk
+		* step_seconds
+	)
+	result.committed_maximum_path_collision_damage = max(
+		result.committed_maximum_path_collision_damage, channels.contact_damage
+	)
+
+
 func _get_influence_sources(observation: Dictionary) -> Array:
 	_prepare_shared_inputs(observation)
 	return _shared_influence_sources
@@ -817,6 +840,9 @@ func _empty_result() -> Dictionary:
 		"peak_path_collision_risk": 0.0,
 		"integrated_hostile_collision_risk": 0.0,
 		"maximum_path_collision_damage": 0.0,
+		"committed_peak_path_collision_risk": 0.0,
+		"committed_integrated_hostile_collision_risk": 0.0,
+		"committed_maximum_path_collision_damage": 0.0,
 		"initial_environmental_pressure": 0.0,
 		"terminal_environmental_pressure": 0.0,
 		"mean_environmental_pressure_derivative": 0.0,

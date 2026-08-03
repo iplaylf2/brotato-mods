@@ -27,7 +27,7 @@ var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 
 
-func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
+func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: float) -> Dictionary:
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var timing: Dictionary = MovementTimingModel.derive(observation)
@@ -40,6 +40,9 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 	var projectile_risk := 0.0
 	var ally_risk := 0.0
 	var maximum_collision_damage := 0.0
+	var committed_enemy_risk := 0.0
+	var committed_projectile_risk := 0.0
+	var committed_maximum_collision_damage := 0.0
 	var minimum_ttc := INF
 
 	for track in observation.enemy_tracks:
@@ -63,6 +66,15 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 			maximum_collision_damage = max(
 				maximum_collision_damage, track.behavior_profile.get("contact_damage", 1.0)
 			)
+			if ttc <= committed_seconds:
+				committed_enemy_risk += (
+					_ttc_risk(ttc, max(0.01, local_horizon_seconds))
+					* track.recency_confidence
+				)
+				committed_maximum_collision_damage = max(
+					committed_maximum_collision_damage,
+					track.behavior_profile.get("contact_damage", 1.0)
+				)
 
 	for projectile in observation.visible_world.enemy_projectiles:
 		var predicted_projectile_position: Vector2 = _projectile_motion_predictor.predict_position(
@@ -87,6 +99,11 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 		maximum_collision_damage = max(
 			maximum_collision_damage, projectile.get("contact_damage", 1.0)
 		)
+		if ttc <= committed_seconds:
+			committed_projectile_risk += 1.5 * _ttc_risk(ttc, max(0.01, local_horizon_seconds))
+			committed_maximum_collision_damage = max(
+				committed_maximum_collision_damage, projectile.get("contact_damage", 1.0)
+			)
 
 	for ally in observation.visible_world.get("allied_agents", []):
 		if ally.kind != "player":
@@ -105,6 +122,9 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 		"velocity_obstacle_risk": _saturate(enemy_risk + projectile_risk + ally_risk),
 		"hostile_velocity_obstacle_risk": _saturate(enemy_risk + projectile_risk),
 		"maximum_velocity_obstacle_damage": maximum_collision_damage,
+		"committed_hostile_velocity_obstacle_risk":
+		_saturate(committed_enemy_risk + committed_projectile_risk),
+		"committed_maximum_velocity_obstacle_damage": committed_maximum_collision_damage,
 		"enemy_velocity_obstacle_risk": _saturate(enemy_risk),
 		"projectile_velocity_obstacle_risk": _saturate(projectile_risk),
 		"ally_velocity_obstacle_risk": _saturate(ally_risk),

@@ -18,15 +18,19 @@ const EnemyMotionPredictor := preload(
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
+var _prepared_physics_frame := -1
+var _prepared_geometry := {}
+var _prepared_maximum_weapon_range := 0.0
+var _prepared_remote_entities := []
+var _prepared_remote_enemies := []
+var _prepared_local_enemies := []
+var _prepared_candidate_entries := []
 
 
 func _evaluate_remote_position(
-	observation: Dictionary,
-	context: Dictionary,
-	player_displacement: Vector2,
-	time: float,
-	geometry: Dictionary
+	observation: Dictionary, context: Dictionary, player_displacement: Vector2, time: float
 ) -> Dictionary:
+	_prepare_inputs(observation, context)
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := {
 		"material_opportunity": 0.0,
@@ -35,21 +39,14 @@ func _evaluate_remote_position(
 		"enemy_opportunity": 0.0,
 		"total": 0.0,
 	}
-	var reach_distance: float = _reach_distance(observation)
-	var maximum_weapon_range: float = _maximum_weapon_range(observation.player_state.weapons)
-	var health_value: Dictionary = context.state_factors.health_resource_value
-	for entity in observation.get("remembered_entities", []):
-		if entity.existence_confidence <= 0.0:
-			continue
-		var remote_share: float = _remote_entity_share(entity, geometry)
-		if remote_share <= 0.0:
-			continue
+	var reach_distance: float = _prepared_geometry.opportunity_reach_distance
+	for entry in _prepared_remote_entities:
+		var entity: Dictionary = entry.entity
 		var gap: float = _entity_interaction_gap(
-			observation, entity, player_displacement, maximum_weapon_range
+			observation, entity, player_displacement, _prepared_maximum_weapon_range
 		)
 		var accessibility: float = _accessibility(gap, reach_distance)
-		var value: float = _entity_value(observation, entity, health_value)
-		var contribution: float = value * accessibility * entity.existence_confidence * remote_share
+		var contribution: float = entry.value * accessibility
 		match entity.kind:
 			"material":
 				result.material_opportunity += contribution
@@ -57,20 +54,13 @@ func _evaluate_remote_position(
 				result.recovery_opportunity += contribution
 			"tree":
 				result.tree_opportunity += contribution
-	for track in observation.enemy_tracks:
-		if track.visible and track.relative_position.length() <= geometry.local_prediction_radius:
-			continue
+	for entry in _prepared_remote_enemies:
+		var track: Dictionary = entry.track
 		var predicted_position: Vector2 = _enemy_motion_predictor.predict_position(
 			track, time, player_displacement
 		)
-		result.enemy_opportunity += _enemy_opportunity_at_position(
-			observation,
-			context,
-			track,
-			predicted_position,
-			player_displacement,
-			maximum_weapon_range,
-			reach_distance
+		result.enemy_opportunity += _prepared_enemy_value_at_position(
+			entry, predicted_position, player_displacement
 		)
 	result.total = (
 		result.material_opportunity
@@ -88,11 +78,11 @@ func value_delta(
 	time: float,
 	stationary := {}
 ) -> Dictionary:
-	var geometry: Dictionary = _movement_geometry.derive(observation)
+	_prepare_inputs(observation, context)
 	if stationary.empty():
-		stationary = _evaluate_remote_position(observation, context, Vector2.ZERO, time, geometry)
+		stationary = _evaluate_remote_position(observation, context, Vector2.ZERO, time)
 	var candidate: Dictionary = _evaluate_remote_position(
-		observation, context, player_displacement, time, geometry
+		observation, context, player_displacement, time
 	)
 	return {
 		"material_opportunity": candidate.material_opportunity - stationary.material_opportunity,
@@ -104,45 +94,29 @@ func value_delta(
 
 
 func stationary_value(observation: Dictionary, context: Dictionary, time: float) -> Dictionary:
-	return _evaluate_remote_position(
-		observation, context, Vector2.ZERO, time, _movement_geometry.derive(observation)
-	)
+	_prepare_inputs(observation, context)
+	return _evaluate_remote_position(observation, context, Vector2.ZERO, time)
 
 
 func local_enemy_value_delta(
 	observation: Dictionary, context: Dictionary, player_displacement: Vector2, time: float
 ) -> float:
+	_prepare_inputs(observation, context)
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := 0.0
-	var reach_distance: float = _reach_distance(observation)
-	var maximum_weapon_range: float = _maximum_weapon_range(observation.player_state.weapons)
-	var local_prediction_radius: float = _local_prediction_radius(observation)
-	for track in observation.enemy_tracks:
-		if not track.visible or track.relative_position.length() > local_prediction_radius:
-			continue
+	for entry in _prepared_local_enemies:
+		var track: Dictionary = entry.track
 		var stationary_position: Vector2 = _enemy_motion_predictor.predict_position(
 			track, time, Vector2.ZERO
 		)
 		var candidate_position: Vector2 = _enemy_motion_predictor.predict_position(
 			track, time, player_displacement
 		)
-		var stationary_value: float = _enemy_opportunity_at_position(
-			observation,
-			context,
-			track,
-			stationary_position,
-			Vector2.ZERO,
-			maximum_weapon_range,
-			reach_distance
+		var stationary_value: float = _prepared_enemy_value_at_position(
+			entry, stationary_position, Vector2.ZERO
 		)
-		var candidate_value: float = _enemy_opportunity_at_position(
-			observation,
-			context,
-			track,
-			candidate_position,
-			player_displacement,
-			maximum_weapon_range,
-			reach_distance
+		var candidate_value: float = _prepared_enemy_value_at_position(
+			entry, candidate_position, player_displacement
 		)
 		result += candidate_value - stationary_value
 	return result
@@ -196,27 +170,102 @@ func local_material_value_delta(observation: Dictionary, samples: Array) -> floa
 
 
 func candidate_directions(observation: Dictionary, context: Dictionary) -> Array:
+	_prepare_inputs(observation, context)
 	var candidates := []
-	var geometry: Dictionary = _movement_geometry.derive(observation)
+	var bins := {}
+	var bin_count: int = max(1, int(_prepared_geometry.direction_count))
+	for entry in _prepared_candidate_entries:
+		var direction: Vector2 = entry.position.normalized()
+		var bin_index := int(round(fposmod(direction.angle(), TAU) / TAU * bin_count)) % bin_count
+		if not bins.has(bin_index):
+			bins[bin_index] = {"weighted_direction": Vector2.ZERO, "value": 0.0}
+		bins[bin_index].weighted_direction += direction * entry.value
+		bins[bin_index].value += entry.value
+	for bin in bins.values():
+		_append_candidate(candidates, bin.weighted_direction, bin.value)
+	candidates.sort_custom(self, "_higher_candidate_value")
+	return candidates
+
+
+func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
+	var physics_frame: int = observation.get("physics_frame", -1)
+	if physics_frame >= 0 and physics_frame == _prepared_physics_frame:
+		return
+	_prepared_physics_frame = physics_frame
+	_prepared_geometry = _movement_geometry.derive(observation)
+	_prepared_maximum_weapon_range = _maximum_weapon_range(observation.player_state.weapons)
+	_prepared_remote_entities = []
+	_prepared_remote_enemies = []
+	_prepared_local_enemies = []
+	_prepared_candidate_entries = []
 	var health_value: Dictionary = context.state_factors.health_resource_value
-	var enemy_removal_value_ledger: Dictionary = context.enemy_removal_value_ledger
 	for entity in observation.get("remembered_entities", []):
-		var remote_share: float = _remote_entity_share(entity, geometry)
+		if entity.existence_confidence <= 0.0:
+			continue
+		var remote_share: float = _remote_entity_share(entity, _prepared_geometry)
 		var value: float = (
 			_entity_value(observation, entity, health_value)
 			* entity.existence_confidence
 			* remote_share
 		)
-		_append_candidate(candidates, entity.relative_position, value)
+		if value <= 0.0:
+			continue
+		var entity_entry := {"entity": entity, "value": value}
+		_prepared_remote_entities.push_back(entity_entry)
+		var gap: float = _entity_interaction_gap(
+			observation, entity, Vector2.ZERO, _prepared_maximum_weapon_range
+		)
+		_prepared_candidate_entries.push_back(
+			{
+				"position": entity.relative_position,
+				"value": value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance),
+			}
+		)
 	for track in observation.enemy_tracks:
 		var value: float = (
-			_opportunity_value_model.enemy_removal_value(enemy_removal_value_ledger, track)
+			_opportunity_value_model.enemy_removal_value(context.enemy_removal_value_ledger, track)
 			* _opportunity_value_model.enemy_kill_feasibility(observation, track)
 			* track.recency_confidence
 		)
-		_append_candidate(candidates, track.relative_position, value)
-	candidates.sort_custom(self, "_higher_candidate_value")
-	return candidates
+		var enemy_entry := {"track": track, "value": value}
+		if (
+			track.visible
+			and track.relative_position.length() <= _prepared_geometry.local_prediction_radius
+		):
+			_prepared_local_enemies.push_back(enemy_entry)
+		else:
+			_prepared_remote_enemies.push_back(enemy_entry)
+		if value <= 0.0:
+			continue
+		var gap: float = max(
+			0.0,
+			(
+				track.relative_position.length()
+				- _prepared_maximum_weapon_range
+				- track.last_measurement.visual_radius
+			)
+		)
+		_prepared_candidate_entries.push_back(
+			{
+				"position": track.relative_position,
+				"value": value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance),
+			}
+		)
+
+
+func _prepared_enemy_value_at_position(
+	entry: Dictionary, predicted_position: Vector2, player_displacement: Vector2
+) -> float:
+	var track: Dictionary = entry.track
+	var gap: float = max(
+		0.0,
+		(
+			(predicted_position - player_displacement).length()
+			- _prepared_maximum_weapon_range
+			- track.last_measurement.visual_radius
+		)
+	)
+	return entry.value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance)
 
 
 func _entity_value(observation: Dictionary, entity: Dictionary, health_value: Dictionary) -> float:
@@ -249,39 +298,6 @@ func _entity_interaction_gap(
 			- interaction_radius
 			- entity.get("visual_radius", 0.0)
 		)
-	)
-
-
-func _reach_distance(observation: Dictionary) -> float:
-	return _movement_geometry.derive(observation).opportunity_reach_distance
-
-
-func _local_prediction_radius(observation: Dictionary) -> float:
-	return _movement_geometry.derive(observation).local_prediction_radius
-
-
-func _enemy_opportunity_at_position(
-	observation: Dictionary,
-	context: Dictionary,
-	track: Dictionary,
-	predicted_position: Vector2,
-	player_displacement: Vector2,
-	maximum_weapon_range: float,
-	reach_distance: float
-) -> float:
-	var gap: float = max(
-		0.0,
-		(
-			(predicted_position - player_displacement).length()
-			- maximum_weapon_range
-			- track.last_measurement.visual_radius
-		)
-	)
-	return (
-		_opportunity_value_model.enemy_removal_value(context.enemy_removal_value_ledger, track)
-		* _opportunity_value_model.enemy_kill_feasibility(observation, track)
-		* _accessibility(gap, reach_distance)
-		* track.recency_confidence
 	)
 
 

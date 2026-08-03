@@ -2,11 +2,11 @@ extends Reference
 
 # Predicts the outcome of one feasible movement vector over a threat-timed
 # forecast. Every evaluated action receives the shared base prediction; actions
-# selected for full evaluation also receive automatic-weapon prediction.
-# Scoring belongs to MovementUtilityModel.
+# selected for full evaluation also receive action-conditioned expected weapon
+# outcomes. Scoring belongs to MovementUtilityModel.
 
-const WeaponAttackPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_predictor.gd"
+const WeaponOutcomeFieldModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_outcome_field_model.gd"
 )
 const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
@@ -39,7 +39,7 @@ const CollisionHealthImpactModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/collision_health_impact_model.gd"
 )
 
-var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
+var _weapon_outcome_field_model: Reference = WeaponOutcomeFieldModel.new()
 var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
 var _velocity_obstacle_risk_model: Reference = VelocityObstacleRiskModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
@@ -96,35 +96,50 @@ func predict_base(
 		"terminal_collision_risk": 0.0,
 	}
 	var battlefield_outcome: Dictionary = _battlefield_influence_model.predict(
-		observation, action, planning_context.environmental_pressure_weights
+		observation,
+		action,
+		planning_context.environmental_pressure_weights,
+		planning_context.control_interval_seconds
 	)
 	outcome.merge(battlefield_outcome, true)
-	outcome.merge(_velocity_obstacle_risk_model.evaluate(observation, action), true)
-	_predict_action_outcomes(observation, action, planning_context, outcome)
+	outcome.merge(
+		_velocity_obstacle_risk_model.evaluate(
+			observation, action, planning_context.control_interval_seconds
+		),
+		true
+	)
+	var committed_action: Dictionary = _committed_action(
+		observation, action, planning_context.control_interval_seconds
+	)
+	_predict_action_outcomes(observation, committed_action, planning_context, outcome)
 	outcome.collision_risk = max(outcome.peak_path_collision_risk, outcome.velocity_obstacle_risk)
 	outcome.hostile_collision_risk = max(
 		outcome.peak_path_collision_risk, outcome.hostile_velocity_obstacle_risk
 	)
-	var predicted_hit_damage: float = max(
-		outcome.maximum_path_collision_damage, outcome.maximum_velocity_obstacle_damage
+	var committed_collision_risk: float = max(
+		outcome.committed_peak_path_collision_risk, outcome.committed_hostile_velocity_obstacle_risk
+	)
+	var committed_hit_damage: float = max(
+		outcome.committed_maximum_path_collision_damage,
+		outcome.committed_maximum_velocity_obstacle_damage
 	)
 	outcome.merge(
 		_collision_health_impact_model.evaluate(
 			observation,
-			action,
-			outcome.hostile_collision_risk,
-			outcome.integrated_hostile_collision_risk,
-			predicted_hit_damage,
+			committed_action,
+			committed_collision_risk,
+			outcome.committed_integrated_hostile_collision_risk,
+			committed_hit_damage,
 			planning_context.state_factors.positive_damage_is_terminal_rule
 		),
 		true
 	)
 	outcome.movement_damage_exposure_reduction = (
-		_movement_damage_exposure_reduction(observation, action)
+		_movement_damage_exposure_reduction(observation, committed_action)
 		* outcome.collision_risk
 	)
 	outcome.navigation_terminal_value_gain = _navigation_terminal_value_progress(
-		observation, action, planning_context
+		observation, committed_action, planning_context
 	)
 	return outcome
 
@@ -139,13 +154,13 @@ func complete_prediction(
 	# dictionaries shared instead of recursively copying the whole forecast for
 	# the base forecast and its semantic completion.
 	var outcome: Dictionary = base_outcome.duplicate(false)
-	_weapon_attack_predictor.accumulate_outcome(observation, action, outcome, planning_context)
-	_player_rule_outcome_predictor.accumulate_outcome(
-		observation,
-		action,
-		outcome,
-		_samples_through(action.samples, planning_context.control_interval_seconds)
+	var committed_action: Dictionary = _committed_action(
+		observation, action, planning_context.control_interval_seconds
 	)
+	_weapon_outcome_field_model.accumulate_outcome(
+		observation, committed_action, outcome, planning_context
+	)
+	_player_rule_outcome_predictor.accumulate_outcome(observation, committed_action, outcome)
 	return outcome
 
 
@@ -154,18 +169,15 @@ func _predict_action_outcomes(
 ) -> void:
 	var samples: Array = action.samples
 	assert(not samples.empty())
-	var committed_samples: Array = _samples_through(
-		samples, planning_context.control_interval_seconds
-	)
-	outcome.material_acquisition_value = _material_acquisition_value(observation, committed_samples)
+	outcome.material_acquisition_value = _material_acquisition_value(observation, samples)
 	outcome.material_approach_progress = _spatial_opportunity_value_model.local_material_value_delta(
-		observation, committed_samples
+		observation, samples
 	)
 	outcome.consumable_recovery_approach_progress = _consumable_recovery_approach_progress(
-		observation, committed_samples
+		observation, samples
 	)
 	outcome.tree_opportunity_progress = _tree_opportunity_progress(
-		observation, action, committed_samples.back().displacement, planning_context
+		observation, action, samples.back().displacement, planning_context
 	)
 	var final_sample: Dictionary = samples.back()
 	var enemy_approach_value: float = _spatial_opportunity_value_model.local_enemy_value_delta(
@@ -201,10 +213,7 @@ func _navigation_terminal_value_progress(
 	var movement_preference: Vector2 = planning_context.navigation_movement_preference
 	if terminal_distance <= 0.0 or movement_preference == Vector2.ZERO:
 		return 0.0
-	var committed_samples: Array = _samples_through(
-		action.samples, planning_context.control_interval_seconds
-	)
-	var committed_sample: Dictionary = committed_samples.back()
+	var committed_sample: Dictionary = action.samples.back()
 	var committed_displacement: Vector2 = committed_sample.displacement
 	var zero_input_displacement: Vector2 = _player_kinematics_model.predict_displacement(
 		observation, Vector2.ZERO, committed_sample.time
@@ -271,14 +280,29 @@ func _tree_opportunity_progress(
 	return interaction
 
 
-func _samples_through(samples: Array, committed_seconds: float) -> Array:
-	var result := []
-	for sample in samples:
+func _committed_action(
+	observation: Dictionary, action: Dictionary, control_interval_seconds: float
+) -> Dictionary:
+	var committed_seconds: float = min(action.forecast_seconds, control_interval_seconds)
+	var committed_samples := []
+	for sample in action.samples:
 		if sample.time > committed_seconds + 0.0001:
 			break
-		result.push_back(sample)
-	if result.empty():
-		result.push_back(samples[0])
+		committed_samples.push_back(sample)
+	if committed_samples.empty() or committed_samples.back().time < committed_seconds - 0.0001:
+		committed_samples.push_back(
+			{
+				"time": committed_seconds,
+				"displacement":
+				_player_kinematics_model.predict_displacement(
+					observation, action.movement, committed_seconds
+				),
+				"movement": action.movement,
+			}
+		)
+	var result: Dictionary = action.duplicate(false)
+	result.forecast_seconds = committed_seconds
+	result.samples = committed_samples
 	return result
 
 

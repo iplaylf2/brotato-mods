@@ -4,6 +4,9 @@ extends Reference
 # expose. No preferred direction, arena center, or patrol route is encoded;
 # exploration and revisitation emerge from the age of legal sensor coverage.
 
+var _coverage_physics_frame := -1
+var _last_observed_ages := {}
+
 
 func value_delta(observation: Dictionary, displacement: Vector2) -> float:
 	var viewport_size: Vector2 = observation.visibility.viewport_size
@@ -30,9 +33,7 @@ func _observable_value(
 			)
 			/ viewport_area
 		)
-	var last_observed_ages := {}
-	for cell in observation.localization.get("observation_cells", []):
-		last_observed_ages[_cell_key(cell.grid_x, cell.grid_y)] = cell.seconds_since_observed
+	_prepare_coverage_index(observation)
 	var odometry_position: Vector2 = observation.localization.odometry_position
 	var sensor_rect := Rect2(odometry_position + displacement + viewport_offset, viewport_size)
 	var first_x := int(floor(sensor_rect.position.x / cell_size))
@@ -51,7 +52,7 @@ func _observable_value(
 			)
 			if visible_area <= 0.0:
 				continue
-			var age: float = last_observed_ages.get(_cell_key(grid_x, grid_y), INF)
+			var age: float = _last_observed_ages.get(_cell_key(grid_x, grid_y), INF)
 			var observation_staleness := (
 				1.0
 				if age == INF
@@ -59,6 +60,16 @@ func _observable_value(
 			)
 			observable_value += visible_area * observation_staleness
 	return observable_value / viewport_area
+
+
+func _prepare_coverage_index(observation: Dictionary) -> void:
+	var physics_frame: int = observation.get("physics_frame", -1)
+	if physics_frame >= 0 and physics_frame == _coverage_physics_frame:
+		return
+	_coverage_physics_frame = physics_frame
+	_last_observed_ages = {}
+	for cell in observation.localization.get("observation_cells", []):
+		_last_observed_ages[_cell_key(cell.grid_x, cell.grid_y)] = cell.seconds_since_observed
 
 
 func _visible_cell_area(

@@ -15,7 +15,7 @@ func compile(
 	weapon: Node, stats: Resource, player_index: int, attacks_allowed_while_moving: bool
 ) -> Dictionary:
 	return {
-		"timing": _adapt_timing(weapon, stats, player_index, attacks_allowed_while_moving),
+		"timing": _adapt_timing(stats, player_index, attacks_allowed_while_moving),
 		"delivery": _adapt_delivery(weapon, stats),
 		"impact": _adapt_impact(stats),
 		"rules": _adapt_rules(weapon, stats, player_index),
@@ -23,24 +23,20 @@ func compile(
 
 
 func _adapt_timing(
-	weapon: Node, stats: Resource, player_index: int, attacks_allowed_while_moving: bool
+	stats: Resource, player_index: int, attacks_allowed_while_moving: bool
 ) -> Dictionary:
 	var reload_every: int = stats.additional_cooldown_every_x_shots
 	var reload_multiplier: float = stats.additional_cooldown_multiplier
-	var attacks_until_long_cycle := -1
-	var long_cycle_seconds: float = stats.get_cooldown_value(player_index, 1.0)
+	var expected_attack_interval_multiplier := 1.0
 	if reload_every > 0 and reload_multiplier > 1.0:
-		var phase: int = weapon._nb_shots_taken % reload_every
-		attacks_until_long_cycle = reload_every if phase == 0 else reload_every - phase
-		long_cycle_seconds = stats.get_cooldown_value(player_index, reload_multiplier)
+		expected_attack_interval_multiplier = (
+			(float(reload_every - 1) + reload_multiplier)
+			/ reload_every
+		)
 	return {
-		"cooldown_remaining_seconds": weapon._current_cooldown / 60.0,
-		"cycle_seconds": stats.get_cooldown_value(player_index, 1.0),
-		"active": weapon._is_shooting,
+		"expected_attack_interval_seconds":
+		stats.get_cooldown_value(player_index, expected_attack_interval_multiplier),
 		"permitted_while_moving": attacks_allowed_while_moving,
-		"long_cycle_every_attacks": reload_every,
-		"attacks_until_long_cycle": attacks_until_long_cycle,
-		"long_cycle_seconds": long_cycle_seconds,
 	}
 
 
@@ -113,24 +109,9 @@ func _adapt_impact(stats: Resource) -> Dictionary:
 
 func _adapt_rules(weapon: Node, stats: Resource, player_index: int) -> Array:
 	var rules := []
-	_append_material_reload_rule(rules, weapon.effects)
 	_append_critical_delivery_rules(rules, weapon.effects, player_index)
 	_append_hit_result_rules(rules, weapon, stats, player_index)
 	return rules
-
-
-func _append_material_reload_rule(rules: Array, effects: Array) -> void:
-	for effect in effects:
-		if effect.key_hash != Keys.reload_when_pickup_gold_hash:
-			continue
-		rules.push_back(
-			{
-				"event": "material_pickup",
-				"condition": {"selected_highest_cooldown_weapon": true},
-				"consequences": [{"target": "timing.cooldown", "operation": "set", "value": 0.0}],
-			}
-		)
-		return
 
 
 func _append_critical_delivery_rules(rules: Array, effects: Array, player_index: int) -> void:

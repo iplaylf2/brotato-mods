@@ -9,8 +9,8 @@ const PlayerRuleProjector := preload(
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
-const WeaponFireModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_fire_model.gd"
+const WeaponAttackCapacityModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
 )
 
 const RECOVERY_LOOKAHEAD_SECONDS := 8.0
@@ -19,7 +19,7 @@ const SURVIVAL_BUFFER_VALUE := 12.0
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
-var _weapon_fire_model: Reference = WeaponFireModel.new()
+var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 
 
 func estimate(observation: Dictionary, rule_projection: Dictionary) -> Dictionary:
@@ -177,7 +177,9 @@ func _expected_lifesteal_supply(observation: Dictionary, horizon_seconds: float)
 	# Context pricing uses target-independent moving fire capacity only when a
 	# tracked target exists. Exact per-action target geometry owns realized healing.
 	return (
-		_weapon_fire_model.expected_lifesteal_rate(observation.player_state.weapons, true)
+		_weapon_attack_capacity_model.expected_primary_lifesteal_rate(
+			observation.player_state.weapons, true
+		)
 		* horizon_seconds
 	)
 

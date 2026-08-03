@@ -11,13 +11,13 @@ const PlayerRuleProjector := preload(
 const StatOpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
 )
-const WeaponFireModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_fire_model.gd"
+const WeaponAttackCapacityModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
-var _weapon_fire_model: Reference = WeaponFireModel.new()
+var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 
 
 func material_collection_value(observation: Dictionary) -> float:
@@ -62,7 +62,9 @@ func tree_harvest_feasibility(observation: Dictionary, tree: Dictionary) -> floa
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
 	return clamp(
 		(
-			_weapon_fire_model.expected_hit_rate(observation.player_state.weapons)
+			_weapon_attack_capacity_model.expected_primary_hit_rate(
+				observation.player_state.weapons
+			)
 			* remaining_seconds
 			/ required_hits
 		),
@@ -224,10 +226,10 @@ func enemy_removal_value(enemy_removal_value_ledger: Dictionary, track: Dictiona
 func enemy_kill_feasibility(observation: Dictionary, track: Dictionary) -> float:
 	var maximum_health: float = max(1.0, float(track.behavior_profile.durability.maximum_health))
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
-	var damage_rate: float = _weapon_fire_model.expected_damage_rate(
+	var primary_damage_rate: float = _weapon_attack_capacity_model.expected_primary_damage_rate(
 		observation.player_state.weapons
 	)
-	return clamp(damage_rate * remaining_seconds / maximum_health, 0.0, 1.0)
+	return clamp(primary_damage_rate * remaining_seconds / maximum_health, 0.0, 1.0)
 
 
 func consumable_recovery_value(observation: Dictionary, consumable: Dictionary) -> float:

@@ -15,7 +15,10 @@ const VisibleWorldObserver := preload(
 
 var _main: Node
 var _players: Array = []
-var _latest_observations: Array = []
+var _latest_world_observations: Array = []
+var _latest_player_states: Array = []
+var _latest_party_states: Array = []
+var _latest_physics_frames: Array = []
 var _last_player_positions: Array = []
 var _world_memories: Array = []
 var _player_state_observer: Reference = PlayerStateObserver.new()
@@ -26,7 +29,10 @@ func initialize(main: Node, players: Array) -> void:
 	_main = main
 	_players = players
 	_visible_world_observer = VisibleWorldObserver.new(main, players)
-	_latest_observations.resize(players.size())
+	_latest_world_observations.resize(players.size())
+	_latest_player_states.resize(players.size())
+	_latest_party_states.resize(players.size())
+	_latest_physics_frames.resize(players.size())
 	_last_player_positions.clear()
 	_world_memories.clear()
 
@@ -41,57 +47,63 @@ func _physics_process(delta: float) -> void:
 	_capture_observations(delta)
 
 
-# A duplicate prevents callers from mutating the stored observation.
+# The 60 Hz observation pass updates motion and memory, but the public snapshot
+# is materialized only at the controller's lower planning cadence. Memory size
+# grows throughout a battle, so eagerly cloning it every physics frame creates
+# work that no consumer reads.
 func get_observation(player_index: int) -> Dictionary:
-	if player_index < 0 or player_index >= _latest_observations.size():
+	if player_index < 0 or player_index >= _latest_world_observations.size():
 		return {}
-	if typeof(_latest_observations[player_index]) != TYPE_DICTIONARY:
+	if (
+		typeof(_latest_world_observations[player_index]) != TYPE_DICTIONARY
+		or typeof(_latest_player_states[player_index]) != TYPE_DICTIONARY
+	):
 		return {}
-	var observation: Dictionary = _latest_observations[player_index]
-	return observation.duplicate(true)
+	var world_memory: Reference = _world_memories[player_index]
+	var world_observation: Dictionary = _latest_world_observations[player_index]
+	return {
+		"physics_frame": _latest_physics_frames[player_index],
+		"wave_state": _get_wave_state(),
+		"player_state": _latest_player_states[player_index].duplicate(true),
+		"party_state": _latest_party_states[player_index].duplicate(true),
+		"localization": world_memory.get_localization_state(),
+		"enemy_tracks": world_memory.get_enemy_tracks(),
+		"remembered_entities": world_memory.get_remembered_entities(),
+		"visibility": world_observation.visibility.duplicate(true),
+		"visible_world": world_observation.visible_world.duplicate(true),
+	}
 
 
 func _capture_observations(delta: float) -> void:
 	for player_index in _players.size():
 		var player: Node2D = _players[player_index]
 		if not is_instance_valid(player):
-			_latest_observations[player_index] = {}
+			_latest_world_observations[player_index] = {}
+			_latest_player_states[player_index] = {}
+			_latest_party_states[player_index] = {}
 			continue
-
-		_latest_observations[player_index] = _build_observation(player_index, player, delta)
-
-
-func _build_observation(player_index: int, player: Node2D, delta: float) -> Dictionary:
-	var position_delta: Vector2 = player.global_position - _last_player_positions[player_index]
-	_last_player_positions[player_index] = player.global_position
-
-	var world_observation: Dictionary = _visible_world_observer.observe(player_index, player, delta)
-	var world_memory: Reference = _world_memories[player_index]
-	var party_state: Dictionary = _get_party_state(player_index)
-	var player_state: Dictionary = _player_state_observer.observe(player_index, player)
-	world_memory.update(
-		delta,
-		position_delta,
-		world_observation.visible_edges,
-		world_observation.enemy_observations,
-		world_observation.entity_memory_observations,
-		party_state,
-		world_observation.visible_world.allied_agents,
-		player_state.pickup,
-		world_observation.visibility
-	)
-
-	return {
-		"physics_frame": Engine.get_physics_frames(),
-		"wave_state": _get_wave_state(),
-		"player_state": player_state,
-		"party_state": party_state,
-		"localization": world_memory.get_localization_state(),
-		"enemy_tracks": world_memory.get_enemy_tracks(),
-		"remembered_entities": world_memory.get_remembered_entities(),
-		"visibility": world_observation.visibility,
-		"visible_world": world_observation.visible_world,
-	}
+		var position_delta: Vector2 = player.global_position - _last_player_positions[player_index]
+		_last_player_positions[player_index] = player.global_position
+		var world_observation: Dictionary = _visible_world_observer.observe(
+			player_index, player, delta
+		)
+		var party_state: Dictionary = _get_party_state(player_index)
+		var player_state: Dictionary = _player_state_observer.observe(player_index, player)
+		_world_memories[player_index].update(
+			delta,
+			position_delta,
+			world_observation.visible_edges,
+			world_observation.enemy_observations,
+			world_observation.entity_memory_observations,
+			party_state,
+			world_observation.visible_world.allied_agents,
+			player_state.pickup,
+			world_observation.visibility
+		)
+		_latest_world_observations[player_index] = world_observation
+		_latest_player_states[player_index] = player_state
+		_latest_party_states[player_index] = party_state
+		_latest_physics_frames[player_index] = Engine.get_physics_frames()
 
 
 func _get_party_state(player_index: int) -> Dictionary:

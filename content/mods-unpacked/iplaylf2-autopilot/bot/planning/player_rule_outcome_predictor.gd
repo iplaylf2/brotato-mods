@@ -22,19 +22,17 @@ var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
 
 
-func accumulate_outcome(
-	observation: Dictionary, action: Dictionary, outcome: Dictionary, committed_samples: Array
-) -> void:
+func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
 	outcome.expected_recovery = _rule_projector.project_recovery(
 		observation.player_state.effect_rules, "healing", outcome.expected_recovery
 	)
 	if outcome.expected_recovery <= 0.0:
 		outcome.expected_recovery_events = 0.0
 	var material_events := _pickup_events(
-		observation.visible_world.materials, committed_samples, observation.player_state.pickup
+		observation.visible_world.materials, action.samples, observation.player_state.pickup
 	)
 	var consumable_events := _pickup_events(
-		observation.visible_world.consumables, committed_samples, observation.player_state.pickup
+		observation.visible_world.consumables, action.samples, observation.player_state.pickup
 	)
 	for event in material_events:
 		var recovery_before: float = outcome.expected_recovery
