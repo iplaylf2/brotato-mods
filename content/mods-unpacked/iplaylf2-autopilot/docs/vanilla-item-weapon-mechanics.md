@@ -34,7 +34,7 @@
 | 弹匣式节奏 | Revolver、Chain Gun | 把额外长装填折入长期期望攻击间隔，不追踪当前弹匣相位或安排某次具体攻击 |
 | 交替近战形态 | Fighting Stick、Sword、Vorpal Sword、Excalibur | 玩家自身可感知的下一击形态进入投送画像；结果场只估计该形态的连续覆盖，不模拟挥击轨迹 |
 | 自动目标与路径碰撞 | `Weapon.Range` 的敌人和中立单位碰撞层 | 可见敌人与树共同形成连续目标覆盖；距离影响锁定可用度与覆盖权重，但规划器不选择具体目标，也不求解碰撞顺序 |
-| 穿透、弹射与暴击链 | Bandana、Ricochet、Crossbow、Shuriken | 依据覆盖目标质量、投送容量、重定向期望和逐阶段伤害保留率估计额外命中，不构造有序路径 |
+| 穿透、弹射与暴击链 | Bandana、Ricochet、Crossbow、Shuriken | 穿透按攻击走廊内的覆盖质量估计，弹射按可重定向覆盖质量估计；两者均受投送容量和逐阶段伤害保留率约束，不构造有序路径 |
 | 命中后二次武器效果 | 爆炸武器、燃烧武器、Cactus Mace、Lightning Shiv、Sniper Gun、Vorpal Sword | 把锚点、目标选择、覆盖半径、容量和伤害缩放压缩为命中后的期望投送，不传播具体事件链 |
 | 动态武器数值 | Stick、Rail Gun、Ghost 武器及属性换算内容 | 直接读取 `current_stats`；已经生效的堆叠、无伤成长、套装和属性换算无需识别内容 ID |
 

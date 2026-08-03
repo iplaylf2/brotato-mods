@@ -1,9 +1,9 @@
 extends Reference
 
-# Time-horizon collision risk for Brotato's first-order movement model. Ordinary
-# moving disks use continuous TTC evidence; known high-speed charges additionally
-# use their locked swept corridor. Both remain geometry predictions rather than
-# preferred dodge directions.
+# Analytic collision evidence for ballistic projectiles, allied bodies, and
+# known locked charge corridors. Ordinary enemy contact follows curved target
+# response and is owned by BattlefieldInfluenceModel's swept path projection;
+# treating it as a second constant-velocity obstacle caused contradictory risk.
 
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
@@ -36,56 +36,18 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 	var player_velocity: Vector2 = _player_kinematics.predict_average_velocity(
 		observation, action.movement, max(0.01, local_horizon_seconds)
 	)
-	var enemy_risk := 0.0
 	var enemy_charge_risk := 0.0
+	var committed_enemy_charge_risk := 0.0
 	var projectile_risk := 0.0
 	var ally_risk := 0.0
 	var maximum_collision_damage := 0.0
-	var forecast_enemy_risk := 0.0
 	var forecast_projectile_risk := 0.0
 	var forecast_maximum_collision_damage := 0.0
-	var committed_enemy_risk := 0.0
 	var committed_projectile_risk := 0.0
 	var committed_maximum_collision_damage := 0.0
 	var minimum_ttc := INF
 
 	for track in observation.enemy_tracks:
-		var combined_radius: float = geometry.player_radius + track.behavior_profile.contact_radius
-		var predicted_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
-			track, local_horizon_seconds, player_velocity * local_horizon_seconds
-		)
-		var predicted_enemy_velocity: Vector2 = (
-			(predicted_enemy_position - track.relative_position)
-			/ max(0.01, local_horizon_seconds)
-		)
-		var ttc := _time_to_collision(
-			track.relative_position, predicted_enemy_velocity - player_velocity, combined_radius
-		)
-		if ttc <= navigation_horizon_seconds:
-			minimum_ttc = min(minimum_ttc, ttc)
-			enemy_risk += (
-				_ttc_risk(ttc, max(0.01, local_horizon_seconds))
-				* track.recency_confidence
-			)
-			maximum_collision_damage = max(
-				maximum_collision_damage, track.behavior_profile.contact_damage
-			)
-			if ttc <= action.forecast_seconds:
-				forecast_enemy_risk += (
-					_ttc_risk(ttc, max(0.01, local_horizon_seconds))
-					* track.recency_confidence
-				)
-				forecast_maximum_collision_damage = max(
-					forecast_maximum_collision_damage, track.behavior_profile.contact_damage
-				)
-			if ttc <= committed_seconds:
-				committed_enemy_risk += (
-					_ttc_risk(ttc, max(0.01, local_horizon_seconds))
-					* track.recency_confidence
-				)
-				committed_maximum_collision_damage = max(
-					committed_maximum_collision_damage, track.behavior_profile.contact_damage
-				)
 		var track_charge_risk := 0.0
 		var committed_track_charge_risk := 0.0
 		for sample in action.samples:
@@ -95,10 +57,8 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 			track_charge_risk = max(track_charge_risk, sample_charge_risk)
 			if sample.time <= committed_seconds + 0.0001:
 				committed_track_charge_risk = max(committed_track_charge_risk, sample_charge_risk)
-		enemy_risk += track_charge_risk
-		forecast_enemy_risk += track_charge_risk
 		enemy_charge_risk += track_charge_risk
-		committed_enemy_risk += committed_track_charge_risk
+		committed_enemy_charge_risk += committed_track_charge_risk
 		if track_charge_risk > 0.0:
 			maximum_collision_damage = max(
 				maximum_collision_damage, track.behavior_profile.contact_damage
@@ -157,16 +117,15 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 			ally_risk += _ttc_risk(ttc, max(0.01, local_horizon_seconds))
 
 	return {
-		"velocity_obstacle_risk": _saturate(enemy_risk + projectile_risk + ally_risk),
-		"hostile_velocity_obstacle_risk": _saturate(enemy_risk + projectile_risk),
+		"velocity_obstacle_risk": _saturate(enemy_charge_risk + projectile_risk + ally_risk),
+		"hostile_velocity_obstacle_risk": _saturate(enemy_charge_risk + projectile_risk),
 		"maximum_velocity_obstacle_damage": maximum_collision_damage,
 		"forecast_hostile_velocity_obstacle_risk":
-		_saturate(forecast_enemy_risk + forecast_projectile_risk),
+		_saturate(enemy_charge_risk + forecast_projectile_risk),
 		"forecast_maximum_velocity_obstacle_damage": forecast_maximum_collision_damage,
 		"committed_hostile_velocity_obstacle_risk":
-		_saturate(committed_enemy_risk + committed_projectile_risk),
+		_saturate(committed_enemy_charge_risk + committed_projectile_risk),
 		"committed_maximum_velocity_obstacle_damage": committed_maximum_collision_damage,
-		"enemy_velocity_obstacle_risk": _saturate(enemy_risk),
 		"enemy_charge_obstacle_risk": _saturate(enemy_charge_risk),
 		"projectile_velocity_obstacle_risk": _saturate(projectile_risk),
 		"ally_velocity_obstacle_risk": _saturate(ally_risk),

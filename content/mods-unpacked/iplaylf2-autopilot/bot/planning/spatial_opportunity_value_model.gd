@@ -54,12 +54,9 @@ func _evaluate_route(
 			"tree":
 				result.tree_opportunity += contribution
 	for entry in _prepared_enemies:
-		var track: Dictionary = entry.track
-		var predicted_position: Vector2 = _enemy_motion_predictor.predict_position(
-			track, time, player_displacement
-		)
-		result.enemy_opportunity += _prepared_enemy_value_at_position(
-			entry, predicted_position, player_displacement
+		result.enemy_opportunity += (
+			entry.value
+			* _enemy_route_accessibility(entry.track, player_displacement, time, reach_distance)
 		)
 	result.total = (
 		result.material_opportunity
@@ -170,10 +167,41 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		)
 
 
-func _prepared_enemy_value_at_position(
-	entry: Dictionary, predicted_position: Vector2, player_displacement: Vector2
+func _enemy_route_accessibility(
+	track: Dictionary, player_displacement: Vector2, time: float, reach_distance: float
 ) -> float:
-	var track: Dictionary = entry.track
+	var initial_accessibility := _enemy_accessibility(
+		track, track.relative_position, Vector2.ZERO, reach_distance
+	)
+	if time <= 0.0:
+		return initial_accessibility
+	# Simpson integration values earlier access to an automatic attack window
+	# without constructing a shot schedule or a pursue/retreat mode. This avoids
+	# treating "the enemy eventually walks into range" as equivalent to a
+	# candidate that creates useful firing time sooner.
+	var midpoint_time := time * 0.5
+	var midpoint_player_position := player_displacement * 0.5
+	var midpoint_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
+		track, midpoint_time, midpoint_player_position
+	)
+	var terminal_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
+		track, time, player_displacement
+	)
+	var midpoint_accessibility := _enemy_accessibility(
+		track, midpoint_enemy_position, midpoint_player_position, reach_distance
+	)
+	var terminal_accessibility := _enemy_accessibility(
+		track, terminal_enemy_position, player_displacement, reach_distance
+	)
+	return (initial_accessibility + 4.0 * midpoint_accessibility + terminal_accessibility) / 6.0
+
+
+func _enemy_accessibility(
+	track: Dictionary,
+	predicted_position: Vector2,
+	player_displacement: Vector2,
+	reach_distance: float
+) -> float:
 	var gap: float = max(
 		0.0,
 		(
@@ -182,7 +210,7 @@ func _prepared_enemy_value_at_position(
 			- track.last_measurement.visual_radius
 		)
 	)
-	return entry.value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance)
+	return _accessibility(gap, reach_distance)
 
 
 func _entity_value(observation: Dictionary, entity: Dictionary, health_value: Dictionary) -> float:

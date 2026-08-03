@@ -29,6 +29,7 @@ var _initial_environmental_pressure := 0.0
 var _shared_input_physics_frame := -1
 var _shared_geometry := {}
 var _shared_influence_sources := []
+var _shared_enemy_positions := []
 var _shared_projectile_positions := []
 
 
@@ -50,6 +51,7 @@ func predict(
 	var interception_samples := _find_projectile_interception_samples(
 		observation, samples, geometry
 	)
+	var previous_enemy_positions := _shared_enemy_positions.duplicate()
 	var previous_projectile_positions := _shared_projectile_positions.duplicate()
 
 	var previous_time := 0.0
@@ -64,6 +66,7 @@ func predict(
 			sources,
 			consumed_single_use_sources,
 			interception_samples,
+			previous_enemy_positions,
 			previous_projectile_positions,
 			geometry
 		)
@@ -133,11 +136,14 @@ func _sample_channels(
 	sources: Array,
 	consumed_single_use_sources: Dictionary,
 	interception_samples: Dictionary,
+	previous_enemy_positions: Array,
 	previous_projectile_positions: Array,
 	geometry: Dictionary
 ) -> Dictionary:
 	var channels := _empty_channels()
-	_sample_enemy_pressure(observation.enemy_tracks, sample, channels, geometry)
+	_sample_enemy_pressure(
+		observation.enemy_tracks, sample, channels, geometry, previous_enemy_positions
+	)
 	_sample_spawn_pressure(observation.visible_world.spawn_warnings, sample, channels, geometry)
 	_sample_edge_pressure(
 		observation.localization.map_bounds, sample.displacement, channels, geometry
@@ -159,9 +165,15 @@ func _sample_channels(
 
 
 func _sample_enemy_pressure(
-	tracks: Array, sample: Dictionary, channels: Dictionary, geometry: Dictionary
+	tracks: Array,
+	sample: Dictionary,
+	channels: Dictionary,
+	geometry: Dictionary,
+	previous_positions = null
 ) -> void:
-	for track in tracks:
+	assert(previous_positions == null or previous_positions.size() == tracks.size())
+	for track_index in tracks.size():
+		var track: Dictionary = tracks[track_index]
 		var predicted_position: Vector2 = _predict_enemy_position(
 			track, sample.time, sample.displacement
 		)
@@ -182,8 +194,12 @@ func _sample_enemy_pressure(
 		)
 		channels.enemy_proximity += proximity * proximity * track.recency_confidence
 
+		var collision_position := position
+		if previous_positions != null:
+			collision_position = _closest_point_to_origin(previous_positions[track_index], position)
+			previous_positions[track_index] = position
 		var physical_clearance: float = (
-			position.length()
+			collision_position.length()
 			- geometry.player_radius
 			- track.behavior_profile.contact_radius
 		)
@@ -588,7 +604,10 @@ func _evaluate_channels(channels: Dictionary, weights: Dictionary) -> Dictionary
 		channels.projectile_contact * weights.projectile_contact,
 		channels.projectile_contact_interception * weights.projectile_interception_relief
 	)
-	var collision: float = _saturate(max(0.0, collision_hostile - interception_relief))
+	# Contact channels are already normalized geometric likelihoods. Applying the
+	# ambient-pressure saturation transform again capped even a center crossing at
+	# 1 - exp(-1), which then understated both hit probability and lethal risk.
+	var collision: float = clamp(collision_hostile - interception_relief, 0.0, 1.0)
 	var environmental: float = max(
 		0.0, suppressible_enemy_ambient + spawn_exposure + positional - ambient_relief
 	)
@@ -674,6 +693,9 @@ func _prepare_shared_inputs(observation: Dictionary) -> void:
 	for remembered_entity in observation.get("remembered_entities", []):
 		if remembered_entity.kind == "structure" and not remembered_entity.visible:
 			_shared_influence_sources.push_back(remembered_entity)
+	_shared_enemy_positions = []
+	for track in observation.enemy_tracks:
+		_shared_enemy_positions.push_back(track.relative_position)
 	_shared_projectile_positions = []
 	for projectile in observation.visible_world.enemy_projectiles:
 		_shared_projectile_positions.push_back(projectile.relative_position)

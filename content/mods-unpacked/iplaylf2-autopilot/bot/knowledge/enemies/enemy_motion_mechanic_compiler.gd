@@ -24,6 +24,7 @@ func _compile_target_position_response(enemy: Node) -> Dictionary:
 	return {
 		"responds_to_target_position": responds_to_target_position,
 		"preferred_distance": preferred_distance,
+		"moves_away_inside_preferred_distance": behavior is StayInRangeFromPlayerMovementBehavior,
 		"movement_speed": _base_movement_speed(enemy),
 		"confidence": 1.0,
 		"knowledge_source": "stable_mechanics",

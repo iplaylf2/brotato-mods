@@ -20,6 +20,7 @@ IMPORTED_RESOURCES = CONTENT / ".import"
 THIS_FILE = Path(__file__).relative_to(REPOSITORY)
 PKG_RESOURCES_WARNING = "ignore:pkg_resources is deprecated as an API:UserWarning"
 GODOT_VALIDATOR = REPOSITORY / "tools" / "validate_godot_scripts.gd"
+AUTOPILOT_MODEL_CHECKS = REPOSITORY / "tools" / "check_autopilot_model_contracts.gd"
 EXPECTED_GODOT_VERSION = (3, 7, "dev")
 IMPORTED_RESOURCE_PATTERN = re.compile(r'res://(\.import/[^"\r\n]+)')
 
@@ -148,7 +149,7 @@ def validate_godot_version(executable: str) -> None:
         )
 
 
-def validate_godot_scripts() -> None:
+def validate_godot_models() -> None:
     configured_project = os.environ.get("BROTATO_PROJECT")
     if not configured_project:
         raise SystemExit(
@@ -187,25 +188,42 @@ def validate_godot_scripts() -> None:
             str(archive),
             environment_overrides=user_data_environment,
         )
+        run(
+            godot,
+            "--path",
+            str(project.resolve()),
+            "--script",
+            str(AUTOPILOT_MODEL_CHECKS),
+            "--",
+            str(archive),
+            environment_overrides=user_data_environment,
+        )
 
 
 def lint_portable() -> None:
     validate_manifests()
     run("ruff", "check", "tools")
     run("ruff", "format", "--check", "tools")
-    run("gdlint", str(MODS), str(GODOT_VALIDATOR), suppress_pkg_resources_warning=True)
+    run(
+        "gdlint",
+        str(MODS),
+        str(GODOT_VALIDATOR),
+        str(AUTOPILOT_MODEL_CHECKS),
+        suppress_pkg_resources_warning=True,
+    )
     run(
         "gdformat",
         "--check",
         str(MODS),
         str(GODOT_VALIDATOR),
+        str(AUTOPILOT_MODEL_CHECKS),
         suppress_pkg_resources_warning=True,
     )
 
 
 def lint() -> None:
     lint_portable()
-    validate_godot_scripts()
+    validate_godot_models()
 
 
 def collect_imported_resources(mod_directory: Path) -> set[Path]:
@@ -266,7 +284,11 @@ def build_archive(mod_id: str) -> None:
 def format_sources() -> None:
     run("ruff", "format", "tools")
     run(
-        "gdformat", str(MODS), str(GODOT_VALIDATOR), suppress_pkg_resources_warning=True
+        "gdformat",
+        str(MODS),
+        str(GODOT_VALIDATOR),
+        str(AUTOPILOT_MODEL_CHECKS),
+        suppress_pkg_resources_warning=True,
     )
 
 

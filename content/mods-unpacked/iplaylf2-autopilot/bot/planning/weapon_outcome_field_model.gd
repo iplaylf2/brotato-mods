@@ -255,6 +255,7 @@ func _sample_targets(observation: Dictionary, player_displacement: Vector2, time
 		result.push_back(
 			{
 				"target": target,
+				"relative_position": relative_position,
 				"distance": relative_position.length(),
 			}
 		)
@@ -339,6 +340,7 @@ func _summarize_target_coverage(
 	var weighted_removal_value_per_health := 0.0
 	var weighted_enemy_maximum_health := 0.0
 	var weighted_tree_harvest_value_per_hit := 0.0
+	var covered_samples := []
 	for sample in target_samples:
 		var target: Dictionary = sample.target
 		var coverage: float = (
@@ -354,6 +356,13 @@ func _summarize_target_coverage(
 			+ maximum_distance / max(max(1.0, target.radius), sample.distance)
 		)
 		var selection_weight: float = coverage * proximity_weight
+		covered_samples.push_back(
+			{
+				"sample": sample,
+				"coverage": coverage,
+				"selection_weight": selection_weight,
+			}
+		)
 		total_selection_weight += selection_weight
 		covered_target_mass += coverage
 		target_unavailable_probability *= 1.0 - clamp(coverage, 0.0, 1.0)
@@ -378,6 +387,10 @@ func _summarize_target_coverage(
 		"target_availability": 1.0 - target_unavailable_probability,
 		"covered_target_mass": covered_target_mass,
 		"covered_enemy_mass": covered_enemy_mass,
+		"expected_additional_direct_targets":
+		_expected_additional_direct_targets(
+			attack_model, covered_samples, total_selection_weight, transition_width
+		),
 		"enemy_selection_share": enemy_selection_share,
 		"tree_selection_share": tree_selection_share,
 		"mean_removal_value_per_health":
@@ -387,6 +400,69 @@ func _summarize_target_coverage(
 		"mean_tree_harvest_value_per_hit":
 		weighted_tree_harvest_value_per_hit / max(0.0001, tree_selection_weight),
 	}
+
+
+func _expected_additional_direct_targets(
+	attack_model: Dictionary,
+	covered_samples: Array,
+	total_selection_weight: float,
+	transition_width: float
+) -> float:
+	if covered_samples.size() <= 1 or total_selection_weight <= 0.0:
+		return 0.0
+	var expected_mass := 0.0
+	for primary_index in covered_samples.size():
+		var primary: Dictionary = covered_samples[primary_index]
+		var aim_position: Vector2 = primary.sample.relative_position
+		if aim_position.length_squared() <= 0.0:
+			continue
+		var aligned_mass := 0.0
+		for secondary_index in covered_samples.size():
+			if secondary_index == primary_index:
+				continue
+			var secondary: Dictionary = covered_samples[secondary_index]
+			aligned_mass += (
+				secondary.coverage
+				* _direct_path_intersection(
+					attack_model,
+					aim_position,
+					secondary.sample.relative_position,
+					secondary.sample.target.radius,
+					transition_width
+				)
+			)
+		expected_mass += (primary.selection_weight / total_selection_weight * aligned_mass)
+	return expected_mass
+
+
+func _direct_path_intersection(
+	attack_model: Dictionary,
+	aim_position: Vector2,
+	target_position: Vector2,
+	target_radius: float,
+	transition_width: float
+) -> float:
+	var paths: Dictionary = attack_model.delivery.paths
+	var path_count := int(paths.count)
+	var angular_half_extent: float = paths.angular_half_extent
+	var maximum_distance: float = paths.maximum_travel_distance
+	var best_intersection := 0.0
+	for path_index in path_count:
+		var path_angle := 0.0
+		if path_count > 1:
+			path_angle = lerp(
+				-angular_half_extent, angular_half_extent, float(path_index) / float(path_count - 1)
+			)
+		var direction: Vector2 = aim_position.normalized().rotated(path_angle)
+		var forward_distance: float = target_position.dot(direction)
+		if forward_distance < -target_radius or forward_distance > maximum_distance + target_radius:
+			continue
+		var lateral_distance: float = abs(target_position.cross(direction))
+		var clearance: float = lateral_distance - paths.corridor_half_width - target_radius
+		best_intersection = max(
+			best_intersection, clamp(1.0 - clearance / max(1.0, transition_width), 0.0, 1.0)
+		)
+	return best_intersection
 
 
 func _range_coverage(
@@ -414,13 +490,12 @@ func _expected_hits_per_attack(attack_model: Dictionary, coverage: Dictionary) -
 		max(1.0, float(paths.count))
 		* clamp(paths.primary_probability_floor, 0.05, 1.0)
 	)
-	var additional_covered_targets: float = max(0.0, coverage.covered_target_mass - 1.0)
+	var additional_covered_targets: float = coverage.expected_additional_direct_targets
 	var direct_stages: float = min(
 		max(0.0, float(paths.hit_capacity) - 1.0), additional_covered_targets
 	)
-	var redirect_stages: float = min(
-		_expected_redirect_count(attack_model), additional_covered_targets
-	)
+	var redirectable_targets: float = max(0.0, coverage.covered_target_mass - 1.0)
+	var redirect_stages: float = min(_expected_redirect_count(attack_model), redirectable_targets)
 	return primary_hits * (1.0 + direct_stages + redirect_stages)
 
 
@@ -432,13 +507,12 @@ func _expected_damage_per_attack(attack_model: Dictionary, coverage: Dictionary)
 	)
 	var impact_damage: float = _weapon_attack_capacity_model.expected_damage_per_hit(attack_model)
 	var primary_damage: float = impact_damage * primary_hits
-	var additional_covered_targets: float = max(0.0, coverage.covered_target_mass - 1.0)
+	var additional_covered_targets: float = coverage.expected_additional_direct_targets
 	var direct_stages: float = min(
 		max(0.0, float(paths.hit_capacity) - 1.0), additional_covered_targets
 	)
-	var redirect_stages: float = min(
-		_expected_redirect_count(attack_model), additional_covered_targets
-	)
+	var redirectable_targets: float = max(0.0, coverage.covered_target_mass - 1.0)
+	var redirect_stages: float = min(_expected_redirect_count(attack_model), redirectable_targets)
 	var delivery_multiplier: float = (
 		1.0
 		+ _retained_stage_sum(direct_stages, clamp(paths.retained_damage, 0.0, 1.0))

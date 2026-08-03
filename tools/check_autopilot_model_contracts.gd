@@ -1,0 +1,151 @@
+extends SceneTree
+
+# Executable mechanics contracts for the planning models whose errors are hard
+# to detect through script compilation alone. The mod archive is mounted at
+# runtime so this check exercises the same res:// paths as the game.
+
+var _failed := false
+
+
+func _init() -> void:
+	var archive_path := _get_archive_path()
+	if archive_path.empty() or not ProjectSettings.load_resource_pack(archive_path, false):
+		printerr("Could not mount the mod contract-check archive: %s" % archive_path)
+		quit(1)
+		return
+	_check_target_response()
+	_check_swept_enemy_contact()
+	quit(1 if _failed else 0)
+
+
+func _check_target_response() -> void:
+	var predictor_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
+	)
+	var predictor: Reference = predictor_script.new()
+	var track := _enemy_track(Vector2(100.0, 0.0), Vector2(-100.0, 0.0), true)
+	var position: Vector2 = predictor.predict_position(track, 2.0, Vector2.ZERO)
+	_expect(
+		position.length() < 0.01,
+		"target response must stop at the current player position instead of extrapolating through it"
+	)
+	var stopping_track := _enemy_track(Vector2(50.0, 0.0), Vector2(-100.0, 0.0), true)
+	stopping_track.behavior_profile.target_position_response.preferred_distance = 100.0
+	var stopped_position: Vector2 = predictor.predict_position(stopping_track, 1.0, Vector2.ZERO)
+	_expect(
+		stopped_position.distance_to(Vector2(50.0, 0.0)) < 0.01,
+		"a stop-close follower must not be modeled as moving away inside its preferred distance"
+	)
+
+
+func _check_swept_enemy_contact() -> void:
+	var influence_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
+	)
+	var influence: Reference = influence_script.new()
+	var observation := {
+		"physics_frame": 2,
+		"wave_state": {"seconds_remaining": 10.0},
+		"player_state":
+		{
+			"collision_radius": 10.0,
+			"runtime_stats":
+			{
+				"move_speed": 100.0,
+				"armor": 0.0,
+				"dodge_chance": 0.0,
+			},
+			"effect_rules": [],
+			"movement": {"knockback_velocity": Vector2.ZERO},
+		},
+		"enemy_tracks": [_enemy_track(Vector2(100.0, 0.0), Vector2(-1000.0, 0.0), false)],
+		"remembered_entities": [],
+		"visible_world":
+		{
+			"spawn_warnings": [],
+			"enemy_projectiles": [],
+			"structures": [],
+			"allied_agents": [],
+		},
+		"localization": {"map_bounds": _unknown_bounds()},
+	}
+	var action := {
+		"movement": Vector2.ZERO,
+		"forecast_seconds": 0.2,
+		"samples": [{"time": 0.2, "displacement": Vector2.ZERO, "movement": Vector2.ZERO}],
+	}
+	var weights := {
+		"enemy_proximity": 1.0,
+		"enemy_contact": 1.0,
+		"projectile_contact": 1.0,
+		"spawn_warning": 1.0,
+		"ranged_attack": 1.0,
+		"map_edge": 1.0,
+		"allied_body_proximity": 1.0,
+		"allied_pressure_relief": 1.0,
+		"projectile_interception_relief": 1.0,
+	}
+	var outcome: Dictionary = influence.predict(observation, action, weights, 0.1)
+	_expect(
+		is_equal_approx(outcome.peak_path_collision_risk, 1.0),
+		"enemy contact must be detected between safe-looking sample endpoints"
+	)
+	_expect(
+		is_equal_approx(outcome.maximum_path_collision_damage, 3.0),
+		"swept enemy contact must retain the colliding body's damage"
+	)
+
+
+func _enemy_track(position: Vector2, velocity: Vector2, follows_player: bool) -> Dictionary:
+	return {
+		"track_id": 1,
+		"relative_position": position,
+		"estimated_velocity": velocity,
+		"estimated_acceleration": Vector2.ZERO,
+		"motion_confidence": 0.0,
+		"recency_confidence": 1.0,
+		"uncertainty_radius": 0.0,
+		"last_measurement": {"visual_radius": 10.0},
+		"behavior_profile":
+		{
+			"contact_radius": 10.0,
+			"contact_damage": 3.0,
+			"projectile_attack": {"creates_projectile_pressure": false},
+			"charge_attack": {"active": false},
+			"target_position_response":
+			{
+				"responds_to_target_position": follows_player,
+				"preferred_distance": 0.0,
+				"moves_away_inside_preferred_distance": false,
+				"movement_speed": velocity.length(),
+				"confidence": 1.0,
+			},
+		},
+	}
+
+
+func _unknown_bounds() -> Dictionary:
+	return {
+		"seen_left": false,
+		"seen_right": false,
+		"seen_top": false,
+		"seen_bottom": false,
+		"distance_to_left": null,
+		"distance_to_right": null,
+		"distance_to_top": null,
+		"distance_to_bottom": null,
+	}
+
+
+func _expect(condition: bool, message: String) -> void:
+	if condition:
+		return
+	_failed = true
+	printerr("Autopilot model contract failed: %s" % message)
+
+
+func _get_archive_path() -> String:
+	for argument in OS.get_cmdline_args():
+		if argument.ends_with(".zip"):
+			return argument
+	return ""

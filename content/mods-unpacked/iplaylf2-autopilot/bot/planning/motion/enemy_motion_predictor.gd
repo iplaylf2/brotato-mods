@@ -1,8 +1,9 @@
 extends Reference
 
 # Predicts an enemy track from observed motion and stable position-response
-# mechanics. The observed forecast remains the baseline; mechanics contribute
-# only the candidate-vs-stationary response caused by player movement.
+# mechanics. Vanilla target-following movement recomputes its normalized heading
+# every physics tick, so known pursuit is integrated as a position response
+# instead of extrapolating the currently observed heading through the player.
 
 const ObservedMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
@@ -23,44 +24,66 @@ func begin_physics_frame(physics_frame: int) -> void:
 func predict_position(
 	track: Dictionary, time: float, player_displacement: Vector2 = Vector2.ZERO
 ) -> Vector2:
-	var observed_position: Vector2 = _observed_position(track, time)
 	var target_response: Dictionary = track.behavior_profile.get("target_position_response", {})
 	if not target_response.get("responds_to_target_position", false) or time <= 0.0:
-		return observed_position
+		return _observed_position(track, time)
 	var charge_attack: Dictionary = track.behavior_profile.get("charge_attack", {})
-	var baseline_movement_speed: float = max(0.0, target_response.get("movement_speed", 0.0))
+	var baseline_movement_speed: float = target_response.movement_speed
 	# Vanilla locks the heading during a high-speed charge. Visible velocity is
 	# then more authoritative than ordinary target-position response.
+	var maximum_charge_speed: float = charge_attack.get(
+		"maximum_charge_speed", baseline_movement_speed
+	)
+	var charge_speed_threshold := (baseline_movement_speed + maximum_charge_speed) * 0.5
 	if (
 		charge_attack.get("active", false)
 		and baseline_movement_speed > 0.0
-		and track.estimated_velocity.length() > baseline_movement_speed * 1.5
+		and track.estimated_velocity.length() > charge_speed_threshold
 	):
-		return observed_position
+		return _observed_position(track, time)
 	var movement_speed: float = max(baseline_movement_speed, track.estimated_velocity.length())
 	if movement_speed <= 0.0:
-		return observed_position
-	var stationary_velocity := _target_directed_velocity(
-		track.relative_position, Vector2.ZERO, movement_speed, target_response
+		return _observed_position(track, time)
+	var mechanic_position := _integrate_target_response(
+		track.relative_position, player_displacement, time, movement_speed, target_response
 	)
-	var candidate_velocity := _target_directed_velocity(
-		track.relative_position, player_displacement, movement_speed, target_response
+	return _observed_position(track, time).linear_interpolate(
+		mechanic_position, clamp(target_response.get("confidence", 0.0), 0.0, 1.0)
 	)
-	var response_seconds: float = max(
-		1.0 / 60.0, track.last_measurement.get("visual_radius", 1.0) / movement_speed
-	)
-	var response_displacement: float = (
-		max(0.0, time)
-		- response_seconds * (1.0 - exp(-max(0.0, time) / response_seconds))
-	)
-	return (
-		observed_position
-		+ (
-			(candidate_velocity - stationary_velocity)
-			* response_displacement
-			* clamp(target_response.get("confidence", 0.0), 0.0, 1.0)
+
+
+func _integrate_target_response(
+	initial_enemy_position: Vector2,
+	player_displacement: Vector2,
+	time: float,
+	movement_speed: float,
+	target_response: Dictionary
+) -> Vector2:
+	# The observed contract does not expose a future player path. Candidate
+	# movement is first-order, so its endpoint uniquely defines the straight path
+	# used by the rolling planner. Short substeps approximate vanilla's immediate
+	# heading updates and prevent a pursuer from being projected through and away
+	# from the player after reaching the old target position.
+	var step_count := int(ceil(time / 0.05))
+	var step_seconds: float = time / float(step_count)
+	var enemy_position := initial_enemy_position
+	for step_index in step_count:
+		var player_position: Vector2 = (
+			player_displacement
+			* float(step_index + 1)
+			/ float(step_count)
 		)
-	)
+		var velocity := _target_directed_velocity(
+			enemy_position, player_position, movement_speed, target_response
+		)
+		var displacement: Vector2 = velocity * step_seconds
+		var target_offset: Vector2 = player_position - enemy_position
+		var preferred_distance: float = target_response.preferred_distance
+		var distance_to_target_position := abs(target_offset.length() - preferred_distance)
+		if displacement.length() > distance_to_target_position:
+			displacement = displacement.normalized() * distance_to_target_position
+		enemy_position += displacement
+	return enemy_position
 
 
 func _observed_position(track: Dictionary, time: float) -> Vector2:
@@ -96,11 +119,11 @@ func _target_directed_velocity(
 	var distance: float = from_player.length()
 	if distance <= 0.0:
 		return Vector2.ZERO
-	var preferred_distance: float = max(0.0, target_response.get("preferred_distance", 0.0))
+	var preferred_distance: float = target_response.preferred_distance
 	if abs(distance - preferred_distance) <= 1.0:
 		return Vector2.ZERO
-	return (
-		-from_player.normalized() * movement_speed
-		if distance > preferred_distance
-		else from_player.normalized() * movement_speed
-	)
+	if distance > preferred_distance:
+		return -from_player.normalized() * movement_speed
+	if target_response.moves_away_inside_preferred_distance:
+		return from_player.normalized() * movement_speed
+	return Vector2.ZERO
