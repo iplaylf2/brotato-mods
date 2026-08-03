@@ -61,7 +61,7 @@ func _projectile_can_reach_planning_region(
 		)
 	var interaction_radius: float = (
 		geometry.player_radius
-		+ projectile.visual_radius
+		+ projectile.contact_radius
 		+ geometry.projectile_pressure_distance
 	)
 	return (

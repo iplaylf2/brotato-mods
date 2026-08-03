@@ -82,6 +82,8 @@ func predict_base(
 		"hostile_collision_risk": 0.0,
 		"expected_health_loss": 0.0,
 		"terminal_collision_risk": 0.0,
+		"forecast_expected_health_loss": 0.0,
+		"forecast_terminal_collision_risk": 0.0,
 	}
 	var battlefield_outcome: Dictionary = _battlefield_influence_model.predict(
 		observation,
@@ -122,6 +124,25 @@ func predict_base(
 		),
 		true
 	)
+	var forecast_collision_risk: float = max(
+		outcome.peak_path_collision_risk, outcome.forecast_hostile_velocity_obstacle_risk
+	)
+	var forecast_hit_damage: float = max(
+		outcome.maximum_path_collision_damage, outcome.forecast_maximum_velocity_obstacle_damage
+	)
+	var forecast_impact: Dictionary = _collision_health_impact_model.evaluate(
+		observation,
+		action,
+		forecast_collision_risk,
+		outcome.integrated_hostile_collision_risk,
+		forecast_hit_damage,
+		planning_context.state_factors.positive_damage_is_terminal_rule
+	)
+	outcome.forecast_expected_health_loss = forecast_impact.expected_health_loss
+	outcome.forecast_terminal_collision_risk = forecast_impact.terminal_collision_risk
+	outcome.forecast_expected_collision_hit_count = forecast_impact.expected_collision_hit_count
+	var forecast_adjusted_hit_damage: float = forecast_impact.maximum_armor_adjusted_hit_damage
+	outcome.forecast_maximum_armor_adjusted_hit_damage = forecast_adjusted_hit_damage
 	outcome.movement_damage_exposure_reduction = (
 		_movement_damage_exposure_reduction(observation, committed_action)
 		* outcome.collision_risk

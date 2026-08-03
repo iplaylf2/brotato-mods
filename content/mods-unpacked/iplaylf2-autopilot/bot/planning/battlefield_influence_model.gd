@@ -185,13 +185,13 @@ func _sample_enemy_pressure(
 		var physical_clearance: float = (
 			position.length()
 			- geometry.player_radius
-			- track.last_measurement.visual_radius
+			- track.behavior_profile.contact_radius
 		)
 		var contact := clamp(-physical_clearance / geometry.player_radius, 0.0, 1.0)
 		channels.contact = max(channels.contact, contact * track.recency_confidence)
 		if contact > 0.0:
 			channels.contact_damage = max(
-				channels.contact_damage, track.behavior_profile.get("contact_damage", 1.0)
+				channels.contact_damage, track.behavior_profile.contact_damage
 			)
 		_accumulate_ranged_pressure(track, position, sample.time, channels)
 
@@ -419,7 +419,7 @@ func _ally_body_pressure(ally: Dictionary, sample: Dictionary, geometry: Diction
 	var clearance: float = (
 		(ally_position - sample.displacement).length()
 		- geometry.player_radius
-		- ally.visual_radius
+		- ally.collision_radius
 	)
 	var proximity: float = clamp(
 		(geometry.ally_body_margin - clearance) / geometry.ally_body_margin, 0.0, 1.0
@@ -449,7 +449,7 @@ func _sample_projectile_pressure(
 		var clearance: float = (
 			closest_position.length()
 			- geometry.player_radius
-			- projectile.visual_radius
+			- projectile.contact_radius
 		)
 		var proximity: float = clamp(
 			(
@@ -465,9 +465,7 @@ func _sample_projectile_pressure(
 			channels.projectile_contact, clamp(-clearance / geometry.player_radius, 0.0, 1.0)
 		)
 		if clearance < 0.0:
-			channels.contact_damage = max(
-				channels.contact_damage, projectile.get("contact_damage", 1.0)
-			)
+			channels.contact_damage = max(channels.contact_damage, projectile.contact_damage)
 		if interception_sample >= 0 and sample_index >= interception_sample:
 			channels.projectile_interception += projectile_pressure
 			channels.projectile_contact_interception = max(
@@ -484,7 +482,11 @@ func _sample_projectile_point_pressure(
 			_predict_projectile_position(projectile, sample.time)
 			- sample.displacement
 		)
-		var clearance: float = position.length() - geometry.player_radius - projectile.visual_radius
+		var clearance: float = (
+			position.length()
+			- geometry.player_radius
+			- projectile.contact_radius
+		)
 		var proximity: float = clamp(
 			(
 				(geometry.projectile_pressure_distance - clearance)
@@ -498,9 +500,7 @@ func _sample_projectile_point_pressure(
 			channels.projectile_contact, clamp(-clearance / geometry.player_radius, 0.0, 1.0)
 		)
 		if clearance < 0.0:
-			channels.contact_damage = max(
-				channels.contact_damage, projectile.get("contact_damage", 1.0)
-			)
+			channels.contact_damage = max(channels.contact_damage, projectile.contact_damage)
 
 
 func _find_projectile_interception_samples(
@@ -549,14 +549,14 @@ func _find_interception_sample(
 		)
 		var crosses_shield: bool = (
 			(shield_relative_start.linear_interpolate(shield_relative_end, shield_fraction)).length()
-			<= interception.radius + projectile.visual_radius
+			<= interception.radius + projectile.contact_radius
 		)
 		var threatens_player: bool = (
 			(previous_player_relative.linear_interpolate(player_relative, player_fraction)).length()
 			<= (
 				geometry.projectile_pressure_distance
 				+ geometry.player_radius
-				+ projectile.visual_radius
+				+ projectile.contact_radius
 			)
 		)
 		if crosses_shield and threatens_player and shield_fraction <= player_fraction:

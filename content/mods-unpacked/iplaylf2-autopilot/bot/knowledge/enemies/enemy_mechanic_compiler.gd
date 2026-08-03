@@ -4,7 +4,7 @@ extends Reference
 # boss phases are aggregated; mutable state such as the active phase, current
 # cooldown, target, current health, and random rolls is not part of the profile.
 
-const FALLBACK_PRESSURE_INTENSITY := 0.5
+const MINIMUM_PROJECTILE_PRESSURE_INTENSITY := 0.5
 const MAX_PRESSURE_INTENSITY := 4.0
 const EnemyMotionMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd"
@@ -39,9 +39,20 @@ func compile(enemy: Node) -> Dictionary:
 		# Maximum health is the durability prior.
 		"durability": {"maximum_health": _get_maximum_health(enemy)},
 		"contact_damage": _get_contact_damage(enemy),
+		"contact_radius": _circle_collision_radius(enemy, "Hitbox/Collision"),
 		"kill_rewards": _compile_kill_rewards(enemy, archetype),
 		"battlefield_effects": _compile_battlefield_effects(enemy),
 	}
+
+
+func _circle_collision_radius(owner: Node, path: String) -> float:
+	var collision: Node = owner.get_node(path)
+	assert(collision is CollisionShape2D)
+	assert(collision.shape is CircleShape2D)
+	return (
+		float(collision.shape.radius)
+		* max(abs(collision.global_scale.x), abs(collision.global_scale.y))
+	)
 
 
 func _compile_material_assimilation(enemy: Node) -> Dictionary:
@@ -239,7 +250,7 @@ func _compile_projectile_attack(enemy: Node) -> Dictionary:
 		"pressure_intensity":
 		clamp(
 			sqrt(maximum_projectiles_per_second),
-			FALLBACK_PRESSURE_INTENSITY,
+			MINIMUM_PROJECTILE_PRESSURE_INTENSITY,
 			MAX_PRESSURE_INTENSITY
 		),
 		"delivery_modes": delivery_modes,
@@ -331,8 +342,8 @@ func _unconfirmed_projectile_attack() -> Dictionary:
 
 
 func _compile_attached_projectiles(enemy: Node) -> Dictionary:
-	# Fallback for a non-standard enemy that exposes projectile children without
-	# the vanilla attack-behavior collection.
+	# Attached projectiles are an independent stable-mechanics entry point. They
+	# do not need a ShootingAttackBehavior to establish their pressure geometry.
 	var projectiles := []
 	_append_attached_projectiles(projectiles, enemy)
 	var maximum_range := 0.0
@@ -353,7 +364,11 @@ func _compile_attached_projectiles(enemy: Node) -> Dictionary:
 		"maximum_projectiles_per_volley": projectiles.size(),
 		"maximum_projectiles_per_second": float(projectiles.size()),
 		"pressure_intensity":
-		clamp(sqrt(float(projectiles.size())), FALLBACK_PRESSURE_INTENSITY, MAX_PRESSURE_INTENSITY),
+		clamp(
+			sqrt(float(projectiles.size())),
+			MINIMUM_PROJECTILE_PRESSURE_INTENSITY,
+			MAX_PRESSURE_INTENSITY
+		),
 		"delivery_modes": ["attached_orbit"],
 		"has_stationary_hazards": false,
 		"all_projectiles_removed_on_death": true,
@@ -380,8 +395,4 @@ func _get_maximum_health(enemy: Node) -> float:
 
 
 func _get_contact_damage(enemy: Node) -> float:
-	if "_hitbox" in enemy and enemy._hitbox != null:
-		return max(0.0, float(enemy._hitbox.damage))
-	if "current_stats" in enemy and enemy.current_stats != null and "damage" in enemy.current_stats:
-		return max(0.0, float(enemy.current_stats.damage))
-	return 1.0
+	return max(0.0, float(enemy._hitbox.damage))

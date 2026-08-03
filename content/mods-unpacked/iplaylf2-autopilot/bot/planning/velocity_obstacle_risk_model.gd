@@ -41,13 +41,16 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 	var projectile_risk := 0.0
 	var ally_risk := 0.0
 	var maximum_collision_damage := 0.0
+	var forecast_enemy_risk := 0.0
+	var forecast_projectile_risk := 0.0
+	var forecast_maximum_collision_damage := 0.0
 	var committed_enemy_risk := 0.0
 	var committed_projectile_risk := 0.0
 	var committed_maximum_collision_damage := 0.0
 	var minimum_ttc := INF
 
 	for track in observation.enemy_tracks:
-		var combined_radius: float = geometry.player_radius + track.last_measurement.visual_radius
+		var combined_radius: float = geometry.player_radius + track.behavior_profile.contact_radius
 		var predicted_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
 			track, local_horizon_seconds, player_velocity * local_horizon_seconds
 		)
@@ -65,16 +68,23 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 				* track.recency_confidence
 			)
 			maximum_collision_damage = max(
-				maximum_collision_damage, track.behavior_profile.get("contact_damage", 1.0)
+				maximum_collision_damage, track.behavior_profile.contact_damage
 			)
+			if ttc <= action.forecast_seconds:
+				forecast_enemy_risk += (
+					_ttc_risk(ttc, max(0.01, local_horizon_seconds))
+					* track.recency_confidence
+				)
+				forecast_maximum_collision_damage = max(
+					forecast_maximum_collision_damage, track.behavior_profile.contact_damage
+				)
 			if ttc <= committed_seconds:
 				committed_enemy_risk += (
 					_ttc_risk(ttc, max(0.01, local_horizon_seconds))
 					* track.recency_confidence
 				)
 				committed_maximum_collision_damage = max(
-					committed_maximum_collision_damage,
-					track.behavior_profile.get("contact_damage", 1.0)
+					committed_maximum_collision_damage, track.behavior_profile.contact_damage
 				)
 		var track_charge_risk := 0.0
 		var committed_track_charge_risk := 0.0
@@ -86,16 +96,19 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 			if sample.time <= committed_seconds + 0.0001:
 				committed_track_charge_risk = max(committed_track_charge_risk, sample_charge_risk)
 		enemy_risk += track_charge_risk
+		forecast_enemy_risk += track_charge_risk
 		enemy_charge_risk += track_charge_risk
 		committed_enemy_risk += committed_track_charge_risk
 		if track_charge_risk > 0.0:
 			maximum_collision_damage = max(
-				maximum_collision_damage, track.behavior_profile.get("contact_damage", 1.0)
+				maximum_collision_damage, track.behavior_profile.contact_damage
+			)
+			forecast_maximum_collision_damage = max(
+				forecast_maximum_collision_damage, track.behavior_profile.contact_damage
 			)
 		if committed_track_charge_risk > 0.0:
 			committed_maximum_collision_damage = max(
-				committed_maximum_collision_damage,
-				track.behavior_profile.get("contact_damage", 1.0)
+				committed_maximum_collision_damage, track.behavior_profile.contact_damage
 			)
 
 	for projectile in observation.visible_world.enemy_projectiles:
@@ -109,7 +122,7 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 		var ttc := _time_to_collision(
 			projectile.relative_position,
 			projectile_velocity - player_velocity,
-			geometry.player_radius + projectile.visual_radius
+			geometry.player_radius + projectile.contact_radius
 		)
 		if (
 			ttc > navigation_horizon_seconds
@@ -118,13 +131,16 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 			continue
 		minimum_ttc = min(minimum_ttc, ttc)
 		projectile_risk += 1.5 * _ttc_risk(ttc, max(0.01, local_horizon_seconds))
-		maximum_collision_damage = max(
-			maximum_collision_damage, projectile.get("contact_damage", 1.0)
-		)
+		maximum_collision_damage = max(maximum_collision_damage, projectile.contact_damage)
+		if ttc <= action.forecast_seconds:
+			forecast_projectile_risk += (1.5 * _ttc_risk(ttc, max(0.01, local_horizon_seconds)))
+			forecast_maximum_collision_damage = max(
+				forecast_maximum_collision_damage, projectile.contact_damage
+			)
 		if ttc <= committed_seconds:
 			committed_projectile_risk += 1.5 * _ttc_risk(ttc, max(0.01, local_horizon_seconds))
 			committed_maximum_collision_damage = max(
-				committed_maximum_collision_damage, projectile.get("contact_damage", 1.0)
+				committed_maximum_collision_damage, projectile.contact_damage
 			)
 
 	for ally in observation.visible_world.get("allied_agents", []):
@@ -133,7 +149,7 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 		var ttc := _time_to_collision(
 			ally.relative_position,
 			ally.velocity - player_velocity,
-			geometry.player_radius + ally.visual_radius
+			geometry.player_radius + ally.collision_radius
 		)
 		if ttc <= navigation_horizon_seconds:
 			minimum_ttc = min(minimum_ttc, ttc)
@@ -144,6 +160,9 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 		"velocity_obstacle_risk": _saturate(enemy_risk + projectile_risk + ally_risk),
 		"hostile_velocity_obstacle_risk": _saturate(enemy_risk + projectile_risk),
 		"maximum_velocity_obstacle_damage": maximum_collision_damage,
+		"forecast_hostile_velocity_obstacle_risk":
+		_saturate(forecast_enemy_risk + forecast_projectile_risk),
+		"forecast_maximum_velocity_obstacle_damage": forecast_maximum_collision_damage,
 		"committed_hostile_velocity_obstacle_risk":
 		_saturate(committed_enemy_risk + committed_projectile_risk),
 		"committed_maximum_velocity_obstacle_damage": committed_maximum_collision_damage,
@@ -191,7 +210,7 @@ func _charge_collision_risk(
 	var corridor_clearance: float = (
 		closest_corridor_point.distance_to(player_displacement)
 		- geometry.player_radius
-		- track.last_measurement.visual_radius
+		- track.behavior_profile.contact_radius
 		- max(0.0, charge_attack.get("maximum_aim_offset_radius", 0.0))
 	)
 	var maneuver_margin: float = max(1.0, geometry.control_distance)
@@ -201,7 +220,7 @@ func _charge_collision_risk(
 	var launch_clearance: float = (
 		launch_position.length()
 		- geometry.player_radius
-		- track.last_measurement.visual_radius
+		- track.behavior_profile.contact_radius
 	)
 	var charge_reach := clamp((pressure_distance - launch_clearance) / pressure_distance, 0.0, 1.0)
 	return (
@@ -283,7 +302,7 @@ func _intercepted_before_player(
 		var interception_ttc := _time_to_collision(
 			projectile.relative_position - ally.relative_position,
 			average_projectile_velocity - ally.velocity,
-			interception.radius + projectile.visual_radius
+			interception.radius + projectile.contact_radius
 		)
 		if interception_ttc <= player_ttc:
 			return true

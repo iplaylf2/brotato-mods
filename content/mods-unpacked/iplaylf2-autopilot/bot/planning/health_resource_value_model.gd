@@ -236,12 +236,9 @@ func _consumable_recovery(observation: Dictionary, consumable: Dictionary) -> fl
 func _observed_hit_reserve(observation: Dictionary) -> float:
 	var maximum_raw_damage := 1.0
 	for projectile in observation.visible_world.enemy_projectiles:
-		maximum_raw_damage = max(maximum_raw_damage, projectile.get("contact_damage", 0.0))
+		maximum_raw_damage = max(maximum_raw_damage, projectile.contact_damage)
 	for track in observation.enemy_tracks:
-		var measurement: Dictionary = track.get("last_measurement", {})
-		maximum_raw_damage = max(
-			maximum_raw_damage, measurement.get("contact_damage", measurement.get("damage", 0.0))
-		)
+		maximum_raw_damage = max(maximum_raw_damage, track.behavior_profile.contact_damage)
 	var armor: float = observation.player_state.runtime_stats.armor
 	var armor_multiplier := (
 		1.0 / (1.0 + armor / 15.0)

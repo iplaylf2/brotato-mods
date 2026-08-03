@@ -15,7 +15,6 @@ const PlayerRuleProjector := preload(
 const StatOpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
 )
-
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
@@ -211,7 +210,7 @@ func _first_incoming_hit_event(observation: Dictionary, samples: Array) -> Dicti
 			)
 			var collision_radius: float = (
 				observation.player_state.collision_radius
-				+ track.last_measurement.visual_radius
+				+ track.behavior_profile.contact_radius
 			)
 			if (enemy_position - sample.displacement).length() <= collision_radius:
 				return {
@@ -227,7 +226,7 @@ func _first_incoming_hit_event(observation: Dictionary, samples: Array) -> Dicti
 			)
 			var collision_radius: float = (
 				observation.player_state.collision_radius
-				+ projectile.visual_radius
+				+ projectile.contact_radius
 			)
 			if (projectile_position - sample.displacement).length() <= collision_radius:
 				return {

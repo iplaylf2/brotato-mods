@@ -102,7 +102,7 @@ func _earliest_physical_influence_seconds(
 			(
 				track.relative_position.length()
 				- geometry.player_radius
-				- track.last_measurement.visual_radius
+				- track.behavior_profile.contact_radius
 				- track.uncertainty_radius
 			)
 		)
@@ -121,7 +121,7 @@ func _earliest_physical_influence_seconds(
 			(
 				projectile.relative_position.length()
 				- geometry.player_radius
-				- projectile.visual_radius
+				- projectile.contact_radius
 			)
 		)
 		earliest = min(earliest, clearance / (player_speed + projectile_speed))

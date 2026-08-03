@@ -20,7 +20,7 @@ func derive(observation: Dictionary) -> Dictionary:
 	var physics_frame: int = int(observation.get("physics_frame", -1))
 	if physics_frame >= 0 and physics_frame == _cached_physics_frame:
 		return _cached_geometry
-	var player_radius: float = max(1.0, float(observation.player_state.collision_radius))
+	var player_radius: float = float(observation.player_state.collision_radius)
 	var command_speed: float = max(1.0, _player_kinematics.predict_command_speed(observation, true))
 	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var control_distance: float = command_speed * timing.control_interval_seconds

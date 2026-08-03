@@ -48,6 +48,7 @@ func build_profile(evidence: Dictionary) -> Dictionary:
 		"next_charge_attack_window": evidence.next_charge_attack_window.duplicate(true),
 		"durability": evidence.stable_mechanic_profile.durability.duplicate(true),
 		"contact_damage": evidence.stable_mechanic_profile.contact_damage,
+		"contact_radius": evidence.stable_mechanic_profile.contact_radius,
 		"kill_rewards": evidence.stable_mechanic_profile.kill_rewards.duplicate(true),
 		"battlefield_effects": evidence.stable_mechanic_profile.battlefield_effects.duplicate(true),
 		"removal_effects":

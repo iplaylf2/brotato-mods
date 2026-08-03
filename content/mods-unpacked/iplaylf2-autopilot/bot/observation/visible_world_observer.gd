@@ -150,6 +150,7 @@ func _append_visible_projectiles(
 			observation.motion_confidence = 0.0
 			observation.motion_model = _projectile_motion_compiler.compile(child)
 			observation.contact_damage = max(0.0, float(child.get_damage()))
+			observation.contact_radius = _circle_collision_radius(child, "Hitbox/Collision")
 			observations.push_back(observation)
 		_append_visible_projectiles(observations, child, origin, visible_rect)
 
@@ -243,6 +244,7 @@ func _append_allied_agent(
 	observation.owner_player_index = owner_player_index
 	observation.relationship = relationship
 	observation.influence = _ally_mechanic_compiler.compile(agent, kind)
+	observation.collision_radius = _circle_collision_radius(agent, "Collision")
 	if kind == "player":
 		observation.pickup = _get_player_pickup_geometry(agent)
 		observation.move_speed = agent.get_move_speed()
@@ -361,6 +363,16 @@ func _get_velocity(node: Node2D) -> Vector2:
 	if "velocity" in node:
 		return node.velocity
 	return Vector2.ZERO
+
+
+func _circle_collision_radius(owner: Node, path: String) -> float:
+	var collision: Node = owner.get_node(path)
+	assert(collision is CollisionShape2D)
+	assert(collision.shape is CircleShape2D)
+	return (
+		float(collision.shape.radius)
+		* max(abs(collision.global_scale.x), abs(collision.global_scale.y))
+	)
 
 
 func _get_visual_radius(node: Node2D) -> float:

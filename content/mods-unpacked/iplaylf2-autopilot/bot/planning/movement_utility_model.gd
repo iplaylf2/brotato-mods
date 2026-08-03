@@ -49,9 +49,9 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"survival":
 			{
 				"integrated_environmental_exposure": -health_price,
-				"terminal_collision_risk":
+				"forecast_terminal_collision_risk":
 				-terminal_health_price * max(1.0, health_value.observed_hit_reserve),
-				"health_resource_loss_value": -1.0,
+				"forecast_health_resource_loss_value": -1.0,
 				"movement_damage_exposure_reduction": health_price,
 			},
 			"recovery":
@@ -118,9 +118,9 @@ func build_context(observation: Dictionary) -> Dictionary:
 
 func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	var scored_outcome := outcome.duplicate(false)
-	scored_outcome.health_resource_loss_value = _health_resource_value_model.loss_value(
-		outcome.expected_health_loss, context.state_factors.health_resource_value
-	)
+	scored_outcome.forecast_health_resource_loss_value = (_health_resource_value_model.loss_value(
+		outcome.forecast_expected_health_loss, context.state_factors.health_resource_value
+	))
 	var field_utility_breakdown := {}
 	var objective_utility_breakdown := {}
 	var score := 0.0

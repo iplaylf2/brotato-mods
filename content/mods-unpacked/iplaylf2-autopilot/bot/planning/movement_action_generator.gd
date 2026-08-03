@@ -137,7 +137,7 @@ func _forecast_window(observation: Dictionary, timing: Dictionary) -> float:
 				relative_velocity,
 				(
 					geometry.player_radius
-					+ track.last_measurement.visual_radius
+					+ track.behavior_profile.contact_radius
 					+ geometry.encounter_margin
 				)
 			)
@@ -158,7 +158,7 @@ func _forecast_window(observation: Dictionary, timing: Dictionary) -> float:
 			_encounter_time(
 				projectile.relative_position,
 				relative_velocity,
-				geometry.player_radius + projectile.visual_radius + geometry.encounter_margin
+				geometry.player_radius + projectile.contact_radius + geometry.encounter_margin
 			)
 		)
 	var forecast_seconds: float = timing.default_local_horizon_seconds

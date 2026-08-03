@@ -24,7 +24,7 @@ static func clip_to_wave_remaining(observation: Dictionary, horizon_seconds: flo
 
 static func derive(observation: Dictionary) -> Dictionary:
 	var control_interval: float = control_interval_seconds()
-	var player_radius: float = max(1.0, observation.player_state.collision_radius)
+	var player_radius: float = observation.player_state.collision_radius
 	var command_speed: float = max(1.0, observation.player_state.runtime_stats.move_speed)
 	# A useful local horizon must contain several future control corrections and
 	# enough travel to clear more than one body width at the current speed.

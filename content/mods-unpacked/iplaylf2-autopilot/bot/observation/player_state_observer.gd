@@ -83,10 +83,12 @@ func _get_runtime_stats(player: Node) -> Dictionary:
 
 
 func _get_collision_radius(player: Node) -> float:
-	var collision_shape: CollisionShape2D = player.get_node_or_null("Collision")
-	if collision_shape != null and collision_shape.shape is CircleShape2D:
-		return collision_shape.shape.radius
-	return 24.0
+	var collision_shape: CollisionShape2D = player.get_node("Collision")
+	assert(collision_shape.shape is CircleShape2D)
+	return (
+		collision_shape.shape.radius
+		* max(abs(collision_shape.global_scale.x), abs(collision_shape.global_scale.y))
+	)
 
 
 func _get_movement_state(player: Node) -> Dictionary:
