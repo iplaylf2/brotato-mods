@@ -7,6 +7,10 @@ extends Reference
 const StatMetadata := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stats/stat_metadata.gd"
 )
+# Weapon.should_shoot() admits the nearest target through this fixed margin
+# beyond current_stats.max_range. Keep the target-version rule at the knowledge
+# boundary instead of reconstructing it from a target's visual or collision size.
+const VANILLA_TARGETING_RANGE_ALLOWANCE := 50.0
 
 var _stat_metadata: Reference = StatMetadata.new()
 
@@ -43,7 +47,7 @@ func _adapt_timing(
 func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:
 	var result := {
 		"minimum_targeting_distance": stats.min_range,
-		"maximum_targeting_distance": stats.max_range,
+		"maximum_targeting_distance": stats.max_range + VANILLA_TARGETING_RANGE_ALLOWANCE,
 		"paths":
 		{
 			"count": 1,

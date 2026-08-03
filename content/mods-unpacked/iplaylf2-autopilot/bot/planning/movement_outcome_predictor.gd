@@ -1,9 +1,9 @@
 extends Reference
 
 # Predicts the outcome of one feasible movement vector over a threat-timed
-# forecast. Every evaluated action receives the shared base prediction; actions
-# selected for full evaluation also receive action-conditioned expected weapon
-# outcomes. Scoring belongs to MovementUtilityModel.
+# forecast. Every scored consequence uses that same forecast; the shorter
+# control interval is retained only as an execution diagnostic and as the
+# fraction of a longer navigation plan that this input can actually realize.
 
 const WeaponOutcomeFieldModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_outcome_field_model.gd"
@@ -101,7 +101,7 @@ func predict_base(
 	var committed_action: Dictionary = _committed_action(
 		observation, action, planning_context.control_interval_seconds
 	)
-	_predict_action_outcomes(observation, committed_action, outcome)
+	_predict_action_outcomes(observation, action, outcome)
 	outcome.collision_risk = max(outcome.peak_path_collision_risk, outcome.velocity_obstacle_risk)
 	outcome.hostile_collision_risk = max(
 		outcome.peak_path_collision_risk, outcome.hostile_velocity_obstacle_risk
@@ -144,7 +144,7 @@ func predict_base(
 	var forecast_adjusted_hit_damage: float = forecast_impact.maximum_armor_adjusted_hit_damage
 	outcome.forecast_maximum_armor_adjusted_hit_damage = forecast_adjusted_hit_damage
 	outcome.movement_damage_exposure_reduction = (
-		_movement_damage_exposure_reduction(observation, committed_action)
+		_movement_damage_exposure_reduction(observation, action)
 		* outcome.collision_risk
 	)
 	outcome.navigation_terminal_value_gain = _navigation_terminal_value_progress(
@@ -163,13 +163,8 @@ func complete_prediction(
 	# dictionaries shared instead of recursively copying the whole forecast for
 	# the base forecast and its semantic completion.
 	var outcome: Dictionary = base_outcome.duplicate(false)
-	var committed_action: Dictionary = _committed_action(
-		observation, action, planning_context.control_interval_seconds
-	)
-	_weapon_outcome_field_model.accumulate_outcome(
-		observation, committed_action, outcome, planning_context
-	)
-	_player_rule_outcome_predictor.accumulate_outcome(observation, committed_action, outcome)
+	_weapon_outcome_field_model.accumulate_outcome(observation, action, outcome, planning_context)
+	_player_rule_outcome_predictor.accumulate_outcome(observation, action, outcome)
 	return outcome
 
 

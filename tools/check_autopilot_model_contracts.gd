@@ -15,6 +15,8 @@ func _init() -> void:
 		return
 	_check_target_response()
 	_check_swept_enemy_contact()
+	_check_pickup_interaction_geometry()
+	_check_weapon_outcome_contracts()
 	quit(1 if _failed else 0)
 
 
@@ -96,9 +98,197 @@ func _check_swept_enemy_contact() -> void:
 	)
 
 
+func _check_pickup_interaction_geometry() -> void:
+	var spatial_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/spatial_opportunity_value_model.gd"
+	)
+	var spatial: Reference = spatial_script.new()
+	var material := {
+		"kind": "material",
+		"relative_position": Vector2(100.0, 0.0),
+		"visual_radius": 36.0,
+		"existence_confidence": 1.0,
+	}
+	var observation := {
+		"physics_frame": 3,
+		"wave_state": {"number": 1, "seconds_remaining": 10.0, "duration_seconds": 10.0},
+		"player_state":
+		{
+			"collision_radius": 10.0,
+			"pickup": {"attraction_radius": 150.0, "collection_radius": 32.0},
+			"runtime_stats":
+			{
+				"move_speed": 100.0,
+				"armor": 0.0,
+				"dodge_chance": 0.0,
+				"hit_protection": 0,
+			},
+			"movement": {"knockback_velocity": Vector2.ZERO},
+			"effect_rules": [],
+			"weapons": [],
+		},
+		"remembered_entities": [material],
+		"enemy_tracks": [],
+		"localization": {"map_bounds": _unknown_bounds()},
+	}
+	var value: Dictionary = spatial.stationary_value(
+		observation, {"state_factors": {"health_resource_value": {}}}, 0.0
+	)
+	_expect(
+		value.material_opportunity > 0.0 and value.material_opportunity < 1.0,
+		"pickup opportunity must persist until the material center reaches the collection circle"
+	)
+
+
+func _check_weapon_outcome_contracts() -> void:
+	var field_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_outcome_field_model.gd"
+	)
+	var field: Reference = field_script.new()
+	var low_value_track := _enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
+	low_value_track.behavior_profile.durability = {"maximum_health": 10.0}
+	var high_value_track := _enemy_track(Vector2(200.0, 0.0), Vector2.ZERO, false)
+	high_value_track.track_id = 2
+	high_value_track.behavior_profile.durability = {"maximum_health": 10.0}
+	var observation := {
+		"physics_frame": 3,
+		"player_state":
+		{
+			"collision_radius": 10.0,
+			"health": {"current": 10.0, "maximum": 10.0},
+			"runtime_stats":
+			{
+				"move_speed": 100.0,
+				"armor": 0.0,
+				"dodge_chance": 0.0,
+				"hit_protection": 0,
+			},
+			"effective_stats": {"percent_damage": 0.0, "attack_speed": 0.0},
+			"effect_rules": [],
+			"movement": {"knockback_velocity": Vector2.ZERO},
+			"weapons": [{"slot": 0, "attack_model": _weapon_attack_model()}],
+		},
+		"enemy_tracks": [low_value_track, high_value_track],
+		"visible_world": {"trees": []},
+		"localization": {"map_bounds": _unknown_bounds()},
+	}
+	var action := {
+		"movement": Vector2.ZERO,
+		"forecast_seconds": 0.5,
+		"samples": [{"time": 0.5, "displacement": Vector2.ZERO, "movement": Vector2.ZERO}],
+	}
+	var outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(
+		observation,
+		action,
+		outcome,
+		{
+			"control_interval_seconds": 0.1,
+			"enemy_removal_value_ledger":
+			{
+				"removal_values": {1: 10.0, 2: 100.0},
+			},
+			"state_factors": {"health_resource_value": {}},
+		}
+	)
+	_expect(
+		is_equal_approx(outcome.expected_weapon_damage, 5.0),
+		"weapon benefit and forecast collision cost must use the same action horizon"
+	)
+	_expect(
+		is_equal_approx(outcome.expected_enemy_removal_value_progress, 5.0),
+		"automatic weapon value must belong to the nearest fully available target"
+	)
+	observation.physics_frame = 4
+	low_value_track.relative_position = Vector2(200.0, 0.0)
+	high_value_track.relative_position = Vector2(100.0, 0.0)
+	var high_value_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(
+		observation,
+		action,
+		high_value_outcome,
+		{
+			"control_interval_seconds": 0.1,
+			"enemy_removal_value_ledger": {"removal_values": {1: 10.0, 2: 100.0}},
+			"state_factors": {"health_resource_value": {}},
+		}
+	)
+	_expect(
+		(
+			high_value_outcome.expected_enemy_removal_value_progress
+			> outcome.expected_enemy_removal_value_progress * 5.0
+		),
+		"positioning that makes a higher-value target nearest must produce higher combat value"
+	)
+	observation.physics_frame = 5
+	high_value_track.relative_position = Vector2(320.0, 0.0)
+	high_value_track.last_measurement.visual_radius = 100.0
+	observation.enemy_tracks = [high_value_track]
+	var outside_center_range_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(
+		observation,
+		action,
+		outside_center_range_outcome,
+		{
+			"control_interval_seconds": 0.1,
+			"enemy_removal_value_ledger": {"removal_values": {2: 100.0}},
+			"state_factors": {"health_resource_value": {}},
+		}
+	)
+	_expect(
+		is_equal_approx(outside_center_range_outcome.expected_weapon_damage, 0.0),
+		"target visual size must not extend the center-distance automatic targeting range"
+	)
+
+
+func _empty_weapon_outcome(field_names: Array) -> Dictionary:
+	var outcome := {}
+	for field_name in field_names:
+		outcome[field_name] = 0.0
+	outcome.expected_recovery = 0.0
+	outcome.expected_recovery_events = 0.0
+	return outcome
+
+
+func _weapon_attack_model() -> Dictionary:
+	return {
+		"timing": {"expected_attack_interval_seconds": 1.0, "permitted_while_moving": true},
+		"delivery":
+		{
+			"minimum_targeting_distance": 0.0,
+			"maximum_targeting_distance": 300.0,
+			"paths":
+			{
+				"count": 1,
+				"angular_half_extent": 0.0,
+				"corridor_half_width": 5.0,
+				"primary_probability_floor": 1.0,
+				"hit_capacity": 1.0,
+				"retained_damage": 1.0,
+				"maximum_travel_distance": 300.0,
+			},
+			"redirects":
+			{
+				"count": 0.0,
+				"retained_damage": 0.0,
+			},
+		},
+		"impact":
+		{
+			"damage": 10.0,
+			"critical_chance": 0.0,
+			"critical_damage_multiplier": 2.0,
+			"lifesteal": 0.0,
+			"scaling": [],
+		},
+		"rules": [],
+	}
+
+
 func _enemy_track(position: Vector2, velocity: Vector2, follows_player: bool) -> Dictionary:
 	return {
 		"track_id": 1,
+		"visible": true,
 		"relative_position": position,
 		"estimated_velocity": velocity,
 		"estimated_acceleration": Vector2.ZERO,

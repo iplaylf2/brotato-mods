@@ -151,14 +151,7 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		_prepared_enemies.push_back(enemy_entry)
 		if value <= 0.0:
 			continue
-		var gap: float = max(
-			0.0,
-			(
-				track.relative_position.length()
-				- _prepared_maximum_weapon_range
-				- track.last_measurement.visual_radius
-			)
-		)
+		var gap: float = max(0.0, track.relative_position.length() - _prepared_maximum_weapon_range)
 		_prepared_candidate_entries.push_back(
 			{
 				"position": track.relative_position,
@@ -171,7 +164,7 @@ func _enemy_route_accessibility(
 	track: Dictionary, player_displacement: Vector2, time: float, reach_distance: float
 ) -> float:
 	var initial_accessibility := _enemy_accessibility(
-		track, track.relative_position, Vector2.ZERO, reach_distance
+		track.relative_position, Vector2.ZERO, reach_distance
 	)
 	if time <= 0.0:
 		return initial_accessibility
@@ -188,27 +181,19 @@ func _enemy_route_accessibility(
 		track, time, player_displacement
 	)
 	var midpoint_accessibility := _enemy_accessibility(
-		track, midpoint_enemy_position, midpoint_player_position, reach_distance
+		midpoint_enemy_position, midpoint_player_position, reach_distance
 	)
 	var terminal_accessibility := _enemy_accessibility(
-		track, terminal_enemy_position, player_displacement, reach_distance
+		terminal_enemy_position, player_displacement, reach_distance
 	)
 	return (initial_accessibility + 4.0 * midpoint_accessibility + terminal_accessibility) / 6.0
 
 
 func _enemy_accessibility(
-	track: Dictionary,
-	predicted_position: Vector2,
-	player_displacement: Vector2,
-	reach_distance: float
+	predicted_position: Vector2, player_displacement: Vector2, reach_distance: float
 ) -> float:
 	var gap: float = max(
-		0.0,
-		(
-			(predicted_position - player_displacement).length()
-			- _prepared_maximum_weapon_range
-			- track.last_measurement.visual_radius
-		)
+		0.0, (predicted_position - player_displacement).length() - _prepared_maximum_weapon_range
 	)
 	return _accessibility(gap, reach_distance)
 
@@ -232,17 +217,10 @@ func _entity_interaction_gap(
 	player_displacement: Vector2,
 	maximum_weapon_range: float
 ) -> float:
-	var interaction_radius: float = _entity_interaction_radius(observation, entity)
+	var interaction_radius: float = _entity_interaction_radius(observation)
 	if entity.kind == "tree":
 		interaction_radius = maximum_weapon_range
-	return max(
-		0.0,
-		(
-			(entity.relative_position - player_displacement).length()
-			- interaction_radius
-			- entity.get("visual_radius", 0.0)
-		)
-	)
+	return max(0.0, (entity.relative_position - player_displacement).length() - interaction_radius)
 
 
 func _route_interaction_gap(
@@ -257,14 +235,10 @@ func _route_interaction_gap(
 	return _entity_interaction_gap(observation, entity, closest_position, maximum_weapon_range)
 
 
-func _entity_interaction_radius(observation: Dictionary, entity: Dictionary) -> float:
-	if entity.kind == "material":
-		return observation.player_state.pickup.attraction_radius
-	if (
-		entity.kind == "consumable"
-		and _opportunity_value_model.consumable_recovery_value(observation, entity) > 0.0
-	):
-		return observation.player_state.pickup.attraction_radius
+func _entity_interaction_radius(observation: Dictionary) -> float:
+	# Entering the attraction area starts motion but does not realize a pickup.
+	# Navigation keeps the opportunity until the observed center can reach the
+	# same collection circle used by the local outcome and memory contracts.
 	return observation.player_state.pickup.collection_radius
 
 

@@ -24,7 +24,7 @@
 | 机制族 | 代表内容 | 当前语义 |
 | --- | --- | --- |
 | 移动/静止条件属性与禁止移动攻击 | Barricade、Chameleon、Statue、Soldier | 候选动作投影有效属性和攻击许可，并为持续站立或移动计时 |
-| 材料与消耗品事件 | Metal Detector、Cute Monkey、Baby Elephant、Extra Stomach、Spicy Sauce | 按路径上的实际拾取时刻预测材料、恢复、成长和范围伤害 |
+| 材料与消耗品事件 | Metal Detector、Cute Monkey、Baby Elephant、Extra Stomach、Spicy Sauce | 按候选路径进入收集半径的时刻预测材料、恢复、成长和范围伤害 |
 | 材料立即装填 | 相应玩家/武器效果 | 规则适配层保留“拾取时重置冷却”的版本语义；期望武器结果场不追踪当前冷却相位，因此暂不把这次逐发协同计为额外移动收益 |
 | 受击、闪避与恢复事件 | Riposte、Adrenaline、Triangle of Power、Bull | 以预计命中/闪避概率预测反击、恢复、临时属性和爆炸收益 |
 | 特殊治疗约束 | Torture、禁止治疗效果 | Torture 屏蔽普通治疗价值但保留固定每秒恢复；禁止治疗不会追逐无效果实或治疗区 |
@@ -33,7 +33,7 @@
 | 暴击击杀奖励 | Hunting Trophy、Tentacle | 以伤害占敌人最大生命的保守击杀权重预测材料与恢复，不读取当前生命 |
 | 弹匣式节奏 | Revolver、Chain Gun | 把额外长装填折入长期期望攻击间隔，不追踪当前弹匣相位或安排某次具体攻击 |
 | 交替近战形态 | Fighting Stick、Sword、Vorpal Sword、Excalibur | 玩家自身可感知的下一击形态进入投送画像；结果场只估计该形态的连续覆盖，不模拟挥击轨迹 |
-| 自动目标与路径碰撞 | `Weapon.Range` 的敌人和中立单位碰撞层 | 可见敌人与树共同形成连续目标覆盖；距离影响锁定可用度与覆盖权重，但规划器不选择具体目标，也不求解碰撞顺序 |
+| 自动目标与路径碰撞 | `Weapon.Range` 的敌人和中立单位碰撞层；`Weapon.should_shoot()` 的中心距离射程判断 | 可见敌人与树共同形成连续目标覆盖；编译器把原版 `max_range + 50` 写入中心锁定范围，外观半径只参与命中路径交会；结果场按最近目标次序分配主目标可用概率，并沿候选路径积分覆盖时间，但规划器不指定目标，也不求解逐发碰撞顺序 |
 | 穿透、弹射与暴击链 | Bandana、Ricochet、Crossbow、Shuriken | 穿透按攻击走廊内的覆盖质量估计，弹射按可重定向覆盖质量估计；两者均受投送容量和逐阶段伤害保留率约束，不构造有序路径 |
 | 命中后二次武器效果 | 爆炸武器、燃烧武器、Cactus Mace、Lightning Shiv、Sniper Gun、Vorpal Sword | 把锚点、目标选择、覆盖半径、容量和伤害缩放压缩为命中后的期望投送，不传播具体事件链 |
 | 动态武器数值 | Stick、Rail Gun、Ghost 武器及属性换算内容 | 直接读取 `current_stats`；已经生效的堆叠、无伤成长、套装和属性换算无需识别内容 ID |
@@ -55,8 +55,8 @@
 
 1. 枚举 `items/all` 和两类武器目录，比较新增、删除和改名的内容族。
 2. 汇总所有效果资源的脚本类型、`key`、`custom_key` 与 `storage_method`，确认新增字段有明确的运行时消费者。
-3. 比较 `WeaponStats`、`RangedWeaponStats`、`MeleeWeaponStats` 和 `Weapon` 的时序、形态、目标碰撞层及
-   命中处理字段。
+3. 比较 `WeaponStats`、`RangedWeaponStats`、`MeleeWeaponStats` 和 `Weapon` 的时序、形态、目标碰撞层、
+   `should_shoot()` 中的中心距离准入量及命中处理字段。
 4. 搜索玩家效果聚合表中的新增键，并追踪玩家、单位、投射物、主场景和构筑物的读取位置。
 5. 对每个新增机制判断其是否改变波内移动；若改变，优先扩展共享语义轴，再在 `bot/knowledge` 添加版本映射。
 6. 完成源码编译检查，并在游戏内分别验证站立限制、材料装填、Torture、闪避触发、长期弹匣节奏、交替

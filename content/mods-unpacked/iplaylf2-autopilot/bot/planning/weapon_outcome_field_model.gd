@@ -47,11 +47,12 @@ func accumulate_outcome(
 	_prepare_targets(observation, planning_context)
 	if _prepared_targets.empty() or observation.player_state.weapons.empty():
 		return
-	var control_seconds: float = planning_context.control_interval_seconds
+	var forecast_seconds: float = action.forecast_seconds
 	var displacement: Vector2 = action.samples.back().displacement
 	var is_moving: bool = action.movement != Vector2.ZERO
+	var transition_seconds: float = min(forecast_seconds, planning_context.control_interval_seconds)
 	var weapon_outcome: Dictionary = _sample_outcome_field(
-		observation, displacement, control_seconds, is_moving
+		observation, displacement, forecast_seconds, transition_seconds, is_moving
 	)
 	for key in OUTCOME_FIELDS:
 		if key == "expected_lifesteal_recovery":
@@ -138,12 +139,16 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 
 
 func _sample_outcome_field(
-	observation: Dictionary, displacement: Vector2, control_seconds: float, is_moving: bool
+	observation: Dictionary,
+	displacement: Vector2,
+	forecast_seconds: float,
+	transition_seconds: float,
+	is_moving: bool
 ) -> Dictionary:
 	var movement_state := "moving" if is_moving else "standing"
 	if not _prepared_outcome_fields.has(movement_state):
 		_prepared_outcome_fields[movement_state] = _build_outcome_field(
-			observation, displacement, control_seconds, is_moving
+			observation, displacement, forecast_seconds, transition_seconds, is_moving
 		)
 	var outcome_field: Dictionary = _prepared_outcome_fields[movement_state]
 	if not is_moving:
@@ -171,22 +176,28 @@ func _sample_outcome_field(
 func _build_outcome_field(
 	observation: Dictionary,
 	candidate_displacement: Vector2,
-	control_seconds: float,
+	forecast_seconds: float,
+	transition_seconds: float,
 	is_moving: bool
 ) -> Dictionary:
 	var center: Vector2 = _player_kinematics_model.predict_displacement(
-		observation, Vector2.ZERO, control_seconds
+		observation, Vector2.ZERO, forecast_seconds
 	)
 	if not is_moving:
 		return {
 			"center": center,
 			"radius": 1.0,
-			"samples": [_estimate_outcome_at(observation, center, control_seconds, false)],
+			"samples":
+			[
+				_estimate_outcome_along_path(
+					observation, center, forecast_seconds, transition_seconds, false
+				)
+			],
 		}
 	var radius: float = max(
 		observation.player_state.collision_radius,
 		max(
-			observation.player_state.runtime_stats.move_speed * control_seconds,
+			observation.player_state.runtime_stats.move_speed * forecast_seconds,
 			(candidate_displacement - center).length()
 		)
 	)
@@ -195,16 +206,63 @@ func _build_outcome_field(
 		for x_index in 3:
 			var offset := Vector2(x_index - 1, y_index - 1) * radius
 			samples.push_back(
-				_estimate_outcome_at(observation, center + offset, control_seconds, true)
+				_estimate_outcome_along_path(
+					observation, center + offset, forecast_seconds, transition_seconds, true
+				)
 			)
 	return {"center": center, "radius": radius, "samples": samples}
 
 
-func _estimate_outcome_at(
-	observation: Dictionary, displacement: Vector2, control_seconds: float, is_moving: bool
+func _estimate_outcome_along_path(
+	observation: Dictionary,
+	terminal_displacement: Vector2,
+	forecast_seconds: float,
+	transition_seconds: float,
+	is_moving: bool
 ) -> Dictionary:
 	var result: Dictionary = _empty_outcome_sample()
-	var target_samples: Array = _sample_targets(observation, displacement, control_seconds)
+	var transition_width: float = max(
+		observation.player_state.collision_radius,
+		observation.player_state.runtime_stats.move_speed * transition_seconds
+	)
+	# Simpson integration preserves both the initial opportunity and the time at
+	# which candidate movement creates or loses an attack window. Applying the
+	# terminal target arrangement to every expected attack would prepay damage that
+	# cannot occur while the player is still approaching.
+	_accumulate_outcome_at_path_sample(
+		observation, Vector2.ZERO, 0.0, forecast_seconds / 6.0, transition_width, is_moving, result
+	)
+	_accumulate_outcome_at_path_sample(
+		observation,
+		terminal_displacement * 0.5,
+		forecast_seconds * 0.5,
+		forecast_seconds * 4.0 / 6.0,
+		transition_width,
+		is_moving,
+		result
+	)
+	_accumulate_outcome_at_path_sample(
+		observation,
+		terminal_displacement,
+		forecast_seconds,
+		forecast_seconds / 6.0,
+		transition_width,
+		is_moving,
+		result
+	)
+	return result
+
+
+func _accumulate_outcome_at_path_sample(
+	observation: Dictionary,
+	player_displacement: Vector2,
+	time: float,
+	duration_weight: float,
+	transition_width: float,
+	is_moving: bool,
+	result: Dictionary
+) -> void:
+	var target_samples: Array = _sample_targets(observation, player_displacement, time)
 	for observed_weapon in observation.player_state.weapons:
 		if is_moving and not observed_weapon.attack_model.timing.permitted_while_moving:
 			continue
@@ -212,9 +270,8 @@ func _estimate_outcome_at(
 			observed_weapon, observation, is_moving
 		)
 		_accumulate_weapon_outcome(
-			attack_model, target_samples, observation, control_seconds, result
+			attack_model, target_samples, duration_weight, transition_width, result
 		)
-	return result
 
 
 func _interpolate_outcomes(
@@ -265,20 +322,16 @@ func _sample_targets(observation: Dictionary, player_displacement: Vector2, time
 func _accumulate_weapon_outcome(
 	attack_model: Dictionary,
 	target_samples: Array,
-	observation: Dictionary,
-	control_seconds: float,
+	exposure_seconds: float,
+	transition_width: float,
 	outcome: Dictionary
 ) -> void:
 	var attack_interval_seconds: float = max(
 		0.05, attack_model.timing.expected_attack_interval_seconds
 	)
-	var expected_attack_count: float = control_seconds / attack_interval_seconds
+	var expected_attack_count: float = exposure_seconds / attack_interval_seconds
 	if expected_attack_count <= 0.0:
 		return
-	var transition_width: float = max(
-		observation.player_state.collision_radius,
-		observation.player_state.runtime_stats.move_speed * control_seconds
-	)
 	var coverage: Dictionary = _summarize_target_coverage(
 		attack_model, target_samples, transition_width
 	)
@@ -336,7 +389,6 @@ func _summarize_target_coverage(
 	var tree_selection_weight := 0.0
 	var covered_enemy_mass := 0.0
 	var covered_target_mass := 0.0
-	var target_unavailable_probability := 1.0
 	var weighted_removal_value_per_health := 0.0
 	var weighted_enemy_maximum_health := 0.0
 	var weighted_tree_harvest_value_per_hit := 0.0
@@ -344,31 +396,33 @@ func _summarize_target_coverage(
 	for sample in target_samples:
 		var target: Dictionary = sample.target
 		var coverage: float = (
-			_range_coverage(
-				sample.distance, target.radius, minimum_distance, maximum_distance, transition_width
-			)
+			_range_coverage(sample.distance, minimum_distance, maximum_distance, transition_width)
 			* clamp(target.confidence, 0.0, 1.0)
 		)
 		if coverage <= 0.0:
 			continue
-		var proximity_weight: float = (
-			1.0
-			+ maximum_distance / max(max(1.0, target.radius), sample.distance)
-		)
-		var selection_weight: float = coverage * proximity_weight
 		covered_samples.push_back(
 			{
 				"sample": sample,
 				"coverage": coverage,
-				"selection_weight": selection_weight,
+				"selection_weight": 0.0,
 			}
 		)
+	covered_samples.sort_custom(self, "_closer_covered_sample")
+	var nearer_targets_unavailable_probability := 1.0
+	for covered in covered_samples:
+		# Vanilla chooses the nearest target. Smooth range coverage represents the
+		# uncertainty at a lock boundary; a farther target is selected only when all
+		# nearer targets are unavailable.
+		var selection_weight: float = covered.coverage * nearer_targets_unavailable_probability
+		covered.selection_weight = selection_weight
 		total_selection_weight += selection_weight
-		covered_target_mass += coverage
-		target_unavailable_probability *= 1.0 - clamp(coverage, 0.0, 1.0)
+		covered_target_mass += covered.coverage
+		nearer_targets_unavailable_probability *= 1.0 - clamp(covered.coverage, 0.0, 1.0)
+		var target: Dictionary = covered.sample.target
 		if target.kind == "enemy":
 			enemy_selection_weight += selection_weight
-			covered_enemy_mass += coverage
+			covered_enemy_mass += covered.coverage
 			weighted_removal_value_per_health += (
 				selection_weight
 				* target.removal_value_per_health
@@ -384,7 +438,7 @@ func _summarize_target_coverage(
 	var enemy_selection_share: float = enemy_selection_weight / max(0.0001, total_selection_weight)
 	var tree_selection_share: float = tree_selection_weight / max(0.0001, total_selection_weight)
 	return {
-		"target_availability": 1.0 - target_unavailable_probability,
+		"target_availability": total_selection_weight,
 		"covered_target_mass": covered_target_mass,
 		"covered_enemy_mass": covered_enemy_mass,
 		"expected_additional_direct_targets":
@@ -400,6 +454,10 @@ func _summarize_target_coverage(
 		"mean_tree_harvest_value_per_hit":
 		weighted_tree_harvest_value_per_hit / max(0.0001, tree_selection_weight),
 	}
+
+
+func _closer_covered_sample(left: Dictionary, right: Dictionary) -> bool:
+	return left.sample.distance < right.sample.distance
 
 
 func _expected_additional_direct_targets(
@@ -466,20 +524,15 @@ func _direct_path_intersection(
 
 
 func _range_coverage(
-	distance: float,
-	radius: float,
-	minimum_distance: float,
-	maximum_distance: float,
-	transition_width: float
+	distance: float, minimum_distance: float, maximum_distance: float, transition_width: float
 ) -> float:
-	var target_distance: float = max(0.0, distance - max(0.0, radius))
 	var upper_coverage: float = clamp(
-		(maximum_distance - target_distance) / max(1.0, transition_width), 0.0, 1.0
+		(maximum_distance - distance) / max(1.0, transition_width), 0.0, 1.0
 	)
 	if minimum_distance <= 0.0:
 		return upper_coverage
 	var lower_coverage: float = clamp(
-		(target_distance - minimum_distance) / max(1.0, transition_width), 0.0, 1.0
+		(distance - minimum_distance) / max(1.0, transition_width), 0.0, 1.0
 	)
 	return min(lower_coverage, upper_coverage)
 
