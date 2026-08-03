@@ -1,7 +1,7 @@
 extends Reference
 
-# Prices current health and replacement-health supply from the projected
-# survival buffer.
+# Prices wave-local health and replacement supply from the projected survival
+# buffer, while preserving an undiscounted value for terminal collision.
 
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
@@ -41,10 +41,22 @@ func estimate(observation: Dictionary, rule_projection: Dictionary) -> Dictionar
 		BASE_HEALTH_VALUE
 		+ SURVIVAL_BUFFER_VALUE * (1.0 + exposure_fraction) / effective_buffer
 	)
+	# Non-terminal health is a wave-local resource: vanilla reconstructs the
+	# player's configured starting health next wave. Its opportunity cost therefore
+	# follows the remaining exposure horizon, while terminal collision keeps the
+	# full value below.
+	var nonterminal_health_value := (
+		marginal_health_value
+		* clamp(remaining_seconds / RECOVERY_LOOKAHEAD_SECONDS, 0.0, 1.0)
+	)
 	var recovery_supply_buffer := max(1.0, current_health + replacement_supply - survival_reserve)
-	var recovery_supply_value := (
+	var undiscounted_recovery_supply_value := (
 		BASE_HEALTH_VALUE
 		+ SURVIVAL_BUFFER_VALUE * (1.0 + exposure_fraction) / recovery_supply_buffer
+	)
+	var recovery_supply_value := (
+		undiscounted_recovery_supply_value
+		* clamp(remaining_seconds / RECOVERY_LOOKAHEAD_SECONDS, 0.0, 1.0)
 	)
 	var scarcity := clamp(
 		(
@@ -55,9 +67,10 @@ func estimate(observation: Dictionary, rule_projection: Dictionary) -> Dictionar
 		1.0
 	)
 	return {
-		"marginal_health_value": marginal_health_value,
+		"marginal_health_value": nonterminal_health_value,
+		"terminal_health_value": marginal_health_value,
 		"recovery_supply_value": recovery_supply_value,
-		"recovery_conversion_value": max(0.0, marginal_health_value - recovery_supply_value),
+		"recovery_conversion_value": max(0.0, nonterminal_health_value - recovery_supply_value),
 		"observed_recovery_supply": observed_supply,
 		"expected_drop_recovery_supply": expected_drop_supply,
 		"passive_recovery_supply": passive_supply,

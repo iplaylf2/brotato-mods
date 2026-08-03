@@ -110,6 +110,8 @@ func predict_base(
 		"enemy_removal_value_approach_progress": 0.0,
 		"enemy_removal_value_in_range": 0.0,
 		"tree_opportunity_progress": 0.0,
+		"tree_harvest_value_in_range": 0.0,
+		"expected_tree_harvest_value_progress": 0.0,
 		"standing_seconds": 0.0,
 		"moving_seconds": 0.0,
 		"heading_continuity": 0.0,
@@ -187,14 +189,13 @@ func _predict_action_outcomes(
 ) -> void:
 	var samples: Array = action.samples
 	assert(not samples.empty())
-	outcome.material_acquisition_value = _material_acquisition_value(
-		observation.visible_world.materials, samples, observation.player_state.pickup
-	)
+	outcome.material_acquisition_value = _material_acquisition_value(observation, samples)
 	outcome.material_approach_progress = _material_approach_progress(observation, samples)
 	outcome.consumable_recovery_approach_progress = _consumable_recovery_approach_progress(
 		observation, samples
 	)
 	outcome.tree_opportunity_progress = _tree_opportunity_progress(observation, action)
+	outcome.tree_harvest_value_in_range = _tree_harvest_value_in_range(observation, action)
 	outcome.enemy_removal_value_approach_progress = _enemy_removal_value_approach_progress(
 		observation, action, planning_context
 	)
@@ -210,24 +211,32 @@ func _predict_action_outcomes(
 		outcome.heading_continuity = previous_movement.normalized().dot(action.movement)
 
 
-func _material_acquisition_value(entities: Array, samples: Array, pickup: Dictionary) -> float:
+func _material_acquisition_value(observation: Dictionary, samples: Array) -> float:
 	var value := 0.0
-	for entity in entities:
+	for entity in observation.visible_world.materials:
 		var closest_distance: float = entity.relative_position.length()
 		for sample in samples:
 			closest_distance = min(
 				closest_distance, (entity.relative_position - sample.displacement).length()
 			)
-		if closest_distance <= pickup.collection_radius:
-			value += 1.0
+		if closest_distance <= observation.player_state.pickup.collection_radius:
+			value += _opportunity_value_model.material_collection_value(observation)
 	return value
 
 
 func _material_approach_progress(observation: Dictionary, samples: Array) -> float:
 	var result := 0.0
+	var collection_value: float = _opportunity_value_model.material_collection_value(observation)
+	var reach_distance: float = _movement_geometry.derive(observation).roaming_distance
 	for material in observation.visible_world.materials:
-		result += _pickup_approach_progress(
-			material.relative_position, samples, observation.player_state.pickup.collection_radius
+		result += (
+			_pickup_approach_progress(
+				material.relative_position,
+				samples,
+				observation.player_state.pickup.collection_radius,
+				reach_distance
+			)
+			* collection_value
 		)
 	return result
 
@@ -260,7 +269,7 @@ func _consumable_recovery_approach_progress(observation: Dictionary, samples: Ar
 
 
 func _pickup_approach_progress(
-	relative_position: Vector2, samples: Array, collection_radius: float
+	relative_position: Vector2, samples: Array, collection_radius: float, reach_distance: float
 ) -> float:
 	var initial_distance := relative_position.length()
 	var closest_distance := initial_distance
@@ -268,8 +277,11 @@ func _pickup_approach_progress(
 		closest_distance = min(closest_distance, (relative_position - sample.displacement).length())
 	if closest_distance <= collection_radius:
 		return 0.0
-	var available_distance := max(1.0, initial_distance - collection_radius)
-	return clamp((initial_distance - closest_distance) / available_distance, 0.0, 1.0)
+	var final_distance: float = (relative_position - samples.back().displacement).length()
+	return (
+		_interaction_potential(final_distance, collection_radius, reach_distance)
+		- _interaction_potential(initial_distance, collection_radius, reach_distance)
+	)
 
 
 func _tree_opportunity_progress(observation: Dictionary, action: Dictionary) -> float:
@@ -279,25 +291,52 @@ func _tree_opportunity_progress(observation: Dictionary, action: Dictionary) -> 
 	if maximum_range <= 0.0:
 		return 0.0
 	var interaction := 0.0
+	var reach_distance: float = _movement_geometry.derive(observation).roaming_distance
 	for tree in observation.visible_world.trees:
 		var initial_distance: float = tree.relative_position.length()
-		var closest_distance: float = initial_distance
-		for sample in action.samples:
-			closest_distance = min(
-				closest_distance, (tree.relative_position - sample.displacement).length()
+		var final_distance: float = (tree.relative_position - action.samples.back().displacement).length()
+		interaction += (
+			(
+				_interaction_potential(final_distance, maximum_range, reach_distance)
+				- _interaction_potential(initial_distance, maximum_range, reach_distance)
 			)
-		if closest_distance <= maximum_range:
-			interaction += _opportunity_value_model.tree_reward_value(observation, tree)
-		else:
-			# Normalize progress to the remaining gap to attack range. Approaching
-			# a tree is one continuous opportunity, not a weak unrelated bonus.
-			var initial_gap := max(1.0, initial_distance - maximum_range)
-			var closest_gap := max(0.0, closest_distance - maximum_range)
-			interaction += (
-				clamp((initial_gap - closest_gap) / initial_gap, 0.0, 1.0)
-				* _opportunity_value_model.tree_reward_value(observation, tree)
-			)
+			* _opportunity_value_model.tree_reward_value(observation, tree)
+		)
 	return interaction
+
+
+func _tree_harvest_value_in_range(observation: Dictionary, action: Dictionary) -> float:
+	var maximum_range: float = _usable_weapon_range(
+		observation.player_state.weapons, action.movement != Vector2.ZERO
+	)
+	if maximum_range <= 0.0:
+		return 0.0
+	var final_displacement: Vector2 = action.samples.back().displacement
+	var hit_capacity: float = (
+		_opportunity_value_model.weapon_hit_rate(observation, action.movement != Vector2.ZERO)
+		* action.forecast_seconds
+	)
+	var result := 0.0
+	for tree in observation.visible_world.trees:
+		var final_distance: float = (tree.relative_position - final_displacement).length()
+		if final_distance > maximum_range + tree.get("visual_radius", 0.0):
+			continue
+		var required_hits: float = max(
+			1.0,
+			tree.get("destructible_profile", {}).get("destruction", {}).get("required_hits", 1.0)
+		)
+		result += (
+			_opportunity_value_model.tree_reward_value(observation, tree)
+			* min(1.0, hit_capacity / required_hits)
+		)
+	return result
+
+
+func _interaction_potential(
+	distance: float, interaction_radius: float, reach_distance: float
+) -> float:
+	var gap: float = max(0.0, distance - interaction_radius)
+	return exp(-gap / max(1.0, reach_distance))
 
 
 func _enemy_removal_value_approach_progress(

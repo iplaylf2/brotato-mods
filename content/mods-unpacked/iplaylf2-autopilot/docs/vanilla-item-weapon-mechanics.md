@@ -33,6 +33,7 @@
 | 暴击击杀奖励 | Hunting Trophy、Tentacle | 以伤害占敌人最大生命的保守击杀权重预测材料与恢复，不读取当前生命 |
 | 弹匣式节奏 | Revolver、Chain Gun | 使用当前射击相位、距额外装填的剩余攻击数和装填周期安排攻击 |
 | 交替近战形态 | Fighting Stick、Sword、Vorpal Sword、Excalibur | 按下一击实际的横扫或突刺形态预测 |
+| 自动目标集合 | `Weapon.Range` 的敌人和中立单位碰撞层 | 可见敌人与树共同参与最近合法目标选择；树命中按破坏所需命中数折算收获进度 |
 | 穿透、弹射与暴击链 | Bandana、Ricochet、Crossbow、Shuriken | 普通及暴击触发的链数、伤害衰减和当前目标密度共同决定容量 |
 | 命中后二次武器效果 | 爆炸武器、燃烧武器、Cactus Mace、Lightning Shiv、Sniper Gun、Vorpal Sword | 统一描述爆炸、燃烧、派生投射物和斩杀概率，并计入已执行完整武器预测候选的预期伤害 |
 | 动态武器数值 | Stick、Rail Gun、Ghost 武器及属性换算内容 | 直接读取 `current_stats`；已经生效的堆叠、无伤成长、套装和属性换算无需识别内容 ID |
@@ -52,8 +53,9 @@
 
 1. 枚举 `items/all` 和两类武器目录，比较新增、删除和改名的内容族。
 2. 汇总所有效果资源的脚本类型、`key`、`custom_key` 与 `storage_method`，确认新增字段有明确的运行时消费者。
-3. 比较 `WeaponStats`、`RangedWeaponStats`、`MeleeWeaponStats` 和 `Weapon` 的时序、形态及命中处理字段。
+3. 比较 `WeaponStats`、`RangedWeaponStats`、`MeleeWeaponStats` 和 `Weapon` 的时序、形态、目标碰撞层及
+   命中处理字段。
 4. 搜索玩家效果聚合表中的新增键，并追踪玩家、单位、投射物、主场景和构筑物的读取位置。
 5. 对每个新增机制判断其是否改变波内移动；若改变，优先扩展共享语义轴，再在 `bot/knowledge` 添加版本映射。
 6. 完成源码编译检查，并在游戏内分别验证站立限制、材料装填、Torture、闪避触发、弹匣装填、交替近战、
-   弹射、爆炸/燃烧/派生投射物和斩杀武器。
+   敌人与树的自动目标选择、弹射、爆炸/燃烧/派生投射物和斩杀武器。

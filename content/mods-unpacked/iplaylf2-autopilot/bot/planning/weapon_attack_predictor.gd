@@ -137,6 +137,8 @@ func _accumulate_weapon_attack(
 		attack_outcome, targets, primary, attack_model, include_once_per_forecast
 	)
 	outcome.expected_weapon_damage += attack_outcome.expected_damage
+	var tree_harvest_progress: float = attack_outcome.expected_tree_harvest_value_progress
+	outcome.expected_tree_harvest_value_progress += tree_harvest_progress
 	var removal_value_progress: float = attack_outcome.expected_enemy_removal_value_progress
 	outcome.expected_enemy_removal_value_progress += removal_value_progress
 	outcome.expected_attack_hits += attack_outcome.expected_hits
@@ -219,14 +221,15 @@ func _predict_attack(targets: Array, primary: Dictionary, attack_model: Dictiona
 			_accumulate_target_outcome(result, target, expected_damage, hit_probability)
 			remaining_capacity -= hit_probability
 			retained *= lerp(1.0, damage_retained, hit_probability)
-	_accumulate_redirected_delivery(result, targets, attack_model)
+	_accumulate_redirected_delivery(result, targets, primary, attack_model)
 	return result
 
 
 func _accumulate_redirected_delivery(
-	result: Dictionary, targets: Array, attack_model: Dictionary
+	result: Dictionary, targets: Array, primary: Dictionary, attack_model: Dictionary
 ) -> void:
-	if targets.size() <= 1:
+	var enemy_targets := _enemy_targets(targets)
+	if enemy_targets.empty():
 		return
 	var expected_retargets: float = (
 		attack_model.delivery.redirects.count
@@ -239,9 +242,11 @@ func _accumulate_redirected_delivery(
 	)
 	if expected_retargets <= 0.0:
 		return
+	var available_retargets: float = enemy_targets.size()
+	if primary.kind == "enemy":
+		available_retargets -= 1.0
 	var realized_retargets := min(
-		expected_retargets * max(1.0, float(attack_model.delivery.paths.count)),
-		float(targets.size() - 1)
+		expected_retargets * max(1.0, float(attack_model.delivery.paths.count)), available_retargets
 	)
 	var retained: float = clamp(attack_model.delivery.redirects.retained_damage, 0.0, 1.0)
 	var damage_capacity := _fractional_retained_chain_capacity(realized_retargets, retained)
@@ -252,15 +257,16 @@ func _accumulate_redirected_delivery(
 		* hit_probability
 	)
 	var mean_removal_value_per_health := 0.0
-	for target in targets:
+	for target in enemy_targets:
 		mean_removal_value_per_health += target.removal_value_per_health
-	mean_removal_value_per_health /= targets.size()
+	mean_removal_value_per_health /= enemy_targets.size()
 	result.expected_damage += redirected_damage
 	result.expected_enemy_removal_value_progress += (
 		redirected_damage
 		* mean_removal_value_per_health
 	)
 	result.expected_hits += realized_retargets * hit_probability
+	result.expected_enemy_hits += realized_retargets * hit_probability
 
 
 func _fractional_retained_chain_capacity(count: float, retained: float) -> float:
@@ -281,15 +287,19 @@ func _accumulate_attack_rules(
 	attack_model: Dictionary,
 	include_once_per_forecast: bool
 ) -> void:
+	var enemy_targets := _enemy_targets(targets)
 	var trigger_hits: float = min(result.expected_hits, float(targets.size()))
+	var enemy_trigger_hits: float = min(result.expected_enemy_hits, float(enemy_targets.size()))
 	if trigger_hits <= 0.0:
+		return
+	if enemy_targets.empty():
 		return
 	var damage_before_rules: float = result.expected_damage
 	var removal_value_before_rules: float = result.expected_enemy_removal_value_progress
 	var mean_maximum_health := 0.0
-	for target in targets:
+	for target in enemy_targets:
 		mean_maximum_health += target.maximum_health
-	mean_maximum_health /= max(1.0, float(targets.size()))
+	mean_maximum_health /= max(1.0, float(enemy_targets.size()))
 
 	for rule in attack_model.rules:
 		if rule.event != "weapon_hit":
@@ -300,7 +310,7 @@ func _accumulate_attack_rules(
 			if consequence.target != "enemy_health" or consequence.operation != "deal_damage":
 				continue
 			var applications := _delivered_applications(
-				consequence.delivery, trigger_hits, targets, primary
+				consequence.delivery, trigger_hits, enemy_trigger_hits, enemy_targets, primary
 			)
 			var probability: float = clamp(consequence.get("probability", 1.0), 0.0, 1.0)
 			var damage_per_application := _rule_damage_amount(
@@ -311,24 +321,28 @@ func _accumulate_attack_rules(
 
 	var rule_damage := max(0.0, result.expected_damage - damage_before_rules)
 	var mean_removal_value_per_health := 0.0
-	for target in targets:
+	for target in enemy_targets:
 		mean_removal_value_per_health += target.removal_value_per_health
-	mean_removal_value_per_health /= max(1.0, float(targets.size()))
+	mean_removal_value_per_health /= max(1.0, float(enemy_targets.size()))
 	result.expected_enemy_removal_value_progress = (
 		removal_value_before_rules
 		+ rule_damage * mean_removal_value_per_health
 	)
 	result.expected_kill_weight += min(
-		float(targets.size()), rule_damage / max(1.0, mean_maximum_health)
+		float(enemy_targets.size()), rule_damage / max(1.0, mean_maximum_health)
 	)
 
 
 func _delivered_applications(
-	delivery: Dictionary, trigger_hits: float, targets: Array, primary: Dictionary
+	delivery: Dictionary,
+	trigger_hits: float,
+	enemy_trigger_hits: float,
+	targets: Array,
+	primary: Dictionary
 ) -> float:
 	var capacity: float = max(0.0, delivery.capacity_per_event)
 	if delivery.reuse_event_targets:
-		return min(float(targets.size()), trigger_hits * capacity)
+		return min(float(targets.size()), enemy_trigger_hits * capacity)
 
 	var eligible_targets := 0.0
 	var radius: float = max(0.0, delivery.radius)
@@ -363,8 +377,17 @@ func _targets_primary_first(targets: Array, primary: Dictionary) -> Array:
 func _accumulate_target_outcome(
 	result: Dictionary, target: Dictionary, expected_damage: float, expected_hits: float
 ) -> void:
+	if target.kind == "tree":
+		result.expected_hits += expected_hits
+		result.expected_tree_harvest_value_progress += (
+			expected_hits
+			/ max(1.0, target.required_hits)
+			* target.harvest_value
+		)
+		return
 	result.expected_damage += expected_damage
 	result.expected_hits += expected_hits
+	result.expected_enemy_hits += expected_hits
 	result.expected_kill_weight += min(1.0, expected_damage / target.maximum_health)
 	result.expected_enemy_removal_value_progress += (
 		expected_damage
@@ -385,6 +408,7 @@ func _targets_at_time(
 		)
 		targets.push_back(
 			{
+				"kind": "enemy",
 				"track_id": track.track_id,
 				"position": _predict_track_position(track, time) - displacement,
 				"radius": track.last_measurement.visual_radius,
@@ -396,7 +420,35 @@ func _targets_at_time(
 				),
 			}
 		)
+	for tree_index in observation.visible_world.trees.size():
+		var tree: Dictionary = observation.visible_world.trees[tree_index]
+		targets.push_back(
+			{
+				"kind": "tree",
+				"track_id": "tree_%s" % tree_index,
+				"position": tree.relative_position - displacement,
+				"radius": tree.get("visual_radius", 0.0),
+				"maximum_health": 1.0,
+				"removal_value_per_health": 0.0,
+				"required_hits":
+				max(
+					1.0,
+					tree.get("destructible_profile", {}).get("destruction", {}).get(
+						"required_hits", 1.0
+					)
+				),
+				"harvest_value": _opportunity_value_model.tree_reward_value(observation, tree),
+			}
+		)
 	return targets
+
+
+func _enemy_targets(targets: Array) -> Array:
+	var result := []
+	for target in targets:
+		if target.kind == "enemy":
+			result.push_back(target)
+	return result
 
 
 func _nearest_legal_target(
@@ -435,6 +487,8 @@ func _empty_attack_outcome() -> Dictionary:
 	return {
 		"expected_damage": 0.0,
 		"expected_enemy_removal_value_progress": 0.0,
+		"expected_tree_harvest_value_progress": 0.0,
 		"expected_hits": 0.0,
+		"expected_enemy_hits": 0.0,
 		"expected_kill_weight": 0.0,
 	}

@@ -136,7 +136,7 @@ func candidate_directions(observation: Dictionary, context: Dictionary) -> Array
 func _entity_value(observation: Dictionary, entity: Dictionary, health_value: Dictionary) -> float:
 	match entity.kind:
 		"material":
-			return 1.0
+			return _opportunity_value_model.material_collection_value(observation)
 		"consumable":
 			return (
 				_opportunity_value_model.consumable_recovery_value(observation, entity)

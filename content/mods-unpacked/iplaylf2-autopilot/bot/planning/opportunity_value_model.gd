@@ -1,8 +1,8 @@
 extends Reference
 
-# Converts stable reward payloads into material-equivalent marginal value and
-# consumables into effective recovery units using only current public state.
-# Geometry and event realization remain in their owning predictors.
+# Prices observed materials, consumables, destructibles, and enemy removal in
+# material-equivalent marginal value using only current public state. Geometry
+# and event realization remain in their owning predictors.
 
 const CONSUMABLE_DROP_OPPORTUNITY_VALUE := 1.0
 const PlayerRuleProjector := preload(
@@ -14,6 +14,18 @@ const StatOpportunityValueModel := preload(
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
+
+
+func material_collection_value(observation: Dictionary) -> float:
+	# A material collected during the wave is immediately available for the next
+	# shop and level-up processing. Vanilla defers uncollected materials through
+	# bonus gold, so the value of avoiding that deferral rises continuously as the
+	# current collection window closes.
+	var duration: float = max(0.01, observation.wave_state.duration_seconds)
+	var remaining_ratio: float = clamp(
+		observation.wave_state.seconds_remaining / duration, 0.0, 1.0
+	)
+	return 1.0 + (1.0 - remaining_ratio)
 
 
 func tree_reward_value(observation: Dictionary, tree: Dictionary) -> float:
@@ -30,7 +42,7 @@ func tree_harvest_feasibility(observation: Dictionary, tree: Dictionary) -> floa
 		1.0, tree.get("destructible_profile", {}).get("destruction", {}).get("required_hits", 1.0)
 	)
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
-	return clamp(_weapon_hit_rate(observation) * remaining_seconds / required_hits, 0.0, 1.0)
+	return clamp(weapon_hit_rate(observation) * remaining_seconds / required_hits, 0.0, 1.0)
 
 
 func build_enemy_removal_value_ledger(
@@ -274,10 +286,12 @@ func _weapon_damage_rate(observation: Dictionary) -> float:
 	return result
 
 
-func _weapon_hit_rate(observation: Dictionary) -> float:
+func weapon_hit_rate(observation: Dictionary, is_moving: bool = false) -> float:
 	var result := 0.0
 	for weapon in observation.player_state.weapons:
 		var attack: Dictionary = weapon.attack_model
+		if is_moving and not attack.timing.permitted_while_moving:
+			continue
 		var cycle_seconds: float = max(0.05, attack.timing.cycle_seconds)
 		var path_count: float = max(1.0, float(attack.delivery.paths.count))
 		var hit_probability: float = clamp(

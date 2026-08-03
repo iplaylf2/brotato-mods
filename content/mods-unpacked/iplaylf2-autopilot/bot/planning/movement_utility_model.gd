@@ -29,6 +29,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 		observation, player_rule_projection
 	)
 	var health_price: float = health_value.marginal_health_value
+	var terminal_health_price: float = health_value.terminal_health_value
 	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
 	var damage_is_terminal_rule: bool = player_rule_projection.survival.terminal_on_positive_damage
 	var current_unprotected_damage_is_terminal: bool = (
@@ -48,7 +49,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			{
 				"integrated_environmental_exposure": -health_price,
 				"terminal_collision_risk":
-				-health_price * max(1.0, health_value.observed_hit_reserve),
+				-terminal_health_price * max(1.0, health_value.observed_hit_reserve),
 				"expected_health_loss": -health_price,
 				"movement_damage_exposure_reduction": health_price,
 			},
@@ -73,6 +74,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"expected_stat_opportunity_value": 1.0,
 				"expected_material_gain": 1.0,
 				"tree_opportunity_progress": 1.0,
+				"expected_tree_harvest_value_progress": 1.0,
 				"standing_seconds": movement_state_economy_rates.standing,
 				"moving_seconds": movement_state_economy_rates.moving,
 			},
@@ -86,9 +88,13 @@ func build_context(observation: Dictionary) -> Dictionary:
 			# This is a switching cost, not a goal preference.
 			"control_stability": {"heading_continuity": 0.1},
 		},
-		# The proxy estimates the same enemy removal value before exact weapon
-		# geometry is available; it disappears from fully evaluated actions.
-		"screening_proxy_weights": {"combat": {"enemy_removal_value_in_range": 1.0}},
+		# Proxies estimate the same target values before exact weapon geometry is
+		# available; they disappear from fully evaluated actions.
+		"screening_proxy_weights":
+		{
+			"economy": {"tree_harvest_value_in_range": 1.0},
+			"combat": {"enemy_removal_value_in_range": 1.0},
+		},
 		"exposure_policy":
 		{
 			"enemy_proximity": 1.0,
@@ -172,7 +178,10 @@ func _information_value_per_viewport(
 	health_value: Dictionary,
 	remaining_ratio: float
 ) -> float:
-	var observed_value: float = float(observation.visible_world.materials.size())
+	var observed_value: float = (
+		observation.visible_world.materials.size()
+		* _opportunity_value_model.material_collection_value(observation)
+	)
 	var observation_count: int = observation.visible_world.materials.size()
 	for consumable in observation.visible_world.consumables:
 		observed_value += (
