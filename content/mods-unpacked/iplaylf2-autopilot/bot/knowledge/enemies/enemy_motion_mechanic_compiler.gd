@@ -38,7 +38,9 @@ func _compile_charge_attack(enemy: Node) -> Dictionary:
 	var minimum_interval := INF
 	var maximum_interval := 0.0
 	var can_target_player := false
+	var aims_at_player_region := false
 	var has_random_targeting := false
+	var maximum_aim_offset_radius := 0.0
 	if "_all_attack_behaviors" in enemy:
 		for behavior in enemy._all_attack_behaviors:
 			if not behavior is ChargingAttackBehavior:
@@ -60,10 +62,23 @@ func _compile_charge_attack(enemy: Node) -> Dictionary:
 				can_target_player
 				or behavior.target == ChargingAttackBehavior.PLAYER
 			)
+			aims_at_player_region = (
+				aims_at_player_region
+				or behavior.target != ChargingAttackBehavior.RAND_POINT
+			)
 			has_random_targeting = (
 				has_random_targeting
 				or behavior.target != ChargingAttackBehavior.PLAYER
 			)
+			if behavior.target == ChargingAttackBehavior.RAND_POINT_AROUND_PLAYER:
+				maximum_aim_offset_radius = max(
+					maximum_aim_offset_radius,
+					(
+						min(600.0, float(behavior.max_range) / 5.0)
+						if behavior.rand_target_size < 0
+						else float(behavior.rand_target_size)
+					)
+				)
 	if maximum_charge_speed <= 0.0 or maximum_duration <= 0.0:
 		return {
 			"active": false,
@@ -85,7 +100,9 @@ func _compile_charge_attack(enemy: Node) -> Dictionary:
 			"maximum_seconds": maximum_interval,
 		},
 		"can_target_player": can_target_player,
+		"aims_at_player_region": aims_at_player_region,
 		"has_random_targeting": has_random_targeting,
+		"maximum_aim_offset_radius": maximum_aim_offset_radius,
 	}
 
 

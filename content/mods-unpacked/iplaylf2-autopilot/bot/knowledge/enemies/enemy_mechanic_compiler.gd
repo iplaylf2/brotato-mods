@@ -27,6 +27,7 @@ func compile(enemy: Node) -> Dictionary:
 			"projectile_attack": _compile_projectile_attack(enemy),
 			"charge_attack": motion_mechanics.charge_attack,
 			"target_position_response": motion_mechanics.target_position_response,
+			"material_assimilation": _compile_material_assimilation(enemy),
 		}
 		if not archetype.empty():
 			_mechanics_by_archetype[archetype] = mechanics.duplicate(true)
@@ -34,12 +35,53 @@ func compile(enemy: Node) -> Dictionary:
 		"projectile_attack": mechanics.projectile_attack,
 		"charge_attack": mechanics.charge_attack,
 		"target_position_response": mechanics.target_position_response,
+		"material_assimilation": mechanics.material_assimilation,
 		# Maximum health is the durability prior.
 		"durability": {"maximum_health": _get_maximum_health(enemy)},
 		"contact_damage": _get_contact_damage(enemy),
 		"kill_rewards": _compile_kill_rewards(enemy, archetype),
 		"battlefield_effects": _compile_battlefield_effects(enemy),
 	}
+
+
+func _compile_material_assimilation(enemy: Node) -> Dictionary:
+	# This describes a causal world interaction, not an enemy identity or target
+	# priority. Any visible enemy with the same pickup geometry and evolution
+	# contract receives the same profile.
+	var attraction_radius := _area_radius(enemy.get_node_or_null("ItemAttractArea"))
+	var collection_radius := _area_radius(enemy.get_node_or_null("ItemPickUpArea"))
+	var evolution_thresholds := []
+	if "quantity_to_evolve" in enemy:
+		for threshold in enemy.quantity_to_evolve:
+			evolution_thresholds.push_back(max(0.0, float(threshold)))
+	var active := (
+		attraction_radius > 0.0
+		and collection_radius > 0.0
+		and not evolution_thresholds.empty()
+	)
+	return {
+		"active": active,
+		"knowledge_source": "stable_mechanics",
+		"attraction_radius": attraction_radius,
+		"collection_radius": collection_radius,
+		"evolution_material_thresholds": evolution_thresholds,
+		"maximum_health_multiplier":
+		max(1.0, float(int(1.0 + 0.5 * max(0, evolution_thresholds.size() - 1)))),
+	}
+
+
+func _area_radius(area: Node) -> float:
+	if not is_instance_valid(area):
+		return 0.0
+	var collision: Node = area.get_node_or_null("CollisionShape2D")
+	if not is_instance_valid(collision) or collision.shape == null:
+		return 0.0
+	if not "radius" in collision.shape:
+		return 0.0
+	return (
+		max(0.0, float(collision.shape.radius))
+		* max(abs(collision.scale.x), abs(collision.scale.y))
+	)
 
 
 func _compile_battlefield_effects(enemy: Node) -> Dictionary:

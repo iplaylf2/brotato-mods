@@ -28,6 +28,7 @@ var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 
 
 func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
+	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var local_horizon_seconds: float = timing.effective_local_horizon_seconds

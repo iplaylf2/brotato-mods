@@ -111,6 +111,12 @@ func _candidate_directions(direction_count: int, navigation_intent: Dictionary) 
 		var preferred_direction := movement_preference.normalized()
 		if not _has_similar_direction(result, preferred_direction):
 			result.push_back(preferred_direction)
+	for proposed_direction in navigation_intent.get("action_direction_proposals", []):
+		if proposed_direction == Vector2.ZERO:
+			continue
+		var direction: Vector2 = proposed_direction.normalized()
+		if not _has_similar_direction(result, direction):
+			result.push_back(direction)
 	return result
 
 

@@ -10,7 +10,7 @@ const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
 const WeaponFireModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_fire_model.gd"
 )
 
 const RECOVERY_LOOKAHEAD_SECONDS := 8.0

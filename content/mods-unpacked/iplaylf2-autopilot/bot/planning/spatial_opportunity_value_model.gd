@@ -27,6 +27,7 @@ func _evaluate_remote_position(
 	time: float,
 	geometry: Dictionary
 ) -> Dictionary:
+	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := {
 		"material_opportunity": 0.0,
 		"recovery_opportunity": 0.0,
@@ -111,6 +112,7 @@ func stationary_value(observation: Dictionary, context: Dictionary, time: float)
 func local_enemy_value_delta(
 	observation: Dictionary, context: Dictionary, player_displacement: Vector2, time: float
 ) -> float:
+	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := 0.0
 	var reach_distance: float = _reach_distance(observation)
 	var maximum_weapon_range: float = _maximum_weapon_range(observation.player_state.weapons)
@@ -207,8 +209,6 @@ func candidate_directions(observation: Dictionary, context: Dictionary) -> Array
 		)
 		_append_candidate(candidates, entity.relative_position, value)
 	for track in observation.enemy_tracks:
-		if track.visible and track.relative_position.length() <= geometry.local_prediction_radius:
-			continue
 		var value: float = (
 			_opportunity_value_model.enemy_removal_value(enemy_removal_value_ledger, track)
 			* _opportunity_value_model.enemy_kill_feasibility(observation, track)
@@ -332,7 +332,7 @@ func _sum_largest(values: Array, capacity: int) -> float:
 func _maximum_weapon_range(weapons: Array) -> float:
 	var result := 0.0
 	for weapon in weapons:
-		result = max(result, weapon.attack_model.delivery.maximum_range)
+		result = max(result, weapon.attack_model.delivery.maximum_targeting_distance)
 	return result
 
 

@@ -46,8 +46,8 @@ func _adapt_timing(
 
 func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:
 	var result := {
-		"minimum_range": stats.min_range,
-		"maximum_range": stats.max_range,
+		"minimum_targeting_distance": stats.min_range,
+		"maximum_targeting_distance": stats.max_range,
 		"paths":
 		{
 			"count": 1,
@@ -57,8 +57,17 @@ func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:
 			"primary_probability_floor": 1.0,
 			"hit_capacity": INF,
 			"retained_damage": 1.0,
+			"travel_speed": INF,
+			"maximum_travel_distance": stats.max_range,
 		},
-		"redirects": {"count": 0, "retained_damage": 0.0},
+		"redirects":
+		{
+			"count": 0,
+			"retained_damage": 0.0,
+			"travel_speed": 0.0,
+			"maximum_travel_distance": 0.0,
+			"target_selection": "none",
+		},
 	}
 	if stats is RangedWeaponStats:
 		result.paths = {
@@ -69,10 +78,16 @@ func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:
 			"primary_probability_floor": clamp(stats.accuracy, 0.1, 1.0),
 			"hit_capacity": stats.piercing + 1,
 			"retained_damage": 1.0 - stats.piercing_dmg_reduction,
+			"travel_speed": max(0.0, float(stats.projectile_speed)),
+			# PlayerProjectile remains alive for this original extra distance.
+			"maximum_travel_distance": stats.max_range + 100.0,
 		}
 		result.redirects = {
 			"count": stats.bounce,
 			"retained_damage": 1.0 - stats.bounce_dmg_reduction,
+			"travel_speed": max(0.0, float(stats.projectile_speed)),
+			"maximum_travel_distance": 10000.0,
+			"target_selection": "uniform_other_enemy",
 		}
 	elif stats is MeleeWeaponStats:
 		var attack_type: int = stats.attack_type
@@ -82,6 +97,7 @@ func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:
 			result.paths.angular_half_extent = 0.9 * PI
 		else:
 			result.paths.corridor_half_width = 16.0
+		result.paths.travel_speed = INF
 	return result
 
 
@@ -186,11 +202,23 @@ func _append_hit_result_rules(
 		1.0
 		+ projectile_stats.crit_chance * max(0.0, projectile_stats.crit_damage - 1.0)
 	)
+	var projectile_delivery := _target_delivery(
+		false, true, INF, max(0, int(hitbox.projectiles_on_hit[0]))
+	)
+	projectile_delivery.target_selection = (
+		"uniform_other_enemy"
+		if bool(hitbox.projectiles_on_hit[2])
+		else "random_direction"
+	)
+	projectile_delivery.travel_speed = max(0.0, float(projectile_stats.projectile_speed))
+	projectile_delivery.maximum_travel_distance = max(
+		0.0, float(projectile_stats.max_range) + 100.0
+	)
 	_append_damage_rule(
 		rules,
 		1.0,
 		_damage_amount(projectile_stats.damage * critical_multiplier, 0.0, 0.0),
-		_target_delivery(false, true, INF, max(0, int(hitbox.projectiles_on_hit[0]))),
+		projectile_delivery,
 		false
 	)
 
@@ -215,6 +243,9 @@ func _target_delivery(
 		"anchor_on_event_entity": true,
 		"radius": radius,
 		"capacity_per_event": capacity_per_event,
+		"target_selection": "event_targets" if reuse_event_targets else "area",
+		"travel_speed": INF,
+		"maximum_travel_distance": radius,
 	}
 
 

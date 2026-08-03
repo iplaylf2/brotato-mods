@@ -40,6 +40,8 @@ func build_profile(evidence: Dictionary) -> Dictionary:
 	return {
 		"projectile_attack": projectile_attack,
 		"charge_attack": evidence.stable_mechanic_profile.charge_attack.duplicate(true),
+		"material_assimilation":
+		evidence.stable_mechanic_profile.material_assimilation.duplicate(true),
 		"target_position_response":
 		evidence.stable_mechanic_profile.target_position_response.duplicate(true),
 		"next_volley_window": evidence.next_volley_window.duplicate(true),

@@ -46,9 +46,15 @@ func project_attack_model(
 		projected.impact.critical_chance + stat_deltas.get("critical_chance", 0.0) / 100.0, 0.0, 1.0
 	)
 	var range_delta: float = stat_deltas.get("range", 0.0)
-	projected.delivery.minimum_range = max(0.0, projected.delivery.minimum_range + range_delta)
-	projected.delivery.maximum_range = max(
-		projected.delivery.minimum_range, projected.delivery.maximum_range + range_delta
+	projected.delivery.minimum_targeting_distance = max(
+		0.0, projected.delivery.minimum_targeting_distance + range_delta
+	)
+	projected.delivery.maximum_targeting_distance = max(
+		projected.delivery.minimum_targeting_distance,
+		projected.delivery.maximum_targeting_distance + range_delta
+	)
+	projected.delivery.paths.maximum_travel_distance = max(
+		0.0, projected.delivery.paths.maximum_travel_distance + range_delta
 	)
 	return projected
 

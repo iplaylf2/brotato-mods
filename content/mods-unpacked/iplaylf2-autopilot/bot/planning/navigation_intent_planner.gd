@@ -190,8 +190,15 @@ func plan(
 		if best.position != Vector2.ZERO and terminal_value_gain > 0.0
 		else Vector2.ZERO
 	)
+	var action_direction_proposals := []
+	if not opportunity_directions.empty():
+		action_direction_proposals.push_back(opportunity_directions[0].direction)
 	return {
 		"movement_preference": movement_preference,
+		# A bounded opportunity proposal lets the local action model evaluate the
+		# strongest observed opportunity even when it lies inside the navigation
+		# model's remote ownership radius. The action still wins only on full utility.
+		"action_direction_proposals": action_direction_proposals,
 		"terminal_value_gain": terminal_value_gain,
 		"position_evaluation_count": position_evaluation_count,
 		"baseline_position_evaluation_count":

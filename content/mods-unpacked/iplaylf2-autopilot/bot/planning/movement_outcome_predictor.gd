@@ -6,7 +6,7 @@ extends Reference
 # Scoring belongs to MovementUtilityModel.
 
 const WeaponAttackPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_attack_predictor.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_predictor.gd"
 )
 const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
@@ -294,7 +294,7 @@ func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:
 	for weapon in weapons:
 		if is_moving and not weapon.attack_model.timing.permitted_while_moving:
 			continue
-		result = max(result, float(weapon.attack_model.delivery.maximum_range))
+		result = max(result, float(weapon.attack_model.delivery.maximum_targeting_distance))
 	return result
 
 

@@ -9,18 +9,21 @@ const ObservedMotionPredictor := preload(
 )
 
 var _observed_motion_predictor: Reference = ObservedMotionPredictor.new()
+var _baseline_cache_physics_frame := -1
+var _observed_positions_by_track_and_time := {}
+
+
+func begin_physics_frame(physics_frame: int) -> void:
+	if physics_frame >= 0 and physics_frame == _baseline_cache_physics_frame:
+		return
+	_baseline_cache_physics_frame = physics_frame
+	_observed_positions_by_track_and_time.clear()
 
 
 func predict_position(
 	track: Dictionary, time: float, player_displacement: Vector2 = Vector2.ZERO
 ) -> Vector2:
-	var observed_position: Vector2 = _observed_motion_predictor.predict_position(
-		track.relative_position,
-		track.estimated_velocity,
-		track.estimated_acceleration,
-		track.motion_confidence,
-		time
-	)
+	var observed_position: Vector2 = _observed_position(track, time)
 	var target_response: Dictionary = track.behavior_profile.get("target_position_response", {})
 	if not target_response.get("responds_to_target_position", false) or time <= 0.0:
 		return observed_position
@@ -57,6 +60,29 @@ func predict_position(
 			* response_displacement
 			* clamp(target_response.get("confidence", 0.0), 0.0, 1.0)
 		)
+	)
+
+
+func _observed_position(track: Dictionary, time: float) -> Vector2:
+	var track_id: int = track.get("track_id", -1)
+	if track_id >= 0:
+		var positions_by_time: Dictionary = _observed_positions_by_track_and_time.get(track_id, {})
+		if positions_by_time.has(time):
+			return positions_by_time[time]
+		var position: Vector2 = _predict_observed_position(track, time)
+		positions_by_time[time] = position
+		_observed_positions_by_track_and_time[track_id] = positions_by_time
+		return position
+	return _predict_observed_position(track, time)
+
+
+func _predict_observed_position(track: Dictionary, time: float) -> Vector2:
+	return _observed_motion_predictor.predict_position(
+		track.relative_position,
+		track.estimated_velocity,
+		track.estimated_acceleration,
+		track.motion_confidence,
+		time
 	)
 
 

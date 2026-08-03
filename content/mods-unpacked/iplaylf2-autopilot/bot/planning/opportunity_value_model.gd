@@ -12,7 +12,7 @@ const StatOpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
 )
 const WeaponFireModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_fire_model.gd"
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
@@ -108,6 +108,9 @@ func build_enemy_removal_value_ledger(
 		mean_enemy_health += max(1.0, track.behavior_profile.durability.maximum_health)
 	mean_base_burden /= tracks.size()
 	mean_enemy_health /= tracks.size()
+	var material_assimilation_burden_by_track := _material_assimilation_burden_by_track(
+		observation, mean_base_burden
+	)
 
 	var preservation_value := _living_enemy_preservation_value(observation)
 	var mean_value_per_health := 0.0
@@ -118,6 +121,7 @@ func build_enemy_removal_value_ledger(
 			+ _battlefield_effect_burden(
 				observation, track, mean_base_burden, mean_enemy_health, marginal_health_value
 			)
+			+ material_assimilation_burden_by_track.get(track.track_id, 0.0)
 			- preservation_value
 		)
 		values[track.track_id] = value
@@ -132,6 +136,85 @@ func build_enemy_removal_value_ledger(
 		"mean_absolute_value": mean_absolute_value / tracks.size(),
 		"living_enemy_preservation_value": preservation_value,
 	}
+
+
+func _material_assimilation_burden_by_track(
+	observation: Dictionary, mean_enemy_burden: float
+) -> Dictionary:
+	var result := {}
+	var consumers := []
+	for track in observation.enemy_tracks:
+		var assimilation: Dictionary = track.behavior_profile.get("material_assimilation", {})
+		if not track.visible or not assimilation.get("active", false):
+			continue
+		var movement_speed: float = max(
+			0.0,
+			track.behavior_profile.get("target_position_response", {}).get("movement_speed", 0.0)
+		)
+		if movement_speed <= 0.0:
+			continue
+		consumers.push_back(
+			{
+				"track": track,
+				"movement_speed": movement_speed,
+				"attraction_radius": max(0.0, assimilation.get("attraction_radius", 0.0)),
+				"growth_burden_per_material":
+				_growth_burden_per_material(assimilation, mean_enemy_burden),
+			}
+		)
+		result[track.track_id] = 0.0
+	if consumers.empty():
+		return result
+
+	# Assign each visible material to the earliest arriving consumer so multiple
+	# enemies cannot claim the same threatened material in the removal ledger.
+	# Urgency follows the observed race geometry and remaining time; no enemy ID or
+	# fixed target bonus participates in the ledger.
+	var horizon: float = max(0.01, sqrt(max(0.0, observation.wave_state.seconds_remaining)))
+	var player_speed: float = max(1.0, observation.player_state.runtime_stats.move_speed)
+	var player_collection_radius: float = observation.player_state.pickup.collection_radius
+	for material in observation.visible_world.materials:
+		var best_consumer := {}
+		var earliest_arrival := INF
+		for consumer in consumers:
+			var track: Dictionary = consumer.track
+			var gap: float = max(
+				0.0,
+				(
+					(material.relative_position - track.relative_position).length()
+					- consumer.attraction_radius
+				)
+			)
+			var arrival_seconds: float = gap / consumer.movement_speed
+			if arrival_seconds < earliest_arrival:
+				earliest_arrival = arrival_seconds
+				best_consumer = consumer
+		if best_consumer.empty():
+			continue
+		var player_gap: float = max(
+			0.0, material.relative_position.length() - player_collection_radius
+		)
+		var player_arrival: float = player_gap / player_speed
+		var race_advantage: float = player_arrival - earliest_arrival
+		var consumer_race_share: float = clamp(0.5 + race_advantage / (2.0 * horizon), 0.0, 1.0)
+		var assimilation_likelihood: float = exp(-earliest_arrival / horizon) * consumer_race_share
+		var track_id: int = best_consumer.track.track_id
+		result[track_id] += (
+			assimilation_likelihood
+			* (material_collection_value(observation) + best_consumer.growth_burden_per_material)
+		)
+	return result
+
+
+func _growth_burden_per_material(assimilation: Dictionary, mean_enemy_burden: float) -> float:
+	var thresholds: Array = assimilation.get("evolution_material_thresholds", [])
+	if thresholds.empty():
+		return 0.0
+	var final_threshold: float = max(1.0, float(thresholds.back()))
+	var maximum_health_multiplier: float = max(
+		1.0, assimilation.get("maximum_health_multiplier", 1.0)
+	)
+	return mean_enemy_burden * (maximum_health_multiplier - 1.0) / final_threshold
 
 
 func enemy_removal_value(enemy_removal_value_ledger: Dictionary, track: Dictionary) -> float:

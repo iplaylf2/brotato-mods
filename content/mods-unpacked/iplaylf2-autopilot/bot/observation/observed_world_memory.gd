@@ -85,9 +85,11 @@ func _update_observation_coverage(
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return
 	if _observation_cell_size <= 0.0:
-		# Half a viewport keeps the coverage state bounded by arena geometry while
-		# still representing overlap between adjacent observations.
-		_observation_cell_size = max(1.0, min(viewport_size.x, viewport_size.y) * 0.5)
+		# A quarter of the short viewport keeps the complete arena state small while
+		# avoiding the old aliasing failure where touching one edge of a half-view
+		# cell marked hundreds of unseen pixels as fresh. Navigation can now observe
+		# a value gradient before it has travelled an entire viewport radius.
+		_observation_cell_size = max(1.0, min(viewport_size.x, viewport_size.y) * 0.25)
 	var visible_rect := Rect2(_odometry_position + viewport_offset_from_player, viewport_size)
 	var first_x := int(floor(visible_rect.position.x / _observation_cell_size))
 	var last_x := int(floor((visible_rect.end.x - 0.001) / _observation_cell_size))

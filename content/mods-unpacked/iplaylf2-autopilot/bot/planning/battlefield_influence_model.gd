@@ -35,6 +35,7 @@ var _shared_projectile_positions := []
 func predict(
 	observation: Dictionary, action_forecast: Dictionary, influence_weights: Dictionary
 ) -> Dictionary:
+	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := _empty_result()
 	result.initial_environmental_pressure = _initial_pressure(observation, influence_weights)
 	var samples: Array = action_forecast.samples
@@ -91,6 +92,7 @@ func _initial_pressure(observation: Dictionary, influence_weights: Dictionary) -
 func sample_point(
 	observation: Dictionary, displacement: Vector2, time: float, influence_weights: Dictionary
 ) -> Dictionary:
+	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var sample := {"time": time, "displacement": displacement, "movement": Vector2.ZERO}
 	var channels := _empty_channels()
 	_prepare_shared_inputs(observation)
@@ -152,10 +154,10 @@ func _sample_enemy_pressure(
 	tracks: Array, sample: Dictionary, channels: Dictionary, geometry: Dictionary
 ) -> void:
 	for track in tracks:
-		var position: Vector2 = (
-			_predict_enemy_position(track, sample.time, sample.displacement)
-			- sample.displacement
+		var predicted_position: Vector2 = _predict_enemy_position(
+			track, sample.time, sample.displacement
 		)
+		var position: Vector2 = predicted_position - sample.displacement
 		var uncertain_clearance: float = (
 			position.length()
 			- geometry.player_radius
@@ -184,25 +186,22 @@ func _sample_enemy_pressure(
 				channels.contact_damage, track.behavior_profile.get("contact_damage", 1.0)
 			)
 		_accumulate_ranged_pressure(track, position, sample.time, channels)
-		_accumulate_charge_pressure(track, position, sample.time, channels, geometry)
+		_accumulate_charge_pressure(track, sample, channels, geometry)
 
 
 func _accumulate_charge_pressure(
-	track: Dictionary,
-	position: Vector2,
-	sample_time: float,
-	channels: Dictionary,
-	geometry: Dictionary
+	track: Dictionary, sample: Dictionary, channels: Dictionary, geometry: Dictionary
 ) -> void:
 	var charge_attack: Dictionary = track.behavior_profile.get("charge_attack", {})
 	if not charge_attack.get("active", false):
 		return
 	var charge_window: Dictionary = track.behavior_profile.get("next_charge_attack_window", {})
-	var readiness := 1.0
+	var sample_time: float = sample.time
+	var charge_readiness := 1.0
 	if charge_window.get("is_exact", false):
-		readiness = 0.0 if sample_time < charge_window.earliest_seconds else 1.0
+		charge_readiness = 0.0 if sample_time < charge_window.earliest_seconds else 1.0
 	elif charge_window.get("latest_seconds", INF) != INF:
-		readiness = clamp(
+		charge_readiness = clamp(
 			(
 				(sample_time - charge_window.get("earliest_seconds", 0.0))
 				/ max(
@@ -212,27 +211,67 @@ func _accumulate_charge_pressure(
 			0.0,
 			1.0
 		)
-	if readiness <= 0.0:
+	if charge_readiness <= 0.0:
 		return
-	var physical_clearance: float = (
-		position.length()
-		- geometry.player_radius
-		- track.last_measurement.visual_radius
-	)
 	var pressure_distance: float = min(
 		max(0.0, charge_attack.get("maximum_range", 0.0)),
 		max(0.0, charge_attack.get("maximum_travel_distance", 0.0))
 	)
 	if pressure_distance <= 0.0:
 		return
-	var reach: float = clamp((pressure_distance - physical_clearance) / pressure_distance, 0.0, 1.0)
+	if not charge_attack.get("aims_at_player_region", false):
+		return
+	# The charge heading is selected before the high-speed movement. Score the
+	# swept corridor from the predicted launch point toward the player's observed
+	# lock position. Candidate lateral displacement therefore lowers intersection
+	# risk without a hard-coded "move sideways" action policy.
+	var launch_position: Vector2 = _predict_enemy_position(track, sample_time, Vector2.ZERO)
+	if launch_position.length_squared() <= 0.0:
+		return
+	var charge_corridor_end: Vector2 = (
+		launch_position
+		+ launch_position.direction_to(Vector2.ZERO) * pressure_distance
+	)
+	var closest_corridor_point: Vector2 = _closest_point_on_segment(
+		launch_position, charge_corridor_end, sample.displacement
+	)
+	var corridor_clearance: float = (
+		closest_corridor_point.distance_to(sample.displacement)
+		- geometry.player_radius
+		- track.last_measurement.visual_radius
+		- max(0.0, charge_attack.get("maximum_aim_offset_radius", 0.0))
+	)
+	var maneuver_margin: float = max(1.0, geometry.control_distance)
+	var corridor_risk: float = clamp(
+		(maneuver_margin - corridor_clearance) / maneuver_margin, 0.0, 1.0
+	)
+	var launch_clearance: float = (
+		launch_position.length()
+		- geometry.player_radius
+		- track.last_measurement.visual_radius
+	)
+	var charge_reach: float = clamp(
+		(pressure_distance - launch_clearance) / pressure_distance, 0.0, 1.0
+	)
 	channels.enemy_proximity += (
-		reach
-		* reach
-		* readiness
+		charge_reach
+		* corridor_risk
+		* corridor_risk
+		* charge_readiness
 		* track.recency_confidence
 		* clamp(charge_attack.get("confidence", 0.0), 0.0, 1.0)
 	)
+
+
+func _closest_point_on_segment(
+	segment_start: Vector2, segment_end: Vector2, point: Vector2
+) -> Vector2:
+	var segment: Vector2 = segment_end - segment_start
+	var length_squared: float = segment.length_squared()
+	if length_squared <= 0.0:
+		return segment_start
+	var fraction: float = clamp((point - segment_start).dot(segment) / length_squared, 0.0, 1.0)
+	return segment_start.linear_interpolate(segment_end, fraction)
 
 
 func _accumulate_ranged_pressure(
