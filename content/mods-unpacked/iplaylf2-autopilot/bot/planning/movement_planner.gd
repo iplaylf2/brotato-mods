@@ -77,6 +77,7 @@ func plan(observation: Dictionary, previous_movement: Vector2) -> Dictionary:
 	)
 	context.navigation_movement_preference = navigation_intent.movement_preference
 	context.navigation_terminal_value_gain = navigation_intent.terminal_value_gain
+	context.navigation_terminal_distance = navigation_intent.selected_displacement.length()
 	var actions: Array = _action_generator.generate(
 		planning_observation, navigation_intent, compute_budget
 	)

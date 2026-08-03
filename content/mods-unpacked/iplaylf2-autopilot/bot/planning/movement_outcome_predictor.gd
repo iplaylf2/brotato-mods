@@ -32,6 +32,9 @@ const PlayerRuleProjector := preload(
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
 )
+const PlayerKinematicsModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
+)
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
@@ -51,6 +54,7 @@ var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
+var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
 var _spatial_opportunity_value_model: Reference = SpatialOpportunityValueModel.new()
 var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
@@ -166,9 +170,8 @@ func predict_base(
 		_movement_damage_exposure_reduction(observation, action)
 		* outcome.collision_risk
 	)
-	outcome.navigation_terminal_value_gain = (
-		action.movement.dot(planning_context.navigation_movement_preference)
-		* planning_context.navigation_terminal_value_gain
+	outcome.navigation_terminal_value_gain = _navigation_terminal_value_progress(
+		observation, action, planning_context
 	)
 	return outcome
 
@@ -206,7 +209,9 @@ func _predict_action_outcomes(
 		samples, planning_context.control_interval_seconds
 	)
 	outcome.material_acquisition_value = _material_acquisition_value(observation, committed_samples)
-	outcome.material_approach_progress = _material_approach_progress(observation, committed_samples)
+	outcome.material_approach_progress = _spatial_opportunity_value_model.local_material_value_delta(
+		observation, committed_samples
+	)
 	outcome.consumable_recovery_approach_progress = _consumable_recovery_approach_progress(
 		observation, committed_samples
 	)
@@ -246,54 +251,28 @@ func _material_acquisition_value(observation: Dictionary, samples: Array) -> flo
 	return value
 
 
-func _material_approach_progress(observation: Dictionary, samples: Array) -> float:
-	var collection_value: float = _opportunity_value_model.material_collection_value(observation)
-	var reach_distance: float = _movement_geometry.derive(observation).opportunity_reach_distance
-	var collection_radius: float = observation.player_state.pickup.collection_radius
-	# The reachable frontier is the number of pickup diameters that fit in the
-	# remaining opportunity horizon. This lets dense fields retain proportionate
-	# value without summing every material (which would reward indecisive motion
-	# between mutually exclusive targets).
-	var frontier_capacity := int(max(1.0, ceil(reach_distance / max(1.0, collection_radius * 2.0))))
-	var final_displacement: Vector2 = samples.back().displacement
-	var initial_potentials := []
-	var final_potentials := []
-	for material in observation.visible_world.materials:
-		var initial_distance: float = material.relative_position.length()
-		var closest_distance := initial_distance
-		for sample in samples:
-			closest_distance = min(
-				closest_distance, (material.relative_position - sample.displacement).length()
-			)
-		# Acquired materials are owned by material_acquisition_value. Compare the
-		# same uncollected entity set so approach value cannot double-count them.
-		if closest_distance <= collection_radius:
-			continue
-		initial_potentials.push_back(
-			_interaction_potential(initial_distance, collection_radius, reach_distance)
-		)
-		final_potentials.push_back(
-			_interaction_potential(
-				(material.relative_position - final_displacement).length(),
-				collection_radius,
-				reach_distance
-			)
-		)
-	return (
-		(
-			_sum_largest(final_potentials, frontier_capacity)
-			- _sum_largest(initial_potentials, frontier_capacity)
-		)
-		* collection_value
+func _navigation_terminal_value_progress(
+	observation: Dictionary, action: Dictionary, planning_context: Dictionary
+) -> float:
+	# A terminal plan contributes only the fraction caused by this committed
+	# input. Subtracting the zero-input path prevents knockback from earning it.
+	var terminal_distance: float = planning_context.get("navigation_terminal_distance", 0.0)
+	var movement_preference: Vector2 = planning_context.navigation_movement_preference
+	if terminal_distance <= 0.0 or movement_preference == Vector2.ZERO:
+		return 0.0
+	var committed_samples: Array = _samples_through(
+		action.samples, planning_context.control_interval_seconds
 	)
-
-
-func _sum_largest(values: Array, capacity: int) -> float:
-	values.sort()
-	var result := 0.0
-	for index in range(max(0, values.size() - capacity), values.size()):
-		result += values[index]
-	return result
+	var committed_sample: Dictionary = committed_samples.back()
+	var committed_displacement: Vector2 = committed_sample.displacement
+	var zero_input_displacement: Vector2 = _player_kinematics_model.predict_displacement(
+		observation, Vector2.ZERO, committed_sample.time
+	)
+	var controlled_displacement: Vector2 = committed_displacement - zero_input_displacement
+	var terminal_progress: float = clamp(
+		controlled_displacement.dot(movement_preference) / terminal_distance, -1.0, 1.0
+	)
+	return terminal_progress * planning_context.navigation_terminal_value_gain
 
 
 func _consumable_recovery_approach_progress(observation: Dictionary, samples: Array) -> float:

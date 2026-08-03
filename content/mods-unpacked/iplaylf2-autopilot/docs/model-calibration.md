@@ -93,7 +93,7 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 | 等级 | 当前参数族 | 处理原则 |
 | --- | --- | --- |
 | 原版规则或运行时测量 | 碰撞半径、拾取半径、武器时序与射程、候选状态下的可执行移动速度、护甲减伤公式、一级属性升级增量、诅咒概率曲线、原版每物理帧以 `0.1` 为权重衰减击退所对应的指数衰减率 | 保持原版或观察为唯一真相源；升级目标版本时复核 |
-| 由状态与统一控制契约派生 | 控制/近端/局部/导航时域、有效时域、动作方向数、时间采样数、控制距离、敌人/投射物压力距离、遇敌余量、边缘与队友机动余量、漫游归一距离、机会可达距离、TTC 风险与截断时域、导航局部可达半径 | 不独立调参；只复核物理 tick 数、控制步数、碰撞直径倍数或解析弹道相位分辨率 |
+| 由状态与统一控制契约派生 | 控制/近端/局部/导航时域、有效时域、动作方向数、时间采样数、控制距离、敌人/投射物压力距离、遇敌余量、边缘与队友机动余量、漫游归一距离、机会可达距离、局部预测半径、材料份额交接区、TTC 风险与截断时域 | 不独立调参；只复核物理 tick 数、控制步数、碰撞直径倍数或解析弹道相位分辨率 |
 | 稳定机制与保守代理 | 未提供标准射程时的远程压力距离、无法读取外观时的默认半径、以最大生命表示的保守耐久基准 | 保留来源和保守含义；存在更高证据等级的值时不得继续覆盖 |
 | 经验启发式 | 压力曲线、生命边际价值曲线与剩余暴露折价、材料推迟兑现的成长时机价值、地图信息兑现价值、诅咒净机会价值基准、控制切换成本、计算阶段截止比例与质量阈值、耗时 EMA 与保护倍率、运动估计平滑与遗忘阈值 | 不宣称物理真实性；通过当前实现产生的样本校准 |
 
@@ -117,6 +117,9 @@ edge_margin                   = r + v × Tdefault
 ally_body_margin              = r + control_distance
 roaming_distance              = v × Tnav
 opportunity_reach_distance    = v × Tnav_effective
+local_prediction_radius       = v × Tlocal_effective
+material_share_transition     = [max(0, local_prediction_radius - control_distance),
+                                 local_prediction_radius + control_distance]
 TTC e-fold time               = Tlocal_effective
 TTC cutoff                    = Tnav_effective
 ```
@@ -177,7 +180,11 @@ TTC cutoff                    = Tnav_effective
    `material_approach_progress`。再按材料密度比较可达前沿容量、前沿势能变化与实际拾取率，确认密集材料
    不会退化为单个材料的封顶价值。未拾取材料且没有靠近更优前沿时，后者不应继续提供正收益。波末样本
    还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。不可逆拾取只应来自提交控制期；
-   更长预测窗内尚未发生的拾取必须仍表现为有符号机会进度，材料密集时重点比较逐控制期反转率。
+   提交期外尚未发生的拾取必须仍表现为机会势能，不能计入不可逆收集结果。局部与远场材料份额之和应为
+   一，并在 `material_share_transition` 内连续交接。另行区分导航意图中的终点总增益
+   `terminal_value_gain` 与动作结果中的本提交期兑现值 `navigation_terminal_value_gain`：后者应等于前者乘以
+   输入相对零输入造成的提交位移在终点方向上的投影与终点距离之比，并限制在前者的正负范围内。材料
+   密集或跨越份额交接区时，重点比较逐控制期反转率。
 6. 树木复盘同时比较 `tree_opportunity_progress`、筛选阶段的 `tree_harvest_value_in_range`、完整预测阶段的
    `expected_tree_harvest_value_progress` 及当时的武器时序，不能把进入射程直接当作已经命中或摧毁。战斗
    筛选还应比较 `enemy_removal_value_in_range` 与精确预测结果，确认代理受预测窗内攻击次数和有限伤害容量

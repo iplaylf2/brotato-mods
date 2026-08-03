@@ -306,7 +306,7 @@ visible_world
 1. 控制器提供由实测物理帧耗时形成的帧预算上下文。规划器先用保守位移上界排除在导航时域内无法影响
    玩家可达区域的投射物；敌人因缺少统一机动上界而全部保留。计算预算政策再把每位存活玩家可用的
    帧余量转换为阶段截止和搜索质量级别；时间采样始终保持碰撞分辨率，持续过载时角向基线可以降级。
-2. 导航意图规划器以同一终端总价值比较原点、均匀基线方向、正价值机会的精确方向和预算内角区间；
+2. 导航意图规划器以同一终点总价值比较原点、均匀基线方向、正价值机会的精确方向和预算内角区间；
    机会方向提高搜索分辨率。每个终点同时计算材料、恢复、树木、敌人、地图信息和环境暴露的价值差；
    动态敌人与环境暴露都以同一未来时刻的零输入状态为反事实基线，只把玩家移动实际改变的部分归给动作。
    地图项直接使用候选视口覆盖的有效地图面积与未知前沿面积，
@@ -344,8 +344,8 @@ visible_world
 评分量拥有其决策含义：位置扫掠和 VO 都是碰撞检测证据，合并后才计分；实际拾取消耗品只形成
 `expected_recovery`，未触发拾取的靠近才形成 `consumable_recovery_approach_progress`；满血或溢出拾取
 造成的恢复机会损失形成 `wasted_consumable_recovery`。不可逆拾取只在本次实际提交的控制期内确认为
-事件；更长条件预测窗中的地面机会仍是终端势能，不能预支为已经收集。材料的实际收集与尚未拾取材料的
-局部接近分别由
+事件；提交期外尚未拾取的地面机会只能形成机会势能，不能预支为已经收集。材料的实际收集与尚未拾取
+材料的局部接近分别由
 `material_acquisition_value` 和 `material_approach_progress` 拥有。前者计入材料推迟至后续波次兑现造成的
 成长时机成本；后者在同一未拾取实体集合上比较起点与终点的可达前沿势能。前沿容量由有效导航距离可容纳
 的拾取直径数派生，只聚合势能最高的材料。材料密集时价值不会封顶在单个目标上，分散的低价值远处材料
@@ -363,10 +363,11 @@ visible_world
 移动状态产生的材料周期收益归入 `economy`；护甲、闪避、武器属性和移动速度分别进入生存、攻击与
 运动学预测器。
 
-规划时间域也有唯一所有者：`MovementTimingModel` 从物理 tick、控制步数、玩家碰撞直径和当前速度
-派生提交期、局部动作预测期和导航预测期。当前可见且位于局部可达半径内的机会归动作预测器负责；
-导航意图只消费不可见记忆与局部范围外的机会，避免在责任交界处遗漏或重复计分。导航敌人机会只
-形成终端价值，不替代候选动作的武器几何预测。
+规划时间域由 `MovementTimingModel` 唯一拥有：它从物理 tick、控制步数、玩家碰撞直径和当前速度派生
+提交期、局部动作预测期和导航预测期。空间机会的评分归属则由 `SpatialOpportunityValueModel` 统一处理。
+已确认不存在的记忆不进入机会模型；仍可能存在但不可见的机会归导航负责。可见材料在局部动作与远场
+导航之间使用互补份额：以局部预测半径为中心、一个提交控制距离为过渡半宽，份额连续变化且总和为一。
+导航敌人机会只形成终端价值，不替代候选动作的武器几何预测。
 动作集合包含离散方向和零输入。目标版本 `Unit.get_move_input()` 将非零移动输入归一化后乘移动速度。
 
 ### 结果与诊断
@@ -382,7 +383,7 @@ visible_world
 | 字段 | 含义 |
 | --- | --- |
 | `material_acquisition_value` | 本次提交控制期内实际进入收集半径的可见材料价值，包含避免推迟至后续波次兑现的成长时机价值 |
-| `material_approach_progress` | 同一组尚未拾取局部材料的可达前沿在提交期终点相对起点的有符号势能变化；前沿容量由有效导航距离可容纳的拾取直径数派生，本动作已拾取的材料不再进入该字段 |
+| `material_approach_progress` | 尚未拾取材料的局部份额在提交期终点相对起点的有符号可达前沿势能变化；局部份额与导航份额连续互补，前沿容量由有效导航距离可容纳的拾取直径数派生，本动作已拾取的材料不再进入该字段 |
 | `consumable_recovery_approach_progress` | 尚未触发拾取时，对所有可恢复消耗品按当前可兑现恢复聚合的局部接近进度 |
 | `consumed_consumable_recovery_supply` | 拾取消耗品时从地图恢复储备中转化的恢复量；保留为供给兑现诊断，不再次从动作收益扣除 |
 | `expected_enemy_removal_value_progress` | 预期武器伤害按各敌人的移除价值与最大生命折算后的收益 |
@@ -401,7 +402,7 @@ visible_world
 | `integrated_environmental_exposure` | 敌人接近、生成、远程火力、地图边缘和队友阻塞扣除对应减压后的沿途环境暴露；不含碰撞 |
 | `expected_health_loss` | 碰撞风险按预测会与该候选交会的最大单次伤害、候选护甲、闪避和命中保护折算的预期生命消耗 |
 | `terminal_collision_risk` | 一次命中可能结束本局时保留的终止碰撞风险；用于终止约束和终止效用 |
-| `navigation_terminal_value_gain` | 动作方向对齐最佳导航终点时兑现的终端总价值增益 |
+| `navigation_terminal_value_gain` | 本动作对最佳导航终点总增益的有符号兑现值：按输入相对零输入造成的提交位移在终点方向上的距离比例计算；反向位移产生负值 |
 | `standing_seconds`、`moving_seconds` | 对应移动状态在预测窗口内的持续时间，只承载该状态的周期材料收益 |
 | `heading_continuity` | 新旧移动方向的点积 |
 
@@ -458,13 +459,18 @@ visible_world
 本波有效导航时域裁剪；已知边界则进一步裁剪终点。信息价值只表达继续观察的预期收益，不把未知区域
 视为已知安全区。
 
-每个终点聚合动作预测窗之外的材料、恢复、树木、敌人移除机会与地图信息价值。当前可见且局部可达的机会
-仍由动作预测器计分；不可见记忆与远场机会由导航拥有。候选终点和零输入基线使用相同预测时刻及相同的
-敌人运动外推，导航环境暴露也比较两者在该时刻的差值；因此敌人自行靠近只改变共同未来状态，不会伪装成
-移动收益。规划结果公开 `movement_preference`、
-`terminal_value_gain`、`position_evaluation_count`、`origin_value`、`selected_displacement`、
-`selected_value_breakdown`、`sampling_radius`、`local_prediction_radius` 和 `control_distance`，便于验证导航
-意图来源。`origin_value` 是零输入反事实的零值基线；`position_evaluation_count` 包含原点，
+每个终点聚合动作预测窗之外的材料、恢复、树木、敌人移除机会与地图信息价值。可见材料由
+`SpatialOpportunityValueModel` 在局部与远场间连续分账；不可见记忆由导航拥有。候选终点和零输入基线
+使用相同预测时刻和敌人运动外推，导航环境暴露也比较两者在该时刻的差值；因此敌人自行靠近只改变共同
+未来状态，不会伪装成移动收益。终点总增益只决定导航方向和总行程价值；动作评分再按本次输入相对零输入
+造成的提交位移在该方向上的投影占终点距离的比例兑现，不能把击退归因给移动输入，也不能在一个控制期内
+预支完整行程。
+导航意图公开方向与价值（`movement_preference`、`terminal_value_gain`、`origin_value`、
+`selected_displacement`、`selected_value_breakdown`）、评价次数（`position_evaluation_count`）和空间尺度
+（`sampling_radius`、`local_prediction_radius`、`control_distance`），便于验证导航意图来源。其中
+`terminal_value_gain` 是终点总增益，不是单个动作结果中的本提交期兑现字段
+`navigation_terminal_value_gain`；
+`origin_value` 是零输入反事实的零值基线；`position_evaluation_count` 包含原点，
 `baseline_position_evaluation_count` 与 `budgeted_position_evaluation_count` 分别记录基线和预算内评价次数；
 `sampling_radius` 是地图边界裁剪前的候选半径，不声称是实际行进距离。
 
@@ -647,12 +653,12 @@ Godot 性能监视器可能短暂延迟，因此控制层会跳过规划之后�
   `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 - `bot/planning/movement_outcome_predictor.gd` 预测动作结果，`bot/planning/movement_utility_model.gd` 把结果转换为
   效用。`bot/planning/opportunity_value_model.gd` 统一换算材料、消耗品、树木和敌人移除机会的边际价值，
-  并在每次规划中建立共享敌人移除价值账本；
-  `bot/planning/spatial_opportunity_value_model.gd` 统一计算局部敌人和导航远场机会的同时间反事实价值差，
-  `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量，
+  并在每次规划中建立共享敌人移除价值账本；`bot/planning/spatial_opportunity_value_model.gd` 统一分配材料
+  的局部/远场份额，并计算局部敌人与导航远场机会的同时间反事实价值差。
+- `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量，
   `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线；
   `bot/planning/stat_opportunity_value_model.gd` 计算属性变化对未来事件机会的边际价值。
-  `bot/planning/map_information_value_model.gd` 根据视口、已观察边界和候选终点计算可见地图面积及未知前沿
+- `bot/planning/map_information_value_model.gd` 根据视口、已观察边界和候选终点计算可见地图面积及未知前沿
   的预期新增观察量；它不编码探索方向或地图中心。`bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何，
   `bot/planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量，
   `bot/planning/player_rule_projector.gd` 将规则归约为正交状态；这些模块都不能读取场景节点。

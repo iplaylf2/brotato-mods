@@ -25,7 +25,7 @@ func _evaluate_remote_position(
 	context: Dictionary,
 	player_displacement: Vector2,
 	time: float,
-	local_prediction_radius: float
+	geometry: Dictionary
 ) -> Dictionary:
 	var result := {
 		"material_opportunity": 0.0,
@@ -40,14 +40,15 @@ func _evaluate_remote_position(
 	for entity in observation.get("remembered_entities", []):
 		if entity.existence_confidence <= 0.0:
 			continue
-		if entity.visible and entity.relative_position.length() <= local_prediction_radius:
+		var remote_share: float = _remote_entity_share(entity, geometry)
+		if remote_share <= 0.0:
 			continue
 		var gap: float = _entity_interaction_gap(
 			observation, entity, player_displacement, maximum_weapon_range
 		)
 		var accessibility: float = _accessibility(gap, reach_distance)
 		var value: float = _entity_value(observation, entity, health_value)
-		var contribution: float = value * accessibility * entity.existence_confidence
+		var contribution: float = value * accessibility * entity.existence_confidence * remote_share
 		match entity.kind:
 			"material":
 				result.material_opportunity += contribution
@@ -56,7 +57,7 @@ func _evaluate_remote_position(
 			"tree":
 				result.tree_opportunity += contribution
 	for track in observation.enemy_tracks:
-		if track.visible and track.relative_position.length() <= local_prediction_radius:
+		if track.visible and track.relative_position.length() <= geometry.local_prediction_radius:
 			continue
 		var predicted_position: Vector2 = _enemy_motion_predictor.predict_position(
 			track, time, player_displacement
@@ -82,12 +83,12 @@ func _evaluate_remote_position(
 func value_delta(
 	observation: Dictionary, context: Dictionary, player_displacement: Vector2, time: float
 ) -> Dictionary:
-	var local_prediction_radius: float = _local_prediction_radius(observation)
+	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var stationary: Dictionary = _evaluate_remote_position(
-		observation, context, Vector2.ZERO, time, local_prediction_radius
+		observation, context, Vector2.ZERO, time, geometry
 	)
 	var candidate: Dictionary = _evaluate_remote_position(
-		observation, context, player_displacement, time, local_prediction_radius
+		observation, context, player_displacement, time, geometry
 	)
 	return {
 		"material_opportunity": candidate.material_opportunity - stationary.material_opportunity,
@@ -136,21 +137,68 @@ func local_enemy_value_delta(
 	return result
 
 
+func local_material_value_delta(observation: Dictionary, samples: Array) -> float:
+	var geometry: Dictionary = _movement_geometry.derive(observation)
+	var collection_radius: float = observation.player_state.pickup.collection_radius
+	var reach_distance: float = geometry.opportunity_reach_distance
+	var frontier_capacity := int(max(1.0, ceil(reach_distance / max(1.0, collection_radius * 2.0))))
+	var final_displacement: Vector2 = samples.back().displacement
+	var initial_potentials := []
+	var final_potentials := []
+	for material in observation.visible_world.materials:
+		var initial_distance: float = material.relative_position.length()
+		var closest_distance := initial_distance
+		for sample in samples:
+			closest_distance = min(
+				closest_distance, (material.relative_position - sample.displacement).length()
+			)
+		# Exact collection has a separate irreversible outcome. The remaining
+		# potential is partitioned with navigation by a shared local/remote share.
+		if closest_distance <= collection_radius:
+			continue
+		var local_share: float = _local_material_share(initial_distance, geometry)
+		if local_share <= 0.0:
+			continue
+		initial_potentials.push_back(
+			(
+				_interaction_potential(initial_distance, collection_radius, reach_distance)
+				* local_share
+			)
+		)
+		final_potentials.push_back(
+			(
+				_interaction_potential(
+					(material.relative_position - final_displacement).length(),
+					collection_radius,
+					reach_distance
+				)
+				* local_share
+			)
+		)
+	return (
+		(
+			_sum_largest(final_potentials, frontier_capacity)
+			- _sum_largest(initial_potentials, frontier_capacity)
+		)
+		* _opportunity_value_model.material_collection_value(observation)
+	)
+
+
 func candidate_directions(observation: Dictionary, context: Dictionary) -> Array:
 	var candidates := []
-	var local_prediction_radius: float = _local_prediction_radius(observation)
+	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var health_value: Dictionary = context.state_factors.health_resource_value
 	var enemy_removal_value_ledger: Dictionary = context.enemy_removal_value_ledger
 	for entity in observation.get("remembered_entities", []):
-		if entity.visible and entity.relative_position.length() <= local_prediction_radius:
-			continue
+		var remote_share: float = _remote_entity_share(entity, geometry)
 		var value: float = (
 			_entity_value(observation, entity, health_value)
 			* entity.existence_confidence
+			* remote_share
 		)
 		_append_candidate(candidates, entity.relative_position, value)
 	for track in observation.enemy_tracks:
-		if track.visible and track.relative_position.length() <= local_prediction_radius:
+		if track.visible and track.relative_position.length() <= geometry.local_prediction_radius:
 			continue
 		var value: float = (
 			_opportunity_value_model.enemy_removal_value(enemy_removal_value_ledger, track)
@@ -230,6 +278,46 @@ func _enemy_opportunity_at_position(
 
 func _accessibility(gap: float, reach_distance: float) -> float:
 	return exp(-max(0.0, gap) / max(1.0, reach_distance))
+
+
+func _interaction_potential(
+	distance: float, interaction_radius: float, reach_distance: float
+) -> float:
+	return _accessibility(max(0.0, distance - interaction_radius), reach_distance)
+
+
+func _local_material_share(distance: float, geometry: Dictionary) -> float:
+	var transition_radius: float = geometry.control_distance
+	var local_radius: float = geometry.local_prediction_radius
+	var transition_start: float = max(0.0, local_radius - transition_radius)
+	var transition_end: float = local_radius + transition_radius
+	var remote_fraction := clamp(
+		(distance - transition_start) / max(1.0, transition_end - transition_start), 0.0, 1.0
+	)
+	# Cubic smoothstep gives complementary, continuous ownership without a new
+	# policy threshold: the transition half-width is one committed control distance.
+	remote_fraction = remote_fraction * remote_fraction * (3.0 - 2.0 * remote_fraction)
+	return 1.0 - remote_fraction
+
+
+func _remote_material_share(distance: float, geometry: Dictionary) -> float:
+	return 1.0 - _local_material_share(distance, geometry)
+
+
+func _remote_entity_share(entity: Dictionary, geometry: Dictionary) -> float:
+	if not entity.visible:
+		return 1.0
+	if entity.kind == "material":
+		return _remote_material_share(entity.relative_position.length(), geometry)
+	return 0.0 if entity.relative_position.length() <= geometry.local_prediction_radius else 1.0
+
+
+func _sum_largest(values: Array, capacity: int) -> float:
+	values.sort()
+	var result := 0.0
+	for index in range(max(0, values.size() - capacity), values.size()):
+		result += values[index]
+	return result
 
 
 func _maximum_weapon_range(weapons: Array) -> float:
