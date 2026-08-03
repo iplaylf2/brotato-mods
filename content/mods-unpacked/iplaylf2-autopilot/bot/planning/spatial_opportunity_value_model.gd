@@ -21,13 +21,12 @@ var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _prepared_physics_frame := -1
 var _prepared_geometry := {}
 var _prepared_maximum_weapon_range := 0.0
-var _prepared_remote_entities := []
-var _prepared_remote_enemies := []
-var _prepared_local_enemies := []
+var _prepared_entities := []
+var _prepared_enemies := []
 var _prepared_candidate_entries := []
 
 
-func _evaluate_remote_position(
+func _evaluate_route(
 	observation: Dictionary, context: Dictionary, player_displacement: Vector2, time: float
 ) -> Dictionary:
 	_prepare_inputs(observation, context)
@@ -40,9 +39,9 @@ func _evaluate_remote_position(
 		"total": 0.0,
 	}
 	var reach_distance: float = _prepared_geometry.opportunity_reach_distance
-	for entry in _prepared_remote_entities:
+	for entry in _prepared_entities:
 		var entity: Dictionary = entry.entity
-		var gap: float = _entity_interaction_gap(
+		var gap: float = _route_interaction_gap(
 			observation, entity, player_displacement, _prepared_maximum_weapon_range
 		)
 		var accessibility: float = _accessibility(gap, reach_distance)
@@ -54,7 +53,7 @@ func _evaluate_remote_position(
 				result.recovery_opportunity += contribution
 			"tree":
 				result.tree_opportunity += contribution
-	for entry in _prepared_remote_enemies:
+	for entry in _prepared_enemies:
 		var track: Dictionary = entry.track
 		var predicted_position: Vector2 = _enemy_motion_predictor.predict_position(
 			track, time, player_displacement
@@ -80,10 +79,8 @@ func value_delta(
 ) -> Dictionary:
 	_prepare_inputs(observation, context)
 	if stationary.empty():
-		stationary = _evaluate_remote_position(observation, context, Vector2.ZERO, time)
-	var candidate: Dictionary = _evaluate_remote_position(
-		observation, context, player_displacement, time
-	)
+		stationary = _evaluate_route(observation, context, Vector2.ZERO, time)
+	var candidate: Dictionary = _evaluate_route(observation, context, player_displacement, time)
 	return {
 		"material_opportunity": candidate.material_opportunity - stationary.material_opportunity,
 		"recovery_opportunity": candidate.recovery_opportunity - stationary.recovery_opportunity,
@@ -95,78 +92,7 @@ func value_delta(
 
 func stationary_value(observation: Dictionary, context: Dictionary, time: float) -> Dictionary:
 	_prepare_inputs(observation, context)
-	return _evaluate_remote_position(observation, context, Vector2.ZERO, time)
-
-
-func local_enemy_value_delta(
-	observation: Dictionary, context: Dictionary, player_displacement: Vector2, time: float
-) -> float:
-	_prepare_inputs(observation, context)
-	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
-	var result := 0.0
-	for entry in _prepared_local_enemies:
-		var track: Dictionary = entry.track
-		var stationary_position: Vector2 = _enemy_motion_predictor.predict_position(
-			track, time, Vector2.ZERO
-		)
-		var candidate_position: Vector2 = _enemy_motion_predictor.predict_position(
-			track, time, player_displacement
-		)
-		var stationary_value: float = _prepared_enemy_value_at_position(
-			entry, stationary_position, Vector2.ZERO
-		)
-		var candidate_value: float = _prepared_enemy_value_at_position(
-			entry, candidate_position, player_displacement
-		)
-		result += candidate_value - stationary_value
-	return result
-
-
-func local_material_value_delta(observation: Dictionary, samples: Array) -> float:
-	var geometry: Dictionary = _movement_geometry.derive(observation)
-	var collection_radius: float = observation.player_state.pickup.collection_radius
-	var reach_distance: float = geometry.opportunity_reach_distance
-	var frontier_capacity := int(max(1.0, ceil(reach_distance / max(1.0, collection_radius * 2.0))))
-	var final_displacement: Vector2 = samples.back().displacement
-	var initial_potentials := []
-	var final_potentials := []
-	for material in observation.visible_world.materials:
-		var initial_distance: float = material.relative_position.length()
-		var closest_distance := initial_distance
-		for sample in samples:
-			closest_distance = min(
-				closest_distance, (material.relative_position - sample.displacement).length()
-			)
-		# Exact collection has a separate irreversible outcome. The remaining
-		# potential is partitioned with navigation by a shared local/remote share.
-		if closest_distance <= collection_radius:
-			continue
-		var local_share: float = _local_material_share(initial_distance, geometry)
-		if local_share <= 0.0:
-			continue
-		initial_potentials.push_back(
-			(
-				_interaction_potential(initial_distance, collection_radius, reach_distance)
-				* local_share
-			)
-		)
-		final_potentials.push_back(
-			(
-				_interaction_potential(
-					(material.relative_position - final_displacement).length(),
-					collection_radius,
-					reach_distance
-				)
-				* local_share
-			)
-		)
-	return (
-		(
-			_sum_largest(final_potentials, frontier_capacity)
-			- _sum_largest(initial_potentials, frontier_capacity)
-		)
-		* _opportunity_value_model.material_collection_value(observation)
-	)
+	return _evaluate_route(observation, context, Vector2.ZERO, time)
 
 
 func candidate_directions(observation: Dictionary, context: Dictionary) -> Array:
@@ -194,24 +120,21 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	_prepared_physics_frame = physics_frame
 	_prepared_geometry = _movement_geometry.derive(observation)
 	_prepared_maximum_weapon_range = _maximum_weapon_range(observation.player_state.weapons)
-	_prepared_remote_entities = []
-	_prepared_remote_enemies = []
-	_prepared_local_enemies = []
+	_prepared_entities = []
+	_prepared_enemies = []
 	_prepared_candidate_entries = []
 	var health_value: Dictionary = context.state_factors.health_resource_value
 	for entity in observation.get("remembered_entities", []):
 		if entity.existence_confidence <= 0.0:
 			continue
-		var remote_share: float = _remote_entity_share(entity, _prepared_geometry)
 		var value: float = (
 			_entity_value(observation, entity, health_value)
 			* entity.existence_confidence
-			* remote_share
 		)
 		if value <= 0.0:
 			continue
 		var entity_entry := {"entity": entity, "value": value}
-		_prepared_remote_entities.push_back(entity_entry)
+		_prepared_entities.push_back(entity_entry)
 		var gap: float = _entity_interaction_gap(
 			observation, entity, Vector2.ZERO, _prepared_maximum_weapon_range
 		)
@@ -228,13 +151,7 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 			* track.recency_confidence
 		)
 		var enemy_entry := {"track": track, "value": value}
-		if (
-			track.visible
-			and track.relative_position.length() <= _prepared_geometry.local_prediction_radius
-		):
-			_prepared_local_enemies.push_back(enemy_entry)
-		else:
-			_prepared_remote_enemies.push_back(enemy_entry)
+		_prepared_enemies.push_back(enemy_entry)
 		if value <= 0.0:
 			continue
 		var gap: float = max(
@@ -273,9 +190,8 @@ func _entity_value(observation: Dictionary, entity: Dictionary, health_value: Di
 		"material":
 			return _opportunity_value_model.material_collection_value(observation)
 		"consumable":
-			return (
-				_opportunity_value_model.consumable_recovery_value(observation, entity)
-				* health_value.recovery_conversion_value
+			return _opportunity_value_model.consumable_pickup_value(
+				observation, entity, health_value
 			)
 		"tree":
 			return _opportunity_value_model.tree_reward_value(observation, entity, health_value)
@@ -288,7 +204,7 @@ func _entity_interaction_gap(
 	player_displacement: Vector2,
 	maximum_weapon_range: float
 ) -> float:
-	var interaction_radius: float = observation.player_state.pickup.collection_radius
+	var interaction_radius: float = _entity_interaction_radius(observation, entity)
 	if entity.kind == "tree":
 		interaction_radius = maximum_weapon_range
 	return max(
@@ -301,48 +217,42 @@ func _entity_interaction_gap(
 	)
 
 
+func _route_interaction_gap(
+	observation: Dictionary,
+	entity: Dictionary,
+	player_displacement: Vector2,
+	maximum_weapon_range: float
+) -> float:
+	var closest_position := _closest_point_on_segment(
+		Vector2.ZERO, player_displacement, entity.relative_position
+	)
+	return _entity_interaction_gap(observation, entity, closest_position, maximum_weapon_range)
+
+
+func _entity_interaction_radius(observation: Dictionary, entity: Dictionary) -> float:
+	if entity.kind == "material":
+		return observation.player_state.pickup.attraction_radius
+	if (
+		entity.kind == "consumable"
+		and _opportunity_value_model.consumable_recovery_value(observation, entity) > 0.0
+	):
+		return observation.player_state.pickup.attraction_radius
+	return observation.player_state.pickup.collection_radius
+
+
+func _closest_point_on_segment(
+	segment_start: Vector2, segment_end: Vector2, point: Vector2
+) -> Vector2:
+	var segment: Vector2 = segment_end - segment_start
+	var length_squared: float = segment.length_squared()
+	if length_squared <= 0.0:
+		return segment_start
+	var fraction: float = clamp((point - segment_start).dot(segment) / length_squared, 0.0, 1.0)
+	return segment_start.linear_interpolate(segment_end, fraction)
+
+
 func _accessibility(gap: float, reach_distance: float) -> float:
 	return exp(-max(0.0, gap) / max(1.0, reach_distance))
-
-
-func _interaction_potential(
-	distance: float, interaction_radius: float, reach_distance: float
-) -> float:
-	return _accessibility(max(0.0, distance - interaction_radius), reach_distance)
-
-
-func _local_material_share(distance: float, geometry: Dictionary) -> float:
-	var transition_radius: float = geometry.control_distance
-	var local_radius: float = geometry.local_prediction_radius
-	var transition_start: float = max(0.0, local_radius - transition_radius)
-	var transition_end: float = local_radius + transition_radius
-	var remote_fraction := clamp(
-		(distance - transition_start) / max(1.0, transition_end - transition_start), 0.0, 1.0
-	)
-	# Cubic smoothstep gives complementary, continuous ownership without a new
-	# policy threshold: the transition half-width is one committed control distance.
-	remote_fraction = remote_fraction * remote_fraction * (3.0 - 2.0 * remote_fraction)
-	return 1.0 - remote_fraction
-
-
-func _remote_material_share(distance: float, geometry: Dictionary) -> float:
-	return 1.0 - _local_material_share(distance, geometry)
-
-
-func _remote_entity_share(entity: Dictionary, geometry: Dictionary) -> float:
-	if not entity.visible:
-		return 1.0
-	if entity.kind == "material":
-		return _remote_material_share(entity.relative_position.length(), geometry)
-	return 0.0 if entity.relative_position.length() <= geometry.local_prediction_radius else 1.0
-
-
-func _sum_largest(values: Array, capacity: int) -> float:
-	values.sort()
-	var result := 0.0
-	for index in range(max(0, values.size() - capacity), values.size()):
-		result += values[index]
-	return result
 
 
 func _maximum_weapon_range(weapons: Array) -> float:

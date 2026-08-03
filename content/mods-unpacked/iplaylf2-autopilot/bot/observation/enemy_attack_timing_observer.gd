@@ -28,11 +28,14 @@ func observe_charge_attack_window(enemy: Node) -> Dictionary:
 
 
 func _observe_cooldown_window(behavior: Node) -> Dictionary:
+	# Reaching zero has already produced a visible attack-ready animation when the
+	# target is in range. This reveals readiness without exposing the random roll
+	# that led to it.
+	if behavior._current_cd <= 0:
+		return _exact_window(0.0)
 	if behavior.max_cd_randomization <= 0 and behavior._current_cd > 0:
 		return _exact_window(behavior._current_cd / 60.0)
-	# The current random cooldown roll is intentionally opaque. Once cooldown
-	# reaches zero, the visible attack animation still makes realization nonzero;
-	# without compiling that animation track, retain the stable interval.
+	# The current random cooldown roll is intentionally opaque.
 	return {
 		"is_exact": false,
 		"earliest_seconds": 0.0,

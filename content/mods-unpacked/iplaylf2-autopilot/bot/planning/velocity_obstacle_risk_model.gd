@@ -1,9 +1,9 @@
 extends Reference
 
-# Time-horizon velocity-obstacle collision risk for Brotato's first-order movement model.
-# A candidate input selects a velocity directly; this module asks whether that
-# velocity enters the collision cone of a moving disk and reports continuous TTC
-# risk instead of inventing a dynamically executed path.
+# Time-horizon collision risk for Brotato's first-order movement model. Ordinary
+# moving disks use continuous TTC evidence; known high-speed charges additionally
+# use their locked swept corridor. Both remain geometry predictions rather than
+# preferred dodge directions.
 
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
@@ -37,6 +37,7 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 		observation, action.movement, max(0.01, local_horizon_seconds)
 	)
 	var enemy_risk := 0.0
+	var enemy_charge_risk := 0.0
 	var projectile_risk := 0.0
 	var ally_risk := 0.0
 	var maximum_collision_damage := 0.0
@@ -75,6 +76,27 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 					committed_maximum_collision_damage,
 					track.behavior_profile.get("contact_damage", 1.0)
 				)
+		var track_charge_risk := 0.0
+		var committed_track_charge_risk := 0.0
+		for sample in action.samples:
+			var sample_charge_risk: float = _charge_collision_risk(
+				track, sample.displacement, sample.time, geometry
+			)
+			track_charge_risk = max(track_charge_risk, sample_charge_risk)
+			if sample.time <= committed_seconds + 0.0001:
+				committed_track_charge_risk = max(committed_track_charge_risk, sample_charge_risk)
+		enemy_risk += track_charge_risk
+		enemy_charge_risk += track_charge_risk
+		committed_enemy_risk += committed_track_charge_risk
+		if track_charge_risk > 0.0:
+			maximum_collision_damage = max(
+				maximum_collision_damage, track.behavior_profile.get("contact_damage", 1.0)
+			)
+		if committed_track_charge_risk > 0.0:
+			committed_maximum_collision_damage = max(
+				committed_maximum_collision_damage,
+				track.behavior_profile.get("contact_damage", 1.0)
+			)
 
 	for projectile in observation.visible_world.enemy_projectiles:
 		var predicted_projectile_position: Vector2 = _projectile_motion_predictor.predict_position(
@@ -126,11 +148,104 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 		_saturate(committed_enemy_risk + committed_projectile_risk),
 		"committed_maximum_velocity_obstacle_damage": committed_maximum_collision_damage,
 		"enemy_velocity_obstacle_risk": _saturate(enemy_risk),
+		"enemy_charge_obstacle_risk": _saturate(enemy_charge_risk),
 		"projectile_velocity_obstacle_risk": _saturate(projectile_risk),
 		"ally_velocity_obstacle_risk": _saturate(ally_risk),
 		"minimum_time_to_collision": null if minimum_ttc == INF else minimum_ttc,
 		"candidate_velocity": player_velocity,
 	}
+
+
+func _charge_collision_risk(
+	track: Dictionary, player_displacement: Vector2, time: float, geometry: Dictionary
+) -> float:
+	var charge_attack: Dictionary = track.behavior_profile.get("charge_attack", {})
+	if (
+		not charge_attack.get("active", false)
+		or not charge_attack.get("aims_at_player_region", false)
+	):
+		return 0.0
+	var pressure_distance: float = min(
+		max(0.0, charge_attack.get("maximum_range", 0.0)),
+		max(0.0, charge_attack.get("maximum_travel_distance", 0.0))
+	)
+	if pressure_distance <= 0.0:
+		return 0.0
+	var readiness := _charge_readiness(track, time, charge_attack)
+	if readiness <= 0.0:
+		return 0.0
+	# Vanilla locks the heading before high-speed movement. Compare the candidate
+	# position with that swept disk without encoding a preferred escape direction.
+	var launch_position: Vector2 = _enemy_motion_predictor.predict_position(
+		track, time, Vector2.ZERO
+	)
+	if launch_position.length_squared() <= 0.0:
+		return 0.0
+	var charge_corridor_end := (
+		launch_position
+		+ launch_position.direction_to(Vector2.ZERO) * pressure_distance
+	)
+	var closest_corridor_point := _closest_point_on_segment(
+		launch_position, charge_corridor_end, player_displacement
+	)
+	var corridor_clearance: float = (
+		closest_corridor_point.distance_to(player_displacement)
+		- geometry.player_radius
+		- track.last_measurement.visual_radius
+		- max(0.0, charge_attack.get("maximum_aim_offset_radius", 0.0))
+	)
+	var maneuver_margin: float = max(1.0, geometry.control_distance)
+	var corridor_intersection := clamp(
+		(maneuver_margin - corridor_clearance) / maneuver_margin, 0.0, 1.0
+	)
+	var launch_clearance: float = (
+		launch_position.length()
+		- geometry.player_radius
+		- track.last_measurement.visual_radius
+	)
+	var charge_reach := clamp((pressure_distance - launch_clearance) / pressure_distance, 0.0, 1.0)
+	return (
+		charge_reach
+		* corridor_intersection
+		* corridor_intersection
+		* readiness
+		* track.recency_confidence
+		* clamp(charge_attack.get("confidence", 0.0), 0.0, 1.0)
+	)
+
+
+func _charge_readiness(track: Dictionary, time: float, charge_attack: Dictionary) -> float:
+	var window: Dictionary = track.behavior_profile.get("next_charge_attack_window", {})
+	var earliest: float = max(0.0, window.get("earliest_seconds", 0.0))
+	var latest: float = window.get("latest_seconds", INF)
+	if window.get("is_exact", false):
+		return 0.0 if time < earliest else 1.0
+	if latest != INF:
+		return clamp((time - earliest) / max(0.01, latest - earliest), 0.0, 1.0)
+	# An unbounded residual window supplies a hazard rate, not evidence that a
+	# charge is already certain.
+	var interval: Dictionary = charge_attack.get("interval", {})
+	var mean_interval := (
+		(
+			max(0.0, interval.get("minimum_seconds", 0.0))
+			+ max(0.0, interval.get("maximum_seconds", 0.0))
+		)
+		* 0.5
+	)
+	if mean_interval <= 0.0:
+		return 0.0
+	return 1.0 - exp(-max(0.0, time) / mean_interval)
+
+
+func _closest_point_on_segment(
+	segment_start: Vector2, segment_end: Vector2, point: Vector2
+) -> Vector2:
+	var segment: Vector2 = segment_end - segment_start
+	var length_squared: float = segment.length_squared()
+	if length_squared <= 0.0:
+		return segment_start
+	var fraction: float = clamp((point - segment_start).dot(segment) / length_squared, 0.0, 1.0)
+	return segment_start.linear_interpolate(segment_end, fraction)
 
 
 func _time_to_collision(

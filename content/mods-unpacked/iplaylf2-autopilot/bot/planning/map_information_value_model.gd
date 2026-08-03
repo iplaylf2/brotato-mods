@@ -8,13 +8,61 @@ var _coverage_physics_frame := -1
 var _last_observed_ages := {}
 
 
-func value_delta(observation: Dictionary, displacement: Vector2) -> float:
+func value_delta_along_path(observation: Dictionary, displacement: Vector2) -> float:
 	var viewport_size: Vector2 = observation.visibility.viewport_size
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return 0.0
 	var origin_value := _observable_value(observation, Vector2.ZERO, viewport_size)
-	var candidate_value := _observable_value(observation, displacement, viewport_size)
+	var candidate_value := _observable_path_value(observation, displacement, viewport_size)
 	return candidate_value - origin_value
+
+
+func _observable_path_value(
+	observation: Dictionary, displacement: Vector2, viewport_size: Vector2
+) -> float:
+	var cell_size: float = observation.localization.get("observation_grid_cell_size", 0.0)
+	if cell_size <= 0.0 or displacement == Vector2.ZERO:
+		return _observable_value(observation, displacement, viewport_size)
+	_prepare_coverage_index(observation)
+	var bounds: Dictionary = observation.localization.map_bounds
+	var odometry_position: Vector2 = observation.localization.odometry_position
+	var viewport_offset: Vector2 = observation.visibility.get(
+		"viewport_offset_from_player", -viewport_size * 0.5
+	)
+	var sample_count := int(max(1.0, ceil(displacement.length() / cell_size)))
+	var maximum_visible_area_by_cell := {}
+	for sample_index in range(sample_count + 1):
+		var fraction := float(sample_index) / float(sample_count)
+		var sensor_rect := Rect2(
+			odometry_position + displacement * fraction + viewport_offset, viewport_size
+		)
+		var first_x := int(floor(sensor_rect.position.x / cell_size))
+		var last_x := int(floor((sensor_rect.end.x - 0.001) / cell_size))
+		var first_y := int(floor(sensor_rect.position.y / cell_size))
+		var last_y := int(floor((sensor_rect.end.y - 0.001) / cell_size))
+		for grid_x in range(first_x, last_x + 1):
+			for grid_y in range(first_y, last_y + 1):
+				var cell_rect := Rect2(
+					Vector2(grid_x * cell_size, grid_y * cell_size), Vector2(cell_size, cell_size)
+				)
+				var visible_area: float = _visible_cell_area(
+					cell_rect, sensor_rect, odometry_position, bounds
+				)
+				var key := _cell_key(grid_x, grid_y)
+				maximum_visible_area_by_cell[key] = max(
+					visible_area, maximum_visible_area_by_cell.get(key, 0.0)
+				)
+	var reobservation_horizon: float = max(0.01, observation.wave_state.duration_seconds)
+	var observable_value := 0.0
+	for key in maximum_visible_area_by_cell:
+		var age: float = _last_observed_ages.get(key, INF)
+		var observation_staleness := (
+			1.0
+			if age == INF
+			else clamp(age / reobservation_horizon, 0.0, 1.0)
+		)
+		observable_value += maximum_visible_area_by_cell[key] * observation_staleness
+	return observable_value / max(1.0, viewport_size.x * viewport_size.y)
 
 
 func _observable_value(

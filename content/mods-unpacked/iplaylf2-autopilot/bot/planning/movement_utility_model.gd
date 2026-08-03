@@ -56,12 +56,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 			},
 			"recovery":
 			{
-				"consumable_recovery_approach_progress":
-				(
-					health_value.recovery_conversion_value
-					if recovery_profile.consumable_available
-					else 0.0
-				),
 				"expected_recovery": health_value.recovery_conversion_value,
 				# Replacement supply lowers the shadow price of taking damage. Charging
 				# that same price when a pickup is consumed puts insurance and consumption
@@ -74,11 +68,10 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"economy":
 			{
 				"material_acquisition_value": 1.0,
-				"material_approach_progress": 1.0,
+				"consumable_item_choice_value": 1.0,
 				"expected_stat_upgrade_equivalents": 1.0,
 				"expected_stat_opportunity_value": 1.0,
 				"expected_material_gain": 1.0,
-				"tree_opportunity_progress": 1.0,
 				"expected_tree_harvest_value_progress": 1.0,
 				"standing_seconds": movement_state_economy_rates.standing,
 				"moving_seconds": movement_state_economy_rates.moving,
@@ -86,7 +79,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"combat":
 			{
 				"expected_enemy_removal_value_progress": 1.0,
-				"enemy_removal_value_approach_progress": 1.0,
 				"expected_rule_damage": removal_value_ledger.mean_value_per_health,
 				"expected_allied_damage": removal_value_ledger.mean_value_per_health,
 			},

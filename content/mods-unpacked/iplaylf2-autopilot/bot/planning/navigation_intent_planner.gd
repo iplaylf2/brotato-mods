@@ -270,7 +270,7 @@ func _evaluate_position(
 		observation, context, position, time, stationary_opportunity_by_time[time]
 	)
 	var information_value: float = (
-		_map_information_value_model.value_delta(observation, position)
+		_map_information_value_model.value_delta_along_path(observation, position)
 		* context.state_factors.information_value_per_viewport
 	)
 	var exposure_cost_delta: float = (

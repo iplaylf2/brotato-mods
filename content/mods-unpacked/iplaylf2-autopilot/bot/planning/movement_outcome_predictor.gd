@@ -23,17 +23,11 @@ const PlayerMovementStateProjector := preload(
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
-const MovementGeometryModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
-)
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
-)
-const SpatialOpportunityValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/spatial_opportunity_value_model.gd"
 )
 const CollisionHealthImpactModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/collision_health_impact_model.gd"
@@ -45,10 +39,8 @@ var _velocity_obstacle_risk_model: Reference = VelocityObstacleRiskModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
-var _movement_geometry: Reference = MovementGeometryModel.new()
 var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
-var _spatial_opportunity_value_model: Reference = SpatialOpportunityValueModel.new()
 var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
 
 
@@ -66,16 +58,13 @@ func predict_base(
 ) -> Dictionary:
 	var outcome := {
 		"material_acquisition_value": 0.0,
-		"material_approach_progress": 0.0,
-		"consumable_recovery_approach_progress": 0.0,
 		"wasted_consumable_recovery": 0.0,
+		"consumable_item_choice_value": 0.0,
 		"consumed_consumable_recovery_supply": 0.0,
 		"consumed_single_use_support_supply": 0.0,
 		"expected_weapon_damage": 0.0,
 		"expected_allied_damage": 0.0,
 		"expected_enemy_removal_value_progress": 0.0,
-		"enemy_removal_value_approach_progress": 0.0,
-		"tree_opportunity_progress": 0.0,
 		"expected_tree_harvest_value_progress": 0.0,
 		"standing_seconds": 0.0,
 		"moving_seconds": 0.0,
@@ -111,7 +100,7 @@ func predict_base(
 	var committed_action: Dictionary = _committed_action(
 		observation, action, planning_context.control_interval_seconds
 	)
-	_predict_action_outcomes(observation, committed_action, planning_context, outcome)
+	_predict_action_outcomes(observation, committed_action, outcome)
 	outcome.collision_risk = max(outcome.peak_path_collision_risk, outcome.velocity_obstacle_risk)
 	outcome.hostile_collision_risk = max(
 		outcome.peak_path_collision_risk, outcome.hostile_velocity_obstacle_risk
@@ -165,25 +154,11 @@ func complete_prediction(
 
 
 func _predict_action_outcomes(
-	observation: Dictionary, action: Dictionary, planning_context: Dictionary, outcome: Dictionary
+	observation: Dictionary, action: Dictionary, outcome: Dictionary
 ) -> void:
 	var samples: Array = action.samples
 	assert(not samples.empty())
 	outcome.material_acquisition_value = _material_acquisition_value(observation, samples)
-	outcome.material_approach_progress = _spatial_opportunity_value_model.local_material_value_delta(
-		observation, samples
-	)
-	outcome.consumable_recovery_approach_progress = _consumable_recovery_approach_progress(
-		observation, samples
-	)
-	outcome.tree_opportunity_progress = _tree_opportunity_progress(
-		observation, action, samples.back().displacement, planning_context
-	)
-	var final_sample: Dictionary = samples.back()
-	var enemy_approach_value: float = _spatial_opportunity_value_model.local_enemy_value_delta(
-		observation, planning_context, final_sample.displacement, final_sample.time
-	)
-	outcome.enemy_removal_value_approach_progress = enemy_approach_value
 
 	if action.movement == Vector2.ZERO:
 		outcome.standing_seconds = action.forecast_seconds
@@ -225,61 +200,6 @@ func _navigation_terminal_value_progress(
 	return terminal_progress * planning_context.navigation_terminal_value_gain
 
 
-func _consumable_recovery_approach_progress(observation: Dictionary, samples: Array) -> float:
-	var progress := 0.0
-	var pickup: Dictionary = observation.player_state.pickup
-	for consumable in observation.visible_world.consumables:
-		var recovery: float = _opportunity_value_model.consumable_recovery_value(
-			observation, consumable
-		)
-		if recovery <= 0.0:
-			continue
-		var initial_distance: float = consumable.relative_position.length()
-		var closest_distance := initial_distance
-		for sample in samples:
-			closest_distance = min(
-				closest_distance, (consumable.relative_position - sample.displacement).length()
-			)
-		# Collection has an exact recovery outcome below. This channel only
-		# represents progress toward a future event, never the event itself.
-		if closest_distance <= pickup.collection_radius:
-			continue
-		var available_distance := max(1.0, initial_distance - pickup.collection_radius)
-		progress += (
-			clamp((initial_distance - closest_distance) / available_distance, 0.0, 1.0)
-			* recovery
-		)
-	return progress
-
-
-func _tree_opportunity_progress(
-	observation: Dictionary,
-	action: Dictionary,
-	committed_displacement: Vector2,
-	planning_context: Dictionary
-) -> float:
-	var maximum_range: float = _usable_weapon_range(
-		observation.player_state.weapons, action.movement != Vector2.ZERO
-	)
-	if maximum_range <= 0.0:
-		return 0.0
-	var interaction := 0.0
-	var reach_distance: float = _movement_geometry.derive(observation).opportunity_reach_distance
-	for tree in observation.visible_world.trees:
-		var initial_distance: float = tree.relative_position.length()
-		var final_distance: float = (tree.relative_position - committed_displacement).length()
-		interaction += (
-			(
-				_interaction_potential(final_distance, maximum_range, reach_distance)
-				- _interaction_potential(initial_distance, maximum_range, reach_distance)
-			)
-			* _opportunity_value_model.tree_reward_value(
-				observation, tree, planning_context.state_factors.health_resource_value
-			)
-		)
-	return interaction
-
-
 func _committed_action(
 	observation: Dictionary, action: Dictionary, control_interval_seconds: float
 ) -> Dictionary:
@@ -303,22 +223,6 @@ func _committed_action(
 	var result: Dictionary = action.duplicate(false)
 	result.forecast_seconds = committed_seconds
 	result.samples = committed_samples
-	return result
-
-
-func _interaction_potential(
-	distance: float, interaction_radius: float, reach_distance: float
-) -> float:
-	var gap: float = max(0.0, distance - interaction_radius)
-	return exp(-gap / max(1.0, reach_distance))
-
-
-func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:
-	var result := 0.0
-	for weapon in weapons:
-		if is_moving and not weapon.attack_model.timing.permitted_while_moving:
-			continue
-		result = max(result, float(weapon.attack_model.delivery.maximum_targeting_distance))
 	return result
 
 

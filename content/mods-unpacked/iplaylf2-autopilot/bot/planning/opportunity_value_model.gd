@@ -4,7 +4,13 @@ extends Reference
 # material-equivalent marginal value using only current public state. Geometry
 # and event realization remain in their owning predictors.
 
-const CONSUMABLE_DROP_OPPORTUNITY_VALUE := 1.0
+# Vanilla item boxes always offer an item that can be recycled. The cheapest
+# common base-game item costs 8 materials; the formula below applies vanilla's
+# wave inflation and base 25% recycling share without assuming that the future
+# random item is useful to the build.
+const MINIMUM_COMMON_ITEM_BASE_VALUE := 8.0
+const BASE_RECYCLING_SHARE := 0.25
+const BASE_ITEM_INFLATION_PER_WAVE := 0.1
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
@@ -37,15 +43,17 @@ func tree_reward_value(observation: Dictionary, tree: Dictionary, health_value :
 	var kill_value := kill_reward_value(observation, rewards)
 	# Tree materials are still wave pickups, so their timing value must use the
 	# same price as already visible materials. A possible consumable also carries
-	# the current value of converting replacement supply into health; a fixed
-	# "fruit bonus" cannot express the low-health case.
+	# the current value of converting replacement supply into health. Vanilla
+	# trees always produce a consumable: the item-box chance leaves the
+	# complementary fruit chance, so these mutually exclusive outcomes must not
+	# be counted twice.
 	kill_value += (
 		max(0.0, rewards.get("base_materials", 0.0))
 		* (material_collection_value(observation) - 1.0)
 	)
 	if not health_value.empty():
 		kill_value += (
-			_consumable_drop_chance(observation, rewards)
+			(1.0 - _consumable_drop_chance(observation, rewards))
 			* health_value.get("maximum_consumable_recovery", 0.0)
 			* health_value.get("recovery_conversion_value", 0.0)
 		)
@@ -248,10 +256,33 @@ func consumable_recovery_value(observation: Dictionary, consumable: Dictionary) 
 	return min(missing_health, max(0.0, recovery))
 
 
+func consumable_pickup_value(
+	observation: Dictionary, consumable: Dictionary, health_value: Dictionary
+) -> float:
+	var profile: Dictionary = consumable.get("pickup_profile", {})
+	var value: float = (
+		consumable_recovery_value(observation, consumable)
+		* health_value.get("recovery_conversion_value", 0.0)
+	)
+	if profile.get("deferred_item_choice", false):
+		value += deferred_item_choice_value(observation)
+	return value
+
+
+func deferred_item_choice_value(observation: Dictionary) -> float:
+	var wave: float = max(1.0, float(observation.wave_state.number))
+	var inflated_minimum_value := (
+		MINIMUM_COMMON_ITEM_BASE_VALUE
+		+ wave
+		+ MINIMUM_COMMON_ITEM_BASE_VALUE * wave * BASE_ITEM_INFLATION_PER_WAVE
+	)
+	return max(1.0, floor(inflated_minimum_value * BASE_RECYCLING_SHARE))
+
+
 func kill_reward_value(observation: Dictionary, rewards: Dictionary) -> float:
 	var value: float = max(0.0, rewards.get("base_materials", 0.0))
 	var drop_chance: float = _consumable_drop_chance(observation, rewards)
-	value += drop_chance * CONSUMABLE_DROP_OPPORTUNITY_VALUE
+	value += drop_chance * deferred_item_choice_value(observation)
 	value += _stat_opportunity_value_model.value(
 		observation, rewards.get("player_stat_changes", [])
 	)
