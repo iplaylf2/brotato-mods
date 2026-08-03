@@ -29,7 +29,6 @@ var _decision_telemetry: Reference = DecisionTelemetry.new()
 var _physics_frame_budget_monitor: Reference = PhysicsFrameBudgetMonitor.new()
 var _seconds_until_replan := 0.0
 var _shut_down := false
-var _previous_physics_frame_included_planning := false
 var _replan_interval_seconds := 0.0
 
 
@@ -53,16 +52,13 @@ func _physics_process(delta: float) -> void:
 	if _shut_down or get_tree().paused or not is_instance_valid(_observation_service):
 		return
 
-	_physics_frame_budget_monitor.observe_physics_duration(
-		delta, _previous_physics_frame_included_planning
-	)
-	_previous_physics_frame_included_planning = false
+	_physics_frame_budget_monitor.observe_physics_duration(delta)
 	_seconds_until_replan -= delta
 	if _seconds_until_replan > 0.0:
 		return
 	_seconds_until_replan = _replan_interval_seconds
 	_replan_all_players()
-	_previous_physics_frame_included_planning = true
+	_physics_frame_budget_monitor.mark_planning_completed()
 
 
 func shutdown() -> void:
@@ -107,7 +103,7 @@ func _replan_all_players() -> void:
 		_movement_planners[player_index].set_frame_budget_context(frame_budget_context)
 		var observation: Dictionary = _observation_service.get_observation(player_index)
 		var plan: Dictionary = _movement_planners[player_index].plan(
-			observation, _previous_movements[player_index], player_index
+			observation, _previous_movements[player_index]
 		)
 		_current_plans[player_index] = plan
 		_decision_telemetry.record_decision(

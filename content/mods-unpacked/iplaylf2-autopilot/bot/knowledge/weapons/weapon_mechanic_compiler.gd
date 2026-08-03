@@ -4,11 +4,11 @@ extends Reference
 # axes plus a generic transition language. Vanilla Effect subclasses and scene
 # nodes never cross this boundary.
 
-const StatVocabulary := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
+const StatMetadata := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stats/stat_metadata.gd"
 )
 
-var _stat_vocabulary: Reference = StatVocabulary.new()
+var _stat_metadata: Reference = StatMetadata.new()
 
 
 func compile(
@@ -250,7 +250,7 @@ func _adapt_scaling(scaling_stats: Array) -> Array:
 	for scaling in scaling_stats:
 		if scaling.size() < 2:
 			continue
-		var stat_name: String = _stat_vocabulary.get_stat_name(scaling[0])
+		var stat_name: String = _stat_metadata.get_stat_name(scaling[0])
 		if stat_name.empty():
 			continue
 		result.push_back({"stat": stat_name, "coefficient": scaling[1]})

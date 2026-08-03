@@ -1,14 +1,22 @@
 extends Reference
 
-# Converts predicted outcomes into a common utility ledger. Weights are rebuilt
-# from the current state every replan. Geometric contact is a soft tail-risk
-# cost until observations can support calibrated damage or death probabilities.
+# Converts predicted state deltas into one material-equivalent utility ledger.
+# Mechanics may create different consequences, but entity categories do not own
+# policy weights or target-selection priority.
 
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
+const HealthResourceValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health_resource_value_model.gd"
+)
+const OpportunityValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
+)
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
+var _health_resource_value_model: Reference = HealthResourceValueModel.new()
+var _opportunity_value_model: Reference = OpportunityValueModel.new()
 
 
 func build_context(observation: Dictionary) -> Dictionary:
@@ -17,194 +25,97 @@ func build_context(observation: Dictionary) -> Dictionary:
 	var wave_time_remaining_ratio: float = clamp(
 		observation.wave_state.seconds_remaining / duration, 0.0, 1.0
 	)
-	var wave_progress := 1.0 - wave_time_remaining_ratio
-	var bonus_reward_target_count := _count_role(observation.enemy_tracks, "bonus_reward_target")
-	var enemy_producer_count := _count_role(observation.enemy_tracks, "enemy_producer")
-	var ranged_source_count := _count_role(observation.enemy_tracks, "ranged_pressure_source")
-	var producer_multiplier := 1.0 + 0.35 * min(3, max(0, enemy_producer_count - 1))
-	var ranged_source_multiplier := 1.0 + 0.2 * min(5, max(0, ranged_source_count - 1))
 	var player_rule_projection: Dictionary = _rule_projector.project(observation)
-	var survivability_credit := _survivability_credit(observation)
-	var risk_tolerance := clamp((health_ratio - 0.25) / 0.75 + survivability_credit, 0.0, 1.0)
-	var passive_health_loss_rate: float = max(0.0, -player_rule_projection.survival.health_rate)
-	var passive_recovery_rate: float = max(0.0, player_rule_projection.survival.recovery_rate)
-	risk_tolerance = clamp(
-		(
-			risk_tolerance
-			- passive_health_loss_rate / max(1.0, observation.player_state.health.maximum)
-			+ passive_recovery_rate / max(1.0, observation.player_state.health.maximum)
-		),
-		0.0,
-		1.0
+	var recovery_profile: Dictionary = player_rule_projection.recovery
+	var health_value: Dictionary = _health_resource_value_model.estimate(
+		observation, player_rule_projection
 	)
-	var projectile_density := clamp(
-		observation.visible_world.enemy_projectiles.size() / 12.0, 0.0, 1.0
-	)
-	var ranged_engagement_appetite: float = (
-		lerp(0.25, 1.0, risk_tolerance)
-		* lerp(1.0, 0.35, projectile_density)
-	)
+	var health_price: float = health_value.marginal_health_value
 	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
 	var damage_is_terminal_rule: bool = player_rule_projection.survival.terminal_on_positive_damage
 	var current_unprotected_damage_is_terminal: bool = (
 		damage_is_terminal_rule
 		and observation.player_state.runtime_stats.hit_protection <= 0
 	)
-	var incoming_attack_value := {
-		"enemy_damage":
-		max(
-			_event_value(player_rule_projection, "damage_taken", "enemy_damage"),
-			_event_value(player_rule_projection, "attack_dodged", "enemy_damage")
-		),
-		"player_growth":
-		max(
-			_event_value(player_rule_projection, "damage_taken", "player_growth"),
-			_event_value(player_rule_projection, "attack_dodged", "player_growth")
-		),
-	}
-	var recovery_profile: Dictionary = player_rule_projection.recovery
-	if current_unprotected_damage_is_terminal:
-		risk_tolerance = 0.0
-	var contact_combat_appetite := clamp(
-		(
-			max(incoming_attack_value.enemy_damage, incoming_attack_value.player_growth)
-			* risk_tolerance
-		),
-		0.0,
-		1.0
+	var removal_value_ledger: Dictionary = _opportunity_value_model.build_enemy_removal_value_ledger(
+		observation, health_price
 	)
-	var environmental_exposure_cost: float = lerp(
-		20.0, 5.0 - 2.0 * contact_combat_appetite, risk_tolerance
-	)
-	var health_replacement_cost := (
-		1.0
-		/ max(1.0, float(recovery_profile.maximum_consumable_recovery))
+	var information_value_per_viewport := _information_value_per_viewport(
+		observation, removal_value_ledger, health_value, wave_time_remaining_ratio
 	)
 	var context := {
 		"objective_weights":
 		{
 			"survival":
 			{
-				"integrated_environmental_exposure": -environmental_exposure_cost,
+				"integrated_environmental_exposure": -health_price,
 				"terminal_collision_risk":
-				(
-					-(
-						160.0
-						if current_unprotected_damage_is_terminal
-						else lerp(70.0, 28.0, risk_tolerance)
-					)
-					* lerp(1.0, 0.45, contact_combat_appetite)
-				),
-				# Ordinary contact spends replaceable health. One full survival reserve
-				# is an additional unit of option value; only terminal contact keeps the
-				# hard run-ending price above.
-				"expected_health_loss": -health_replacement_cost,
-				"expendable_health_consumption_ratio": -1.0,
-				"movement_damage_exposure_reduction": 20.0,
+				-health_price * max(1.0, health_value.observed_hit_reserve),
+				"expected_health_loss": -health_price,
+				"movement_damage_exposure_reduction": health_price,
 			},
 			"recovery":
 			{
-				"recovery_approach_progress":
-				lerp(10.0, 0.8, health_ratio) if recovery_profile.consumable_available else 0.0,
-				"expected_recovery": lerp(3.0, 0.15, health_ratio),
+				"consumable_recovery_approach_progress":
+				(
+					health_value.recovery_conversion_value
+					if recovery_profile.consumable_available
+					else 0.0
+				),
+				"expected_recovery": health_price,
+				"consumed_consumable_recovery_supply": -health_value.recovery_supply_value,
 				"integrated_allied_healing_support":
-				lerp(14.0, 1.5, health_ratio) if recovery_profile.available else 0.0,
+				health_value.recovery_conversion_value if recovery_profile.available else 0.0,
 			},
 			"economy":
 			{
-				"material_acquisition_value": 1.0 + 1.6 * wave_progress,
-				"expected_stat_change_value": 0.8,
-				"expected_material_gain": 1.0 + 1.6 * wave_progress,
-				"tree_opportunity_progress": 1.0 + 1.6 * wave_progress,
-				"expected_bonus_kill_reward_progress": 1.0 + 1.6 * wave_progress,
-				"bonus_kill_reward_approach_progress": 0.8,
+				"material_acquisition_value": 1.0,
+				"material_approach_progress": 1.0,
+				"expected_stat_upgrade_equivalents": 1.0,
+				"expected_material_gain": 1.0,
+				"tree_opportunity_progress": 1.0,
 				"standing_seconds": movement_state_economy_rates.standing,
 				"moving_seconds": movement_state_economy_rates.moving,
 			},
 			"combat":
 			{
-				"expected_weapon_damage":
-				0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
-				"expected_effect_damage":
-				0.018 * _enemy_damage_multiplier(player_rule_projection, wave_progress),
-				"expected_producer_damage": 0.045 * wave_time_remaining_ratio * producer_multiplier,
-				"ranged_source_suppression_value":
-				10.0 * wave_time_remaining_ratio * ranged_source_multiplier,
-				"producer_approach_progress": 5.0 * wave_time_remaining_ratio * producer_multiplier,
-				"ranged_source_engagement_progress":
-				(
-					6.0
-					* wave_time_remaining_ratio
-					* ranged_source_multiplier
-					* ranged_engagement_appetite
-				),
+				"expected_enemy_removal_value_progress": 1.0,
+				"enemy_removal_value_approach_progress": 1.0,
+				"expected_rule_damage": removal_value_ledger.mean_value_per_health,
 			},
-			# Exploration remains useful when no observed goal owns navigation;
-			# local exposure still suppresses it in an uncontrolled battlefield.
-			"navigation":
-			{
-				"roaming_progress": 0.35 * risk_tolerance + 0.85 * wave_time_remaining_ratio,
-				"navigation_preference_alignment": 4.0,
-			},
-			"control_stability": {"heading_continuity": 0.25},
+			"navigation": {"navigation_terminal_value_gain": 1.0},
+			# This is a switching cost, not a goal preference.
+			"control_stability": {"heading_continuity": 0.1},
 		},
-		# Screening proxies stand in for outcomes omitted before weapon prediction.
-		# They are not additional utility once that prediction supplies them.
-		"screening_proxy_weights": {"combat": {"targets_in_weapon_range": 0.15}},
-		"selection_temperature":
-		lerp(0.03, 0.12, risk_tolerance) * lerp(0.7, 1.2, wave_time_remaining_ratio),
+		# The proxy estimates the same enemy removal value before exact weapon
+		# geometry is available; it disappears from fully evaluated actions.
+		"screening_proxy_weights": {"combat": {"enemy_removal_value_in_range": 1.0}},
 		"exposure_policy":
 		{
-			"enemy_proximity": 0.7,
-			"enemy_contact": 2.2,
-			"projectile_contact": 1.4,
-			"spawn_warning": 0.8,
-			"ranged_source": 0.6 * lerp(1.0, 1.5, projectile_density) * ranged_source_multiplier,
-			"map_edge": 1.2,
-			"allied_body_proximity": 0.8,
-			"allied_pressure_relief": 0.8,
-			"projectile_interception_relief": 1.4,
-		},
-		"navigation_policy":
-		{
-			"material": 0.35 + 0.55 * wave_progress,
-			"recovery_pickup":
-			(1.2 * (1.0 - health_ratio)) if recovery_profile.consumable_available else 0.0,
-			"healing_support": lerp(0.9, 0.1, health_ratio) if recovery_profile.available else 0.0,
-			"tree": 0.35,
-			"enemy_producer": 0.45 * wave_time_remaining_ratio * producer_multiplier,
-			"bonus_reward_target": 0.35,
-			"ranged_source":
-			0.5 * wave_time_remaining_ratio * ranged_source_multiplier * ranged_engagement_appetite,
-			"rising_pressure": 0.22,
-			# Navigation shares local scoring's state-dependent risk price, normalized
-			# to the low-health endpoint.
-			"environmental_exposure_cost": environmental_exposure_cost / 20.0,
-			"travel_cost": 0.08,
-			"contact_combat": 0.65 * contact_combat_appetite,
+			"enemy_proximity": 1.0,
+			"enemy_contact": 1.0,
+			"projectile_contact": 1.0,
+			"spawn_warning": 1.0,
+			"ranged_attack": 1.0,
+			"map_edge": 1.0,
+			"allied_body_proximity": 1.0,
+			"allied_pressure_relief": 1.0,
+			"projectile_interception_relief": 1.0,
 		},
 		"state_factors":
 		{
 			"health_ratio": health_ratio,
 			"wave_time_remaining_ratio": wave_time_remaining_ratio,
-			"wave_progress": wave_progress,
-			"risk_tolerance": risk_tolerance,
-			"bonus_reward_target_count": bonus_reward_target_count,
-			"enemy_producer_count": enemy_producer_count,
-			"ranged_source_count": ranged_source_count,
-			"producer_multiplier": producer_multiplier,
-			"ranged_source_multiplier": ranged_source_multiplier,
-			"projectile_density": projectile_density,
-			"ranged_engagement_appetite": ranged_engagement_appetite,
 			"positive_damage_is_terminal_rule": damage_is_terminal_rule,
 			"current_unprotected_damage_is_terminal": current_unprotected_damage_is_terminal,
-			"incoming_attack_value": incoming_attack_value,
 			"recovery_profile": recovery_profile,
-			"contact_combat_appetite": contact_combat_appetite,
-			"passive_health_loss_rate": passive_health_loss_rate,
-			"passive_recovery_rate": passive_recovery_rate,
-			"health_replacement_cost": health_replacement_cost,
+			"health_resource_value": health_value,
+			"mean_enemy_removal_value_per_health": removal_value_ledger.mean_value_per_health,
+			"living_enemy_preservation_value": removal_value_ledger.living_enemy_preservation_value,
+			"information_value_per_viewport": information_value_per_viewport,
+			"environmental_exposure_value": health_price,
 		},
+		"enemy_removal_value_ledger": removal_value_ledger,
 	}
 	if OS.is_debug_build():
 		_assert_valid_scoring_schema(context)
@@ -224,8 +135,8 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 			)
 			field_utility_breakdown[name] = contribution
 			objective_score += contribution
-		objective_utility_breakdown[objective_name] = objective_score
-		score += objective_score
+			objective_utility_breakdown[objective_name] = objective_score
+			score += contribution
 	if not outcome.weapon_prediction_included:
 		for objective_name in context.screening_proxy_weights:
 			for name in context.screening_proxy_weights[objective_name]:
@@ -256,28 +167,28 @@ func _assert_valid_scoring_schema(context: Dictionary) -> void:
 			field_owners[field_name] = objective_name
 
 
-func _survivability_credit(observation: Dictionary) -> float:
-	var credit := 0.0
-	credit += clamp(observation.player_state.runtime_stats.armor / 100.0, -0.1, 0.15)
-	credit += clamp(observation.player_state.runtime_stats.dodge_chance * 0.15, 0.0, 0.1)
-	credit += clamp(observation.player_state.effective_stats.health_regeneration / 100.0, 0.0, 0.1)
-	credit += clamp(observation.player_state.effective_stats.lifesteal / 1000.0, 0.0, 0.1)
-	return credit
-
-
-func _count_role(tracks: Array, role: String) -> int:
-	var result := 0
-	for track in tracks:
-		if track.behavior_profile.strategic_roles[role]:
-			result += 1
-	return result
-
-
-func _enemy_damage_multiplier(rule_projection: Dictionary, wave_progress: float) -> float:
-	if _event_value(rule_projection, "wave_end", "enemy_preservation") > 0.0:
-		return lerp(0.7, -0.5, wave_progress)
-	return 1.0
-
-
-func _event_value(rule_projection: Dictionary, event: String, channel: String) -> float:
-	return rule_projection.event_outcome_channels.get(event, {}).get(channel, 0.0)
+func _information_value_per_viewport(
+	observation: Dictionary,
+	removal_value_ledger: Dictionary,
+	health_value: Dictionary,
+	remaining_ratio: float
+) -> float:
+	var observed_value: float = float(observation.visible_world.materials.size())
+	var observation_count: int = observation.visible_world.materials.size()
+	for consumable in observation.visible_world.consumables:
+		observed_value += (
+			_opportunity_value_model.consumable_recovery_value(observation, consumable)
+			* health_value.recovery_conversion_value
+		)
+		observation_count += 1
+	for tree in observation.visible_world.trees:
+		observed_value += _opportunity_value_model.tree_reward_value(observation, tree)
+		observation_count += 1
+	if not observation.enemy_tracks.empty():
+		observed_value += (
+			removal_value_ledger.mean_absolute_value
+			* observation.enemy_tracks.size()
+		)
+		observation_count += observation.enemy_tracks.size()
+	var empirical_opportunity_value: float = observed_value / max(1, observation_count)
+	return max(1.0, empirical_opportunity_value) * remaining_ratio

@@ -14,6 +14,9 @@ const MOVEMENT_REFINEMENT_DEADLINE_FRACTION := 0.6
 const WORK_NAVIGATION_EVALUATION := "navigation_evaluation"
 const WORK_MOVEMENT_REFINEMENT := "movement_refinement"
 const WORK_WEAPON_PREDICTION := "weapon_prediction"
+const QUALITY_FULL := "full"
+const QUALITY_CONSTRAINED := "constrained"
+const QUALITY_CRITICAL := "critical"
 
 var _planning_duration_usec_ema := 0.0
 var _has_planning_duration_estimate := false
@@ -36,8 +39,10 @@ func allocate(planning_started_usec: int) -> Dictionary:
 		if has_deadline
 		else planning_started_usec
 	)
+	var quality_mode := _quality_mode(planning_budget_usec)
 	return {
 		"allocation_mode": "deadline_gated",
+		"quality_mode": quality_mode,
 		"has_deadline": has_deadline,
 		"planning_started_usec": planning_started_usec,
 		"planning_deadline_usec": planning_deadline_usec,
@@ -58,6 +63,16 @@ func allocate(planning_started_usec: int) -> Dictionary:
 		"scheduled_planner_count": _frame_budget_context.get("scheduled_planner_count", 1),
 		"estimated_work_unit_duration_usec": _work_unit_duration_usec_ema.duplicate(true),
 	}
+
+
+func _quality_mode(planning_budget_usec: float) -> String:
+	if not _has_planning_duration_estimate:
+		return QUALITY_FULL
+	if planning_budget_usec <= 0.0 or _planning_duration_usec_ema >= planning_budget_usec:
+		return QUALITY_CRITICAL
+	if _planning_duration_usec_ema >= planning_budget_usec * 0.72:
+		return QUALITY_CONSTRAINED
+	return QUALITY_FULL
 
 
 func can_start_budgeted_work(compute_budget: Dictionary, work_kind: String) -> bool:

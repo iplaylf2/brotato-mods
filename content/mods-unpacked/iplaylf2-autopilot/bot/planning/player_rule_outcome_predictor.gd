@@ -89,10 +89,15 @@ func _apply_consumable_event(
 	outcome.expected_recovery = _rule_projector.project_recovery(
 		observation.player_state.effect_rules, "healing", outcome.expected_recovery
 	)
+	var uncapped_recovery_gain := max(0.0, outcome.expected_recovery - recovery_before)
+	outcome.consumed_consumable_recovery_supply += uncapped_recovery_gain
 	var missing_health: float = max(
 		0.0, observation.player_state.health.maximum - observation.player_state.health.current
 	)
-	outcome.expected_recovery = min(missing_health, outcome.expected_recovery)
+	var remaining_recovery_capacity := max(0.0, missing_health - recovery_before)
+	var effective_recovery_gain := min(remaining_recovery_capacity, uncapped_recovery_gain)
+	outcome.wasted_consumable_recovery += max(0.0, uncapped_recovery_gain - effective_recovery_gain)
+	outcome.expected_recovery = recovery_before + effective_recovery_gain
 	var expected_recovery := max(0.0, outcome.expected_recovery - recovery_before)
 	if expected_recovery > 0.0:
 		var healing_event: Dictionary = event.duplicate(true)
@@ -139,7 +144,7 @@ func _apply_consequence(
 		var applications := _delivered_enemy_weight(
 			observation.enemy_tracks, consequence.delivery, event
 		)
-		outcome.expected_effect_damage += (
+		outcome.expected_rule_damage += (
 			_rule_damage_amount(consequence.amount)
 			* expected_occurrences
 			* applications
@@ -147,10 +152,9 @@ func _apply_consequence(
 		return
 	match consequence.operation:
 		"add":
-			outcome.expected_stat_change_value += (
-				consequence.get("value", 0.0)
+			outcome.expected_stat_upgrade_equivalents += (
+				consequence.get("upgrade_equivalent_value", 0.0)
 				* expected_occurrences
-				* _stat_value_multiplier(consequence.target)
 			)
 		"multiply":
 			if consequence.target == "picked_material_value":
@@ -244,18 +248,6 @@ func _condition_matches(condition: Dictionary, event: Dictionary, observation: D
 		if not condition.entity_has_trait in traits:
 			return false
 	return true
-
-
-func _stat_value_multiplier(stat_name: String) -> float:
-	var multipliers := {
-		"max_health": 1.5,
-		"armor": 1.2,
-		"dodge": 1.2,
-		"speed": 0.8,
-		"harvesting": 0.8,
-		"curse": 0.7,
-	}
-	return multipliers.get(stat_name, 1.0)
 
 
 func _predict_track_position(track: Dictionary, time: float) -> Vector2:

@@ -6,19 +6,6 @@ extends Reference
 
 func project(observation: Dictionary) -> Dictionary:
 	var rules: Array = observation.player_state.effect_rules
-	var event_outcome_channels := {}
-	for rule in rules:
-		var event: String = rule.event
-		if not event_outcome_channels.has(event):
-			event_outcome_channels[event] = {}
-		for consequence in rule.consequences:
-			var probability: float = clamp(consequence.get("probability", 1.0), 0.0, 1.0)
-			for channel in consequence.get("outcome_channels", {}):
-				event_outcome_channels[event][channel] = (
-					event_outcome_channels[event].get(channel, 0.0)
-					+ consequence.outcome_channels[channel] * probability
-				)
-
 	var maximum_consumable_recovery := 0.0
 	for entity in observation.get("remembered_entities", []):
 		if entity.kind != "consumable":
@@ -36,7 +23,6 @@ func project(observation: Dictionary) -> Dictionary:
 	maximum_consumable_recovery = _project_recovery(rules, "healing", maximum_consumable_recovery)
 
 	return {
-		"event_outcome_channels": event_outcome_channels,
 		"movement_state_economy_rates": _movement_state_economy_rates(rules, observation),
 		"recovery":
 		{

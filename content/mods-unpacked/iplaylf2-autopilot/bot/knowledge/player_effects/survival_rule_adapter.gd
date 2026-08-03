@@ -2,11 +2,11 @@ extends Reference
 
 # Adapts health and incoming-attack events from the target player-effect schema.
 
-const StatVocabulary := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
+const StatMetadata := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stats/stat_metadata.gd"
 )
 
-var _stat_vocabulary: Reference = StatVocabulary.new()
+var _stat_metadata: Reference = StatMetadata.new()
 
 
 func adapt(effects: Dictionary, player_index: int) -> Array:
@@ -63,7 +63,6 @@ func _append_stat_damage_rules(
 						"amount": _damage_amount(damage),
 						"delivery": _enemy_delivery(INF, 1.0),
 						"probability": entry[2] / 100.0,
-						"outcome_channels": {"enemy_damage": 1.0},
 					}
 				],
 			}
@@ -94,7 +93,6 @@ func _append_damage_explosion_rules(rules: Array, effects: Array, player_index: 
 						"amount": _damage_amount(damage),
 						"delivery": _enemy_delivery(radius, INF),
 						"probability": effect.chance,
-						"outcome_channels": {"enemy_damage": 1.0},
 					}
 				],
 			}
@@ -105,7 +103,7 @@ func _append_temporary_stat_rules(rules: Array, entries: Array, event: String) -
 	for entry in entries:
 		if entry.size() < 2:
 			continue
-		var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
+		var stat_name: String = _stat_metadata.get_stat_name(entry[0])
 		if stat_name.empty():
 			continue
 		rules.push_back(
@@ -118,7 +116,6 @@ func _append_temporary_stat_rules(rules: Array, entries: Array, event: String) -
 						"target": stat_name,
 						"operation": "add",
 						"value": entry[1],
-						"outcome_channels": {"player_growth": 0.6},
 					}
 				],
 			}

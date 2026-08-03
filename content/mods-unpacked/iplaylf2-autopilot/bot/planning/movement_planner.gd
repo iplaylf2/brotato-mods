@@ -57,7 +57,7 @@ func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
 	_compute_budget_policy.set_frame_budget_context(frame_budget_context)
 
 
-func plan(observation: Dictionary, previous_movement: Vector2, player_index: int) -> Dictionary:
+func plan(observation: Dictionary, previous_movement: Vector2) -> Dictionary:
 	if observation.empty() or not observation.has("player_state"):
 		return _empty_plan("observation_unavailable")
 	if observation.player_state.dead:
@@ -74,16 +74,21 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 		planning_observation, context, compute_budget, _compute_budget_policy
 	)
 	context.navigation_movement_preference = navigation_intent.movement_preference
-	var actions: Array = _action_generator.generate(planning_observation, navigation_intent)
-	var collision_costs := []
+	context.navigation_terminal_value_gain = navigation_intent.terminal_value_gain
+	var actions: Array = _action_generator.generate(
+		planning_observation, navigation_intent, compute_budget
+	)
+	var collision_predictions := []
 
 	for action in actions:
-		var collision_cost: Dictionary = _outcome_predictor.predict_collision_cost(
+		var collision_outcome: Dictionary = _outcome_predictor.predict_collision_outcome(
 			planning_observation, action, context
 		)
-		collision_costs.push_back({"action": action, "outcome": collision_cost})
+		collision_predictions.push_back({"action": action, "outcome": collision_outcome})
 
-	var terminal_constraint: Dictionary = _terminal_collision_constraint.apply(collision_costs)
+	var terminal_constraint: Dictionary = _terminal_collision_constraint.apply(
+		collision_predictions
+	)
 	var candidate_pruning: Dictionary = _candidate_pruner.prune(terminal_constraint.actions)
 	var screened_actions := []
 	for candidate in candidate_pruning.actions:
@@ -92,7 +97,7 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 			planning_observation, action, previous_movement, context
 		)
 		var outcome: Dictionary = _outcome_predictor.complete_prediction(
-			planning_observation, action, base_outcome, false
+			planning_observation, action, base_outcome, false, context
 		)
 		var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
 		var scored_action: Dictionary = _make_scored_action(action, outcome, evaluation)
@@ -113,10 +118,10 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 		)
 		refined_action_count += 1
 		actions.push_back(refined_action)
-		var refined_collision: Dictionary = _outcome_predictor.predict_collision_cost(
+		var refined_collision: Dictionary = _outcome_predictor.predict_collision_outcome(
 			planning_observation, refined_action, context
 		)
-		collision_costs.push_back({"action": refined_action, "outcome": refined_collision})
+		collision_predictions.push_back({"action": refined_action, "outcome": refined_collision})
 		if (
 			refined_collision.terminal_collision_risk
 			<= terminal_constraint.maximum_admissible_terminal_risk
@@ -125,7 +130,7 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 				planning_observation, refined_action, previous_movement, context
 			)
 			var outcome: Dictionary = _outcome_predictor.complete_prediction(
-				planning_observation, refined_action, base_outcome, false
+				planning_observation, refined_action, base_outcome, false, context
 			)
 			var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
 			var scored_action: Dictionary = _make_scored_action(refined_action, outcome, evaluation)
@@ -139,7 +144,7 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 			float(OS.get_ticks_usec() - work_started_usec)
 		)
 
-	terminal_constraint = _terminal_collision_constraint.apply(collision_costs)
+	terminal_constraint = _terminal_collision_constraint.apply(collision_predictions)
 	screened_actions = _retain_admissible_scored_actions(
 		screened_actions, terminal_constraint.actions
 	)
@@ -148,9 +153,14 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 		_insert_descending(ranked_screened_actions, scored, screened_actions.size())
 
 	var fully_scored_actions := []
+	var required_weapon_predictions := (
+		2
+		if compute_budget.get("quality_mode", "full") == "full"
+		else 1
+	)
 	for rank_index in ranked_screened_actions.size():
 		if (
-			rank_index >= min(2, ranked_screened_actions.size())
+			rank_index >= min(required_weapon_predictions, ranked_screened_actions.size())
 			and not _compute_budget_policy.can_start_budgeted_work(
 				compute_budget, _compute_budget_policy.WORK_WEAPON_PREDICTION
 			)
@@ -159,7 +169,7 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 		var work_started_usec := OS.get_ticks_usec()
 		var screened: Dictionary = ranked_screened_actions[rank_index]
 		var outcome: Dictionary = _outcome_predictor.complete_prediction(
-			planning_observation, screened.action, screened.base_outcome, true
+			planning_observation, screened.action, screened.base_outcome, true, context
 		)
 		var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
 		_insert_descending(
@@ -172,8 +182,7 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 			float(OS.get_ticks_usec() - work_started_usec)
 		)
 
-	var rng_seed: int = int(observation.physics_frame) * 31 + player_index
-	var plan: Dictionary = _action_selector.select(fully_scored_actions, context, rng_seed)
+	var plan: Dictionary = _action_selector.select(fully_scored_actions)
 	var planning_duration_usec := float(OS.get_ticks_usec() - planning_started_usec)
 	compute_budget.merge(
 		_compute_budget_policy.observe_planning_duration(planning_duration_usec), true
@@ -184,7 +193,11 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 		else null
 	)
 	plan.status = "ready"
-	plan.context = context
+	# Per-enemy values are an execution cache, not telemetry. Keeping the cache out
+	# of the returned plan avoids duplicating an O(enemy_count) dictionary whenever
+	# a sampled decision is serialized.
+	plan.context = context.duplicate(false)
+	plan.context.erase("enemy_removal_value_ledger")
 	plan.compute_budget = compute_budget.duplicate(true)
 	plan.projectile_filter = projectile_filter.duplicate(false)
 	plan.projectile_filter.erase("filtered_observation")
@@ -197,7 +210,7 @@ func plan(observation: Dictionary, previous_movement: Vector2, player_index: int
 	var pruning_diagnostics: Dictionary = candidate_pruning.duplicate(true)
 	pruning_diagnostics.erase("actions")
 	plan.candidate_filter.merge(pruning_diagnostics, true)
-	plan.ranked_actions = _summarize_actions(fully_scored_actions, 5)
+	plan.ranked_actions = _summarize_actions(fully_scored_actions, 3)
 	plan.model = _model_diagnostics(observation, plan, navigation_intent)
 	return plan
 

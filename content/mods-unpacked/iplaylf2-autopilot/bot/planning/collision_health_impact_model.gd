@@ -1,9 +1,9 @@
 extends Reference
 
 # Converts geometric collision likelihood into the health resource consumed by
-# one forecast. The worst threat predicted to intersect this action defines its
-# survival reserve. The calculation uses armor, dodge, hit protection, and stat
-# changes projected for the candidate movement state.
+# one forecast. The calculation uses armor, dodge, hit protection, and stat
+# changes projected for the candidate movement state; health valuation owns the
+# nonlinear scarcity of the remaining health resource.
 
 const PlayerMovementStateProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
@@ -37,14 +37,9 @@ func evaluate(
 			* dodge_failure_probability
 		)
 	)
-	var survival_reserve := 0.0 if has_hit_protection else maximum_hit_damage
-	var expendable_health := max(0.0, current_health - survival_reserve)
 	return {
 		"maximum_armor_adjusted_hit_damage": maximum_hit_damage,
-		"survival_reserve": survival_reserve,
-		"expendable_health": expendable_health,
 		"expected_health_loss": expected_health_loss,
-		"expendable_health_consumption_ratio": expected_health_loss / max(1.0, expendable_health),
 		"terminal_collision_risk":
 		(
 			hostile_collision_risk

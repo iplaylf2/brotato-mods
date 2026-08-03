@@ -7,23 +7,25 @@ extends Reference
 const ObservedMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
 )
-const WeaponEngagementModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_engagement_model.gd"
+const WeaponFireModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
 )
 const PlayerMovementStateProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
 )
-const OpportunityValuationModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_valuation_model.gd"
+const OpportunityValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
 
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
-var _engagement_model: Reference = WeaponEngagementModel.new()
+var _weapon_fire_model: Reference = WeaponFireModel.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
-var _opportunity_valuation: Reference = OpportunityValuationModel.new()
+var _opportunity_value_model: Reference = OpportunityValueModel.new()
 
 
-func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
+func accumulate_outcome(
+	observation: Dictionary, action: Dictionary, outcome: Dictionary, planning_context: Dictionary
+) -> void:
 	var material_pickup_times := _material_pickup_times(observation, action)
 	var global_material_reload := _has_global_material_reload(observation)
 	for observed_weapon in observation.player_state.weapons:
@@ -41,12 +43,18 @@ func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Di
 			or _is_selected_weapon_reload(observed_weapon, observation.player_state.weapons)
 		):
 			cooldown_reset_times = material_pickup_times
-		var shot_times: Array = _engagement_model.get_scheduled_attack_times(
+		var shot_times: Array = _weapon_fire_model.scheduled_attack_times(
 			attack_model, 0.0, action.forecast_seconds, cooldown_reset_times
 		)
 		for shot_index in shot_times.size():
 			_accumulate_weapon_attack(
-				observation, action, attack_model, shot_times[shot_index], shot_index == 0, outcome
+				observation,
+				action,
+				attack_model,
+				shot_times[shot_index],
+				shot_index == 0,
+				outcome,
+				planning_context
 			)
 
 
@@ -113,10 +121,11 @@ func _accumulate_weapon_attack(
 	attack_model: Dictionary,
 	shot_time: float,
 	include_once_per_forecast: bool,
-	outcome: Dictionary
+	outcome: Dictionary,
+	planning_context: Dictionary
 ) -> void:
 	var displacement := _sample_displacement(action.samples, shot_time)
-	var targets := _targets_at_time(observation, displacement, shot_time)
+	var targets := _targets_at_time(observation, displacement, shot_time, planning_context)
 	var primary: Dictionary = _nearest_legal_target(
 		targets, attack_model.delivery.minimum_range, attack_model.delivery.maximum_range + 50.0
 	)
@@ -128,9 +137,8 @@ func _accumulate_weapon_attack(
 		attack_outcome, targets, primary, attack_model, include_once_per_forecast
 	)
 	outcome.expected_weapon_damage += attack_outcome.expected_damage
-	outcome.expected_producer_damage += attack_outcome.expected_producer_damage
-	outcome.expected_bonus_kill_reward_progress += attack_outcome.expected_bonus_kill_reward_progress
-	outcome.ranged_source_suppression_value += attack_outcome.ranged_source_suppression_value
+	var removal_value_progress: float = attack_outcome.expected_enemy_removal_value_progress
+	outcome.expected_enemy_removal_value_progress += removal_value_progress
 	outcome.expected_attack_hits += attack_outcome.expected_hits
 	outcome.expected_kill_weight += attack_outcome.expected_kill_weight
 	outcome.expected_critical_kill_weight += (
@@ -162,7 +170,7 @@ func _predict_attack(targets: Array, primary: Dictionary, attack_model: Dictiona
 			attack_model.delivery.paths.hit_capacity
 			+ (
 				attack_model.impact.critical_chance
-				* _engagement_model.get_rule_delta(
+				* _weapon_fire_model.rule_delta(
 					attack_model.rules, "critical_hit", "delivery.paths.hit_capacity"
 				)
 			)
@@ -204,7 +212,7 @@ func _predict_attack(targets: Array, primary: Dictionary, attack_model: Dictiona
 			if hit_probability <= 0.0:
 				continue
 			var expected_damage: float = (
-				_engagement_model.expected_damage_per_hit(attack_model)
+				_weapon_fire_model.expected_damage_per_hit(attack_model)
 				* retained
 				* hit_probability
 			)
@@ -224,7 +232,7 @@ func _accumulate_redirected_delivery(
 		attack_model.delivery.redirects.count
 		+ (
 			attack_model.impact.critical_chance
-			* _engagement_model.get_rule_delta(
+			* _weapon_fire_model.rule_delta(
 				attack_model.rules, "critical_hit", "delivery.redirects.count"
 			)
 		)
@@ -238,10 +246,19 @@ func _accumulate_redirected_delivery(
 	var retained: float = clamp(attack_model.delivery.redirects.retained_damage, 0.0, 1.0)
 	var damage_capacity := _fractional_retained_chain_capacity(realized_retargets, retained)
 	var hit_probability: float = attack_model.delivery.paths.primary_probability_floor
-	result.expected_damage += (
-		_engagement_model.expected_damage_per_hit(attack_model)
+	var redirected_damage: float = (
+		_weapon_fire_model.expected_damage_per_hit(attack_model)
 		* damage_capacity
 		* hit_probability
+	)
+	var mean_removal_value_per_health := 0.0
+	for target in targets:
+		mean_removal_value_per_health += target.removal_value_per_health
+	mean_removal_value_per_health /= targets.size()
+	result.expected_damage += redirected_damage
+	result.expected_enemy_removal_value_progress += (
+		redirected_damage
+		* mean_removal_value_per_health
 	)
 	result.expected_hits += realized_retargets * hit_probability
 
@@ -268,6 +285,7 @@ func _accumulate_attack_rules(
 	if trigger_hits <= 0.0:
 		return
 	var damage_before_rules: float = result.expected_damage
+	var removal_value_before_rules: float = result.expected_enemy_removal_value_progress
 	var mean_maximum_health := 0.0
 	for target in targets:
 		mean_maximum_health += target.maximum_health
@@ -292,6 +310,14 @@ func _accumulate_attack_rules(
 			result.expected_hits += applications * probability
 
 	var rule_damage := max(0.0, result.expected_damage - damage_before_rules)
+	var mean_removal_value_per_health := 0.0
+	for target in targets:
+		mean_removal_value_per_health += target.removal_value_per_health
+	mean_removal_value_per_health /= max(1.0, float(targets.size()))
+	result.expected_enemy_removal_value_progress = (
+		removal_value_before_rules
+		+ rule_damage * mean_removal_value_per_health
+	)
 	result.expected_kill_weight += min(
 		float(targets.size()), rule_damage / max(1.0, mean_maximum_health)
 	)
@@ -319,7 +345,7 @@ func _rule_damage_amount(
 ) -> float:
 	var value: float = (
 		amount.constant
-		+ (_engagement_model.expected_damage_per_hit(attack_model) * amount.impact_coefficient)
+		+ (_weapon_fire_model.expected_damage_per_hit(attack_model) * amount.impact_coefficient)
 		+ mean_maximum_health * amount.target_maximum_health_coefficient
 	)
 	return max(amount.minimum, value)
@@ -340,46 +366,33 @@ func _accumulate_target_outcome(
 	result.expected_damage += expected_damage
 	result.expected_hits += expected_hits
 	result.expected_kill_weight += min(1.0, expected_damage / target.maximum_health)
-	if target.enemy_producer:
-		result.expected_producer_damage += expected_damage
-	result.expected_bonus_kill_reward_progress += (
-		min(1.0, expected_damage / target.maximum_health)
-		* target.bonus_kill_reward_value
+	result.expected_enemy_removal_value_progress += (
+		expected_damage
+		* target.removal_value_per_health
 	)
-	if target.ranged_pressure_source:
-		result.ranged_source_suppression_value += (
-			expected_damage
-			/ target.maximum_health
-			* target.ranged_pressure_intensity
-			* target.source_removal_relief
-		)
 
 
-func _targets_at_time(observation: Dictionary, displacement: Vector2, time: float) -> Array:
+func _targets_at_time(
+	observation: Dictionary, displacement: Vector2, time: float, planning_context: Dictionary
+) -> Array:
 	var targets := []
+	var enemy_removal_value_ledger: Dictionary = planning_context.enemy_removal_value_ledger
 	for track in observation.enemy_tracks:
 		if not track.visible:
 			continue
+		var maximum_health: float = max(
+			1.0, float(track.behavior_profile.durability.maximum_health)
+		)
 		targets.push_back(
 			{
 				"track_id": track.track_id,
 				"position": _predict_track_position(track, time) - displacement,
 				"radius": track.last_measurement.visual_radius,
-				"enemy_producer": track.behavior_profile.strategic_roles.enemy_producer,
-				"bonus_kill_reward_value":
-				_opportunity_valuation.bonus_kill_reward_value(observation, track),
-				"ranged_pressure_source":
-				track.behavior_profile.strategic_roles.ranged_pressure_source,
-				"ranged_pressure_intensity":
-				track.behavior_profile.attack_behavior.pressure_intensity,
-				"maximum_health": max(1.0, float(track.behavior_profile.durability.maximum_health)),
-				"source_removal_relief":
+				"maximum_health": maximum_health,
+				"removal_value_per_health":
 				(
-					1.25
-					if track.behavior_profile.attack_behavior.get(
-						"all_projectiles_removed_on_death", false
-					)
-					else 1.0
+					_opportunity_value_model.enemy_removal_value(enemy_removal_value_ledger, track)
+					/ maximum_health
 				),
 			}
 		)
@@ -421,9 +434,7 @@ func _predict_track_position(track: Dictionary, time: float) -> Vector2:
 func _empty_attack_outcome() -> Dictionary:
 	return {
 		"expected_damage": 0.0,
-		"expected_producer_damage": 0.0,
-		"expected_bonus_kill_reward_progress": 0.0,
-		"ranged_source_suppression_value": 0.0,
+		"expected_enemy_removal_value_progress": 0.0,
 		"expected_hits": 0.0,
 		"expected_kill_weight": 0.0,
 	}

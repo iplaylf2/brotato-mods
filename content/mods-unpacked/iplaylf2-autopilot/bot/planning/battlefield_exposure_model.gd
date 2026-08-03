@@ -71,7 +71,7 @@ func predict(
 	return result
 
 
-# The collision-cost pass must retain angular coverage under load without paying for
+# The collision-outcome pass must retain angular coverage under load without paying for
 # economy, allied influence, healing, or ambient-pressure interactions.
 func predict_collision(
 	observation: Dictionary, action_forecast: Dictionary, exposure_policy: Dictionary
@@ -204,9 +204,9 @@ func _sample_enemy_pressure(
 func _accumulate_ranged_pressure(
 	track: Dictionary, position: Vector2, sample_time: float, channels: Dictionary
 ) -> void:
-	if not track.behavior_profile.strategic_roles.ranged_pressure_source:
-		return
 	var attack: Dictionary = track.behavior_profile.attack_behavior
+	if not attack.get("creates_projectile_pressure", false):
+		return
 	var pressure_distance: float = max(
 		1.0, float(attack.get("maximum_range", RANGED_SOURCE_PRESSURE_DISTANCE))
 	)
@@ -539,7 +539,7 @@ func _evaluate_channels(channels: Dictionary, policy: Dictionary) -> Dictionary:
 	)
 	var suppressible_enemy_ambient: float = (
 		channels.enemy_proximity * policy.enemy_proximity
-		+ channels.ranged * policy.ranged_source
+		+ channels.ranged * policy.ranged_attack
 	)
 	var spawn_exposure: float = channels.spawn * policy.spawn_warning
 	var positional: float = (
@@ -585,7 +585,7 @@ func _accumulate_result(
 		result.peak_projectile_contact_risk, channels.projectile_contact
 	)
 	result.integrated_spawn_pressure += channels.spawn * step_seconds
-	result.integrated_ranged_source_pressure += channels.ranged * step_seconds
+	result.integrated_ranged_attack_pressure += channels.ranged * step_seconds
 	result.integrated_edge_pressure += channels.edge * step_seconds
 	result.integrated_allied_body_pressure += channels.ally_body * step_seconds
 	result.peak_enemy_contact_risk = max(result.peak_enemy_contact_risk, channels.contact)
@@ -693,7 +693,7 @@ func _empty_result() -> Dictionary:
 		"integrated_projectile_proximity_pressure": 0.0,
 		"peak_projectile_contact_risk": 0.0,
 		"integrated_spawn_pressure": 0.0,
-		"integrated_ranged_source_pressure": 0.0,
+		"integrated_ranged_attack_pressure": 0.0,
 		"integrated_edge_pressure": 0.0,
 		"peak_enemy_contact_risk": 0.0,
 		"integrated_allied_body_pressure": 0.0,

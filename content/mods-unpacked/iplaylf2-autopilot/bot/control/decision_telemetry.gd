@@ -6,7 +6,7 @@ extends Reference
 
 const MOD_ID := "iplaylf2-autopilot"
 const SAMPLE_DIRECTORY := "user://logs/mods/iplaylf2-autopilot"
-const SAMPLE_INTERVAL_SECONDS := 0.5
+const SAMPLE_INTERVAL_SECONDS := 1.0
 const MAX_FILE_BYTES := 32 * 1024 * 1024
 const FLUSH_EVERY_SAMPLES := 4
 
@@ -87,8 +87,8 @@ func record_decision(
 			"sample_index": _sample_counts[player_index],
 			"physics_frame": observation.get("physics_frame"),
 			"previous_movement": previous_movement,
-			"observation": observation,
-			"decision": plan.duplicate(true),
+			"observation": _compact_observation(observation),
+			"decision": _compact_plan(plan),
 		}
 	)
 	_samples_since_flush += 1
@@ -171,6 +171,35 @@ func _write_record(record: Dictionary) -> void:
 	if _file == null:
 		return
 	_file.store_line(JSON.print(_to_json_value(record)))
+
+
+func _compact_observation(observation: Dictionary) -> Dictionary:
+	var result: Dictionary = observation.duplicate(true)
+	# behavior_profile is the planner contract. The evidence and stable profile
+	# nested under last_measurement duplicate that same compiled mechanic for every
+	# tracked enemy and made crowded-wave samples dominate frame time.
+	var tracks: Array = result.get("enemy_tracks", [])
+	for track_index in tracks.size():
+		var track: Dictionary = tracks[track_index]
+		track.erase("behavior_evidence")
+		var measurement: Dictionary = track.get("last_measurement", {})
+		measurement.erase("stable_mechanic_profile")
+		measurement.erase("next_volley_window")
+		track.last_measurement = measurement
+		tracks[track_index] = track
+	result.enemy_tracks = tracks
+	return result
+
+
+func _compact_plan(plan: Dictionary) -> Dictionary:
+	var result: Dictionary = plan.duplicate(true)
+	# Aggregated exposure channels and collision diagnostics are sufficient for
+	# calibration; the per-sample trace can be reconstructed from the action path
+	# and observation and was the largest repeated decision payload.
+	var outcome: Dictionary = result.get("outcome", {})
+	outcome.erase("battlefield_exposure_trace")
+	result.outcome = outcome
+	return result
 
 
 func _to_json_value(value):

@@ -25,12 +25,16 @@ var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 
 
-func generate(observation: Dictionary, navigation_intent: Dictionary) -> Array:
+func generate(
+	observation: Dictionary, navigation_intent: Dictionary, compute_budget: Dictionary
+) -> Array:
 	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var forecast_seconds := _forecast_window(observation, timing)
 	var sample_count := _forecast_sample_count(observation, forecast_seconds, timing)
 	var direction_count: int = _movement_geometry.derive(observation).direction_count
-	var directions := _candidate_directions(direction_count, navigation_intent)
+	var directions := _candidate_directions(
+		direction_count, navigation_intent, compute_budget.get("quality_mode", "full")
+	)
 	var actions := [
 		_make_action(
 			observation, "no_movement_input", Vector2.ZERO, forecast_seconds, sample_count, true
@@ -99,11 +103,18 @@ func _make_action(
 	}
 
 
-func _candidate_directions(direction_count: int, navigation_intent: Dictionary) -> Array:
+func _candidate_directions(
+	direction_count: int, navigation_intent: Dictionary, quality_mode: String
+) -> Array:
 	var result := []
-	for direction_index in direction_count:
+	var effective_direction_count := (
+		direction_count
+		if quality_mode == "full"
+		else BASELINE_DIRECTION_COUNT
+	)
+	for direction_index in effective_direction_count:
 		result.push_back(
-			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))
+			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(effective_direction_count))
 		)
 	# The geometry-derived lattice owns escape resolution. The octants own smooth
 	# baseline comparison and are added independently when the two grids do not

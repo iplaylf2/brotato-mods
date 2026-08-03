@@ -65,7 +65,6 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	moving_observations.append_array(structures)
 	moving_observations.append_array(allied_agents)
 	_motion_estimators[player_index].update(moving_observations, delta_seconds)
-	_update_enemy_motion_features(enemies, _get_velocity(player))
 	var ranged_attack_sources := _infer_ranged_attacks(enemies, enemy_projectiles)
 	for enemy in enemies:
 		enemy.features.ranged_attack_inferred = ranged_attack_sources.has(enemy._source)
@@ -112,36 +111,13 @@ func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 				"features":
 				{
 					"visual_radius": _get_visual_radius(enemy),
-					"observed_speed": enemy_velocity.length(),
-					"closing_speed": 0.0,
 					"stable_mechanic_profile": _enemy_mechanic_compiler.compile(enemy),
 					"next_volley_window": _enemy_volley_observer.observe(enemy),
 					"ranged_attack_inferred": false,
-					"enemy_production_known": _can_spawn_enemies(enemy),
 				},
 			}
 		)
 	return observations
-
-
-func _update_enemy_motion_features(enemies: Array, player_velocity: Vector2) -> void:
-	for enemy in enemies:
-		var relative_velocity: Vector2 = enemy.velocity - player_velocity
-		var closing_speed := 0.0
-		if enemy.relative_position.length_squared() > 0.0:
-			closing_speed = -enemy.relative_position.normalized().dot(relative_velocity)
-		enemy.features.observed_speed = enemy.velocity.length()
-		enemy.features.closing_speed = closing_speed
-
-
-func _can_spawn_enemies(enemy: Node) -> bool:
-	if "enemy_to_spawn" in enemy:
-		return true
-	if "_all_attack_behaviors" in enemy:
-		for behavior in enemy._all_attack_behaviors:
-			if behavior is SpawningAttackBehavior:
-				return true
-	return false
 
 
 func _observe_enemy_projectiles(origin: Vector2, visible_rect: Rect2, enemies: Array) -> Array:

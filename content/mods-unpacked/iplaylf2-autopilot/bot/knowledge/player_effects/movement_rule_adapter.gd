@@ -2,11 +2,11 @@ extends Reference
 
 # Adapts movement-state fields from the target player-effect schema.
 
-const StatVocabulary := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
+const StatMetadata := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stats/stat_metadata.gd"
 )
 
-var _stat_vocabulary: Reference = StatVocabulary.new()
+var _stat_metadata: Reference = StatMetadata.new()
 
 
 func adapt(effects: Dictionary, player: Node) -> Array:
@@ -58,7 +58,7 @@ func _append_conditional_stats(
 			}
 			cadence_seconds = 1.0
 		else:
-			var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
+			var stat_name: String = _stat_metadata.get_stat_name(entry[0])
 			if stat_name.empty():
 				continue
 			consequence = {

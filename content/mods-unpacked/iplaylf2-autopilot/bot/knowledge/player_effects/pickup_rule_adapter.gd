@@ -2,11 +2,11 @@ extends Reference
 
 # Adapts pickup-event fields from the target player-effect schema.
 
-const StatVocabulary := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stat_vocabulary.gd"
+const StatMetadata := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stats/stat_metadata.gd"
 )
 
-var _stat_vocabulary: Reference = StatVocabulary.new()
+var _stat_metadata: Reference = StatMetadata.new()
 
 
 func adapt(effects: Dictionary, player_index: int) -> Array:
@@ -102,7 +102,6 @@ func _append_material_rules(rules: Array, effects: Dictionary, player_index: int
 						"amount": _damage_amount(damage),
 						"delivery": _enemy_delivery(false, INF, 1.0),
 						"probability": stat_damage[2] / 100.0,
-						"outcome_channels": {"enemy_damage": 1.0},
 					}
 				],
 			}
@@ -124,7 +123,7 @@ func _append_consumable_rules(rules: Array, effects: Dictionary, player_index: i
 	for entry in effects[Keys.decaying_stats_on_consumable_hash]:
 		if entry.size() < 3:
 			continue
-		var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
+		var stat_name: String = _stat_metadata.get_stat_name(entry[0])
 		if stat_name.empty():
 			continue
 		rules.push_back(
@@ -138,7 +137,6 @@ func _append_consumable_rules(rules: Array, effects: Dictionary, player_index: i
 						"operation": "add",
 						"value": entry[1],
 						"duration_seconds": entry[2],
-						"outcome_channels": {"player_growth": 0.6},
 					}
 				],
 			}
@@ -169,7 +167,6 @@ func _append_consumable_explosion_rules(rules: Array, effects: Array, player_ind
 						"amount": _damage_amount(damage),
 						"delivery": _enemy_delivery(true, radius, INF),
 						"probability": effect.chance,
-						"outcome_channels": {"enemy_damage": 1.0},
 					}
 				],
 			}
@@ -180,7 +177,7 @@ func _append_trait_stat_rules(rules: Array, entries: Array, trait: String) -> vo
 	for entry in entries:
 		if entry.size() < 3:
 			continue
-		var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
+		var stat_name: String = _stat_metadata.get_stat_name(entry[0])
 		if stat_name.empty():
 			continue
 		rules.push_back(
@@ -195,7 +192,6 @@ func _append_trait_stat_rules(rules: Array, entries: Array, trait: String) -> vo
 						"value": entry[1],
 						"duration_seconds": INF,
 						"probability": entry[2] / 100.0,
-						"outcome_channels": {"player_growth": 1.0},
 					}
 				],
 			}
@@ -248,7 +244,7 @@ func _enemy_delivery(anchor_on_event_entity: bool, radius: float, capacity: floa
 func _append_consumable_stat_rule(rules: Array, entry: Array, duration_seconds: float) -> void:
 	if entry.size() < 2:
 		return
-	var stat_name: String = _stat_vocabulary.get_stat_name(entry[0])
+	var stat_name: String = _stat_metadata.get_stat_name(entry[0])
 	if stat_name.empty():
 		return
 	var consequence := {
@@ -256,7 +252,6 @@ func _append_consumable_stat_rule(rules: Array, entry: Array, duration_seconds: 
 		"operation": "add",
 		"value": entry[1],
 		"per_wave_cap": entry[2] if entry.size() >= 3 else null,
-		"outcome_channels": {"player_growth": 1.0},
 	}
 	if duration_seconds > 0.0:
 		consequence.duration_seconds = duration_seconds

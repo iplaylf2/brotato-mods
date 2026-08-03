@@ -2,7 +2,7 @@
   "name": "autopilot",
   "namespace": "iplaylf2",
   "version_number": "0.0.0",
-  "description": "Automatically chooses battle movement from player-available information using rolling planning.",
+  "description": "Plans battle movement using only information available to the player.",
   "website_url": "",
   "dependencies": [
     "dami-ModOptions"
@@ -25,13 +25,13 @@
       "config_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "Autopilot",
-        "description": "Configure automatic battle movement.",
+        "description": "Configure Autopilot's battle movement control.",
         "type": "object",
         "properties": {
           "enabled": {
             "title": "Enable Autopilot",
-            "description": "Let Autopilot control battle movement.",
-            "tooltip": "While active in battle, Autopilot also writes local decision samples for diagnostics and calibration.",
+            "description": "Allow Autopilot to control your battle movement.",
+            "tooltip": "While enabled in battle, Autopilot writes local decision samples for diagnostics and calibration.",
             "type": "boolean",
             "default": false
           }

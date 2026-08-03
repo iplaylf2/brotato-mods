@@ -27,23 +27,68 @@ func compile(enemy: Node) -> Dictionary:
 		# is deliberately not read.
 		"durability": {"maximum_health": _get_maximum_health(enemy)},
 		"contact_damage": _get_contact_damage(enemy),
-		"kill_rewards": _compile_kill_rewards(enemy, archetype),
+		"kill_rewards": _compile_kill_rewards(enemy),
+		"battlefield_effects": _compile_battlefield_effects(enemy),
 	}
 
 
-func _compile_kill_rewards(enemy: Node, archetype: String) -> Dictionary:
+func _compile_battlefield_effects(enemy: Node) -> Dictionary:
+	var hostile_population_per_second := 0.0
+	if "_all_attack_behaviors" in enemy:
+		for behavior in enemy._all_attack_behaviors:
+			if not behavior is SpawningAttackBehavior:
+				continue
+			var interval_seconds := max(1.0, float(behavior.cooldown)) / 60.0
+			hostile_population_per_second += max(0, behavior.nb_to_spawn) / interval_seconds
+	var amplification_activations_per_second := 0.0
+	var enemy_health_fraction_per_activation := 0.0
+	var enemy_damage_fraction_per_activation := 0.0
+	var enemy_speed_fraction_per_activation := 0.0
+	if "boost_cooldown" in enemy and "nb_entities_boosted_at_once" in enemy:
+		amplification_activations_per_second = (
+			max(0, enemy.nb_entities_boosted_at_once)
+			/ max(0.05, float(enemy.boost_cooldown))
+		)
+		if "hp_boost" in enemy:
+			enemy_health_fraction_per_activation = max(0.0, float(enemy.hp_boost)) / 100.0
+		if "damage_boost" in enemy:
+			enemy_damage_fraction_per_activation = max(0.0, float(enemy.damage_boost)) / 100.0
+		if "speed_boost" in enemy:
+			enemy_speed_fraction_per_activation = max(0.0, float(enemy.speed_boost)) / 100.0
+	return {
+		"hostile_population_per_second": hostile_population_per_second,
+		"amplification_activations_per_second": amplification_activations_per_second,
+		"enemy_health_fraction_per_activation": enemy_health_fraction_per_activation,
+		"enemy_damage_fraction_per_activation": enemy_damage_fraction_per_activation,
+		"enemy_speed_fraction_per_activation": enemy_speed_fraction_per_activation,
+		"enemy_healing_base": max(0.0, float(enemy.heal)) if "heal" in enemy else 0.0,
+		"enemy_healing_per_wave":
+		(
+			max(0.0, float(enemy.heal_increase_each_wave))
+			if "heal_increase_each_wave" in enemy
+			else 0.0
+		),
+		"player_healing_base":
+		max(0.0, float(enemy.player_heal)) if "player_heal" in enemy else 0.0,
+		"player_healing_per_wave":
+		(
+			max(0.0, float(enemy.player_heal_increase_each_wave))
+			if "player_heal_increase_each_wave" in enemy
+			else 0.0
+		),
+	}
+
+
+func _compile_kill_rewards(enemy: Node) -> Dictionary:
 	var rewards := {
 		"base_materials": 0.0,
 		"consumable_drop_chance": 0.0,
 		"guaranteed_consumable": false,
-		"curse_gain": 1.0 if archetype == "evil_mob" else 0.0,
-		"has_bonus_reward": bool(enemy.is_loot) if "is_loot" in enemy else false,
 	}
 	if "stats" in enemy and enemy.stats != null:
 		rewards.base_materials = max(0.0, float(enemy.stats.value))
 		rewards.consumable_drop_chance = clamp(float(enemy.stats.item_drop_chance), 0.0, 1.0)
 		rewards.guaranteed_consumable = bool(enemy.stats.always_drop_consumables)
-	rewards.has_bonus_reward = rewards.has_bonus_reward or rewards.curse_gain > 0.0
 	return rewards
 
 
