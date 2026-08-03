@@ -1,8 +1,6 @@
 extends Reference
 
-# Searches reachable terminal states. Every terminal is evaluated against all
-# observed opportunities; target directions only improve search resolution and
-# never select or commit the policy to one entity.
+# Searches reachable terminal states using observed opportunities.
 
 const BattlefieldExposureModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_exposure_model.gd"

@@ -119,6 +119,7 @@ func predict_base(
 		"expected_recovery": 0.0,
 		"expected_recovery_events": 0.0,
 		"expected_stat_upgrade_equivalents": 0.0,
+		"expected_stat_opportunity_value": 0.0,
 		"expected_material_gain": 0.0,
 		"expected_kill_weight": 0.0,
 		"expected_critical_kill_weight": 0.0,

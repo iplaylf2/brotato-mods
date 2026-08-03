@@ -9,12 +9,14 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 		return {
 			"stable_mechanic_profile": measurement.stable_mechanic_profile.duplicate(true),
 			"ranged_attack_inferred": measurement.ranged_attack_inferred,
+			"visible_removable_projectile_damage": measurement.visible_removable_projectile_damage,
 			"next_volley_window": measurement.next_volley_window.duplicate(true),
 		}
 	return {
 		"stable_mechanic_profile": measurement.stable_mechanic_profile.duplicate(true),
 		"ranged_attack_inferred":
 		previous.ranged_attack_inferred or measurement.ranged_attack_inferred,
+		"visible_removable_projectile_damage": measurement.visible_removable_projectile_damage,
 		"next_volley_window": measurement.next_volley_window.duplicate(true),
 	}
 
@@ -40,4 +42,6 @@ func build_profile(evidence: Dictionary) -> Dictionary:
 		"contact_damage": evidence.stable_mechanic_profile.contact_damage,
 		"kill_rewards": evidence.stable_mechanic_profile.kill_rewards.duplicate(true),
 		"battlefield_effects": evidence.stable_mechanic_profile.battlefield_effects.duplicate(true),
+		"removal_effects":
+		{"visible_projectile_damage": evidence.visible_removable_projectile_damage},
 	}

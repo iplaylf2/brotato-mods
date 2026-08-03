@@ -65,9 +65,15 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	moving_observations.append_array(structures)
 	moving_observations.append_array(allied_agents)
 	_motion_estimators[player_index].update(moving_observations, delta_seconds)
-	var ranged_attack_sources := _infer_ranged_attacks(enemies, enemy_projectiles)
+	var projectile_emissions_by_source := _infer_projectile_emissions(enemies, enemy_projectiles)
 	for enemy in enemies:
-		enemy.features.ranged_attack_inferred = ranged_attack_sources.has(enemy._source)
+		var emitted_projectiles: Array = projectile_emissions_by_source.get(enemy._source, [])
+		enemy.features.ranged_attack_inferred = not emitted_projectiles.empty()
+		enemy.features.visible_removable_projectile_damage = 0.0
+		var attack: Dictionary = enemy.features.stable_mechanic_profile.attack_behavior
+		if attack.get("all_projectiles_removed_on_death", false):
+			for projectile in emitted_projectiles:
+				enemy.features.visible_removable_projectile_damage += projectile.contact_damage
 
 	return {
 		# Internal inputs for observed world memory; never expose them through the service.
@@ -156,18 +162,21 @@ func _make_public_motion_observations(observations: Array) -> Array:
 	return result
 
 
-func _infer_ranged_attacks(enemies: Array, projectiles: Array) -> Dictionary:
-	var likely_sources := {}
+func _infer_projectile_emissions(enemies: Array, projectiles: Array) -> Dictionary:
+	var projectiles_by_source := {}
 	var max_distance_squared := (
 		PROJECTILE_ORIGIN_INFERENCE_DISTANCE
 		* PROJECTILE_ORIGIN_INFERENCE_DISTANCE
 	)
 	for projectile in projectiles:
-		if projectile.velocity.length_squared() == 0.0:
-			continue
 		var best_enemy := {}
 		var best_distance_squared := max_distance_squared
 		for enemy in enemies:
+			if enemy._source.is_a_parent_of(projectile._source):
+				best_enemy = enemy
+				break
+			if projectile.velocity.length_squared() == 0.0:
+				continue
 			var enemy_to_projectile: Vector2 = (
 				projectile.relative_position
 				- enemy.relative_position
@@ -183,8 +192,16 @@ func _infer_ranged_attacks(enemies: Array, projectiles: Array) -> Dictionary:
 				best_distance_squared = distance_squared
 				best_enemy = enemy
 		if not best_enemy.empty():
-			likely_sources[best_enemy._source] = true
-	return likely_sources
+			_append_projectile_emission(projectiles_by_source, best_enemy._source, projectile)
+	return projectiles_by_source
+
+
+func _append_projectile_emission(
+	projectiles_by_source: Dictionary, source: Object, projectile: Dictionary
+) -> void:
+	if not projectiles_by_source.has(source):
+		projectiles_by_source[source] = []
+	projectiles_by_source[source].push_back(projectile)
 
 
 func _observe_allied_agents(player_index: int, origin: Vector2, visible_rect: Rect2) -> Array:

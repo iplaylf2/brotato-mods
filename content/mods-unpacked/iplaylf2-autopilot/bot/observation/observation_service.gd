@@ -116,6 +116,8 @@ func _get_wave_state() -> Dictionary:
 	var timer: Timer = _main._wave_timer
 	return {
 		"number": RunData.current_wave,
+		"final_number": RunData.nb_of_waves,
+		"endless": RunData.is_endless_run,
 		"seconds_remaining": timer.time_left,
 		"duration_seconds": timer.wait_time,
 	}

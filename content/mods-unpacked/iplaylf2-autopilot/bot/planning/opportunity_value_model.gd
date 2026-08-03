@@ -8,8 +8,12 @@ const CONSUMABLE_DROP_OPPORTUNITY_VALUE := 1.0
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
+const StatOpportunityValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
+)
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
+var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
 
 
 func tree_reward_value(observation: Dictionary, tree: Dictionary) -> float:
@@ -59,6 +63,7 @@ func build_enemy_removal_value_ledger(
 		var base_burden: float = (
 			kill_reward_value(observation, track.behavior_profile.get("kill_rewards", {}))
 			+ direct_burden
+			+ _visible_projectile_cleanup_value(observation, track, marginal_health_value)
 		)
 		base_burdens[track.track_id] = base_burden
 		mean_base_burden += base_burden
@@ -127,7 +132,30 @@ func kill_reward_value(observation: Dictionary, rewards: Dictionary) -> float:
 		var luck: float = observation.player_state.effective_stats.luck
 		drop_chance = clamp(drop_chance * max(0.0, 1.0 + luck / 100.0), 0.0, 1.0)
 	value += drop_chance * CONSUMABLE_DROP_OPPORTUNITY_VALUE
+	value += _stat_opportunity_value_model.value(
+		observation, rewards.get("player_stat_changes", [])
+	)
 	return value
+
+
+func _visible_projectile_cleanup_value(
+	observation: Dictionary, track: Dictionary, marginal_health_value: float
+) -> float:
+	if not track.visible:
+		return 0.0
+	var raw_damage: float = track.behavior_profile.get("removal_effects", {}).get(
+		"visible_projectile_damage", 0.0
+	)
+	if raw_damage <= 0.0:
+		return 0.0
+	var armor: float = observation.player_state.runtime_stats.armor
+	var armor_multiplier := (
+		1.0 / (1.0 + armor / 15.0)
+		if armor >= 0.0
+		else 2.0 - 1.0 / (1.0 - armor / 15.0)
+	)
+	var dodge_failure: float = 1.0 - observation.player_state.runtime_stats.dodge_chance
+	return raw_damage * armor_multiplier * dodge_failure * marginal_health_value
 
 
 func _direct_enemy_pressure(observation: Dictionary, track: Dictionary) -> float:

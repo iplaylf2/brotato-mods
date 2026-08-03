@@ -1,8 +1,6 @@
 extends Reference
 
-# Converts predicted state deltas into one material-equivalent utility ledger.
-# Mechanics may create different consequences, but entity categories do not own
-# policy weights or target-selection priority.
+# Converts predicted state deltas into a material-equivalent utility ledger.
 
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
@@ -72,6 +70,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"material_acquisition_value": 1.0,
 				"material_approach_progress": 1.0,
 				"expected_stat_upgrade_equivalents": 1.0,
+				"expected_stat_opportunity_value": 1.0,
 				"expected_material_gain": 1.0,
 				"tree_opportunity_progress": 1.0,
 				"standing_seconds": movement_state_economy_rates.standing,

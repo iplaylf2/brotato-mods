@@ -1,8 +1,7 @@
 extends Reference
 
-# Evaluates every observed opportunity at one candidate terminal state. Entity
-# kinds describe mechanics; none of them wins a prior target-selection stage.
-# Values are additive state consequences in material-equivalent utility.
+# Evaluates observed opportunities at a candidate terminal state in
+# material-equivalent utility.
 
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"

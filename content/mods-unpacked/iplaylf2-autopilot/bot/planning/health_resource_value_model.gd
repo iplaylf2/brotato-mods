@@ -1,8 +1,7 @@
 extends Reference
 
-# Prices one point of health from the current survival buffer and the discounted
-# supply of replacement health. This is a state valuation, not a damage budget:
-# ordinary damage remains admissible whenever another outcome pays for it.
+# Prices current health and replacement-health supply from the projected
+# survival buffer.
 
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"

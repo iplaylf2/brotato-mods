@@ -12,10 +12,14 @@ const ProjectileMotionPredictor := preload(
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
+const StatOpportunityValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
+)
 
 var _motion_predictor: Reference = ObservedMotionPredictor.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
+var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
 
 
 func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
@@ -152,6 +156,19 @@ func _apply_consequence(
 		return
 	match consequence.operation:
 		"add":
+			outcome.expected_stat_opportunity_value += (
+				_stat_opportunity_value_model.value(
+					observation,
+					[
+						{
+							"stat": consequence.target,
+							"operation": "add",
+							"value": consequence.get("value", 0.0),
+						}
+					]
+				)
+				* expected_occurrences
+			)
 			outcome.expected_stat_upgrade_equivalents += (
 				consequence.get("upgrade_equivalent_value", 0.0)
 				* expected_occurrences

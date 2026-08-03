@@ -1,7 +1,6 @@
 extends Reference
 
-# Selection is deliberately mechanical: all trade-offs, including command
-# switching cost, already live in the shared utility ledger.
+# Selects the maximum-utility action.
 
 
 func select(scored_actions: Array) -> Dictionary:

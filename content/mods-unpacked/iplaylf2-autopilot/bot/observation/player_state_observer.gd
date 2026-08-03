@@ -6,16 +6,21 @@ extends Reference
 const PlayerEffectAdapter := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/player_effects/player_effect_adapter.gd"
 )
+const StatOpportunityProfileAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/stats/stat_opportunity_profile_adapter.gd"
+)
 const WeaponMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/weapons/weapon_mechanic_compiler.gd"
 )
 
 var _player_effect_adapter: Reference = PlayerEffectAdapter.new()
+var _stat_opportunity_profile_adapter: Reference = StatOpportunityProfileAdapter.new()
 var _weapon_mechanic_compiler: Reference = WeaponMechanicCompiler.new()
 
 
 func observe(player_index: int, player: Node) -> Dictionary:
 	var adapted_effects: Dictionary = _player_effect_adapter.adapt(player_index, player)
+	var effective_stats := _get_effective_stats(player_index)
 	return {
 		"dead": player.dead,
 		"health":
@@ -32,7 +37,8 @@ func observe(player_index: int, player: Node) -> Dictionary:
 		},
 		"resources": {"materials": RunData.get_player_gold(player_index)},
 		"inventory": {"item_count": RunData.get_player_items(player_index).size()},
-		"effective_stats": _get_effective_stats(player_index),
+		"effective_stats": effective_stats,
+		"stat_opportunity_profiles": _stat_opportunity_profile_adapter.adapt(),
 		"runtime_stats": _get_runtime_stats(player),
 		"collision_radius": _get_collision_radius(player),
 		"movement": _get_movement_state(player),
