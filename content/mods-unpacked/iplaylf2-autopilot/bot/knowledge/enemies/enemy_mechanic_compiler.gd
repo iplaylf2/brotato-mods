@@ -6,23 +6,34 @@ extends Reference
 
 const FALLBACK_PRESSURE_INTENSITY := 0.5
 const MAX_PRESSURE_INTENSITY := 4.0
+const EnemyMotionMechanicCompiler := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd"
+)
 
-var _attack_behaviors_by_archetype := {}
+var _mechanics_by_archetype := {}
+var _motion_mechanic_compiler: Reference = EnemyMotionMechanicCompiler.new()
 
 
 func compile(enemy: Node) -> Dictionary:
 	var archetype := ""
 	if "enemy_id" in enemy:
 		archetype = enemy.enemy_id
-	var attack_behavior: Dictionary
-	if not archetype.empty() and _attack_behaviors_by_archetype.has(archetype):
-		attack_behavior = _attack_behaviors_by_archetype[archetype].duplicate(true)
+	var mechanics: Dictionary
+	if not archetype.empty() and _mechanics_by_archetype.has(archetype):
+		mechanics = _mechanics_by_archetype[archetype].duplicate(true)
 	else:
-		attack_behavior = _compile_attack_behavior(enemy)
+		var motion_mechanics: Dictionary = _motion_mechanic_compiler.compile(enemy)
+		mechanics = {
+			"projectile_attack": _compile_projectile_attack(enemy),
+			"charge_attack": motion_mechanics.charge_attack,
+			"target_position_response": motion_mechanics.target_position_response,
+		}
 		if not archetype.empty():
-			_attack_behaviors_by_archetype[archetype] = attack_behavior.duplicate(true)
+			_mechanics_by_archetype[archetype] = mechanics.duplicate(true)
 	return {
-		"attack_behavior": attack_behavior,
+		"projectile_attack": mechanics.projectile_attack,
+		"charge_attack": mechanics.charge_attack,
+		"target_position_response": mechanics.target_position_response,
 		# Maximum health is the durability prior.
 		"durability": {"maximum_health": _get_maximum_health(enemy)},
 		"contact_damage": _get_contact_damage(enemy),
@@ -94,10 +105,10 @@ func _compile_kill_rewards(enemy: Node, archetype: String) -> Dictionary:
 	return rewards
 
 
-func _compile_attack_behavior(enemy: Node) -> Dictionary:
+func _compile_projectile_attack(enemy: Node) -> Dictionary:
 	if not "_all_attack_behaviors" in enemy:
 		return (
-			_unconfirmed_attack_behavior()
+			_unconfirmed_projectile_attack()
 			if not _has_attached_projectiles(enemy)
 			else _compile_attached_projectiles(enemy)
 		)
@@ -265,7 +276,7 @@ func _append_unique(values: Array, value: String) -> void:
 		values.push_back(value)
 
 
-func _unconfirmed_attack_behavior() -> Dictionary:
+func _unconfirmed_projectile_attack() -> Dictionary:
 	return {
 		"kind": "unconfirmed",
 		"confidence": 0.0,
@@ -281,12 +292,12 @@ func _compile_attached_projectiles(enemy: Node) -> Dictionary:
 	var projectiles := []
 	_append_attached_projectiles(projectiles, enemy)
 	var maximum_range := 0.0
-	var maximum_speed := 0.0
+	var maximum_projectile_speed := 0.0
 	for projectile in projectiles:
 		if "max_target_distance" in projectile:
 			maximum_range = max(maximum_range, float(projectile.max_target_distance))
 		if "speed" in projectile:
-			maximum_speed = max(maximum_speed, float(projectile.speed))
+			maximum_projectile_speed = max(maximum_projectile_speed, float(projectile.speed))
 	return {
 		"kind": "attached_projectile_known",
 		"confidence": 1.0,
@@ -294,7 +305,7 @@ func _compile_attached_projectiles(enemy: Node) -> Dictionary:
 		"creates_projectile_pressure": true,
 		"minimum_range": 0.0,
 		"maximum_range": maximum_range,
-		"maximum_projectile_speed": maximum_speed,
+		"maximum_projectile_speed": maximum_projectile_speed,
 		"maximum_projectiles_per_volley": projectiles.size(),
 		"maximum_projectiles_per_second": float(projectiles.size()),
 		"pressure_intensity":

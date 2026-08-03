@@ -8,6 +8,9 @@ extends Reference
 const ObservedMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
 )
+const EnemyMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
+)
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
 )
@@ -17,7 +20,8 @@ const ProjectileMotionPredictor := preload(
 
 const RANGED_SOURCE_PRESSURE_DISTANCE := 650.0
 
-var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _observed_motion_predictor: Reference = ObservedMotionPredictor.new()
+var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 
@@ -170,7 +174,10 @@ func _sample_enemy_pressure(
 	tracks: Array, sample: Dictionary, channels: Dictionary, geometry: Dictionary
 ) -> void:
 	for track in tracks:
-		var position: Vector2 = _predict_track_position(track, sample.time) - sample.displacement
+		var position: Vector2 = (
+			_predict_enemy_position(track, sample.time, sample.displacement)
+			- sample.displacement
+		)
 		var uncertain_clearance: float = (
 			position.length()
 			- geometry.player_radius
@@ -199,18 +206,67 @@ func _sample_enemy_pressure(
 				channels.contact_damage, track.behavior_profile.get("contact_damage", 1.0)
 			)
 		_accumulate_ranged_pressure(track, position, sample.time, channels)
+		_accumulate_charge_pressure(track, position, sample.time, channels, geometry)
+
+
+func _accumulate_charge_pressure(
+	track: Dictionary,
+	position: Vector2,
+	sample_time: float,
+	channels: Dictionary,
+	geometry: Dictionary
+) -> void:
+	var charge_attack: Dictionary = track.behavior_profile.get("charge_attack", {})
+	if not charge_attack.get("active", false):
+		return
+	var charge_window: Dictionary = track.behavior_profile.get("next_charge_attack_window", {})
+	var readiness := 1.0
+	if charge_window.get("is_exact", false):
+		readiness = 0.0 if sample_time < charge_window.earliest_seconds else 1.0
+	elif charge_window.get("latest_seconds", INF) != INF:
+		readiness = clamp(
+			(
+				(sample_time - charge_window.get("earliest_seconds", 0.0))
+				/ max(
+					0.01, charge_window.latest_seconds - charge_window.get("earliest_seconds", 0.0)
+				)
+			),
+			0.0,
+			1.0
+		)
+	if readiness <= 0.0:
+		return
+	var physical_clearance: float = (
+		position.length()
+		- geometry.player_radius
+		- track.last_measurement.visual_radius
+	)
+	var pressure_distance: float = min(
+		max(0.0, charge_attack.get("maximum_range", 0.0)),
+		max(0.0, charge_attack.get("maximum_travel_distance", 0.0))
+	)
+	if pressure_distance <= 0.0:
+		return
+	var reach: float = clamp((pressure_distance - physical_clearance) / pressure_distance, 0.0, 1.0)
+	channels.enemy_proximity += (
+		reach
+		* reach
+		* readiness
+		* track.recency_confidence
+		* clamp(charge_attack.get("confidence", 0.0), 0.0, 1.0)
+	)
 
 
 func _accumulate_ranged_pressure(
 	track: Dictionary, position: Vector2, sample_time: float, channels: Dictionary
 ) -> void:
-	var attack: Dictionary = track.behavior_profile.attack_behavior
-	if not attack.get("creates_projectile_pressure", false):
+	var projectile_attack: Dictionary = track.behavior_profile.projectile_attack
+	if not projectile_attack.get("creates_projectile_pressure", false):
 		return
 	var pressure_distance: float = max(
-		1.0, float(attack.get("maximum_range", RANGED_SOURCE_PRESSURE_DISTANCE))
+		1.0, float(projectile_attack.get("maximum_range", RANGED_SOURCE_PRESSURE_DISTANCE))
 	)
-	var minimum_distance: float = attack.get("minimum_range", 0.0)
+	var minimum_distance: float = projectile_attack.get("minimum_range", 0.0)
 	var clearance: float = (
 		position.length()
 		- track.last_measurement.visual_radius
@@ -227,8 +283,8 @@ func _accumulate_ranged_pressure(
 		proximity
 		* proximity
 		* track.recency_confidence
-		* attack.confidence
-		* attack.pressure_intensity
+		* projectile_attack.confidence
+		* projectile_attack.pressure_intensity
 		* volley_pressure_factor
 	)
 
@@ -323,7 +379,9 @@ func _source_suppression(
 	for track in tracks:
 		if require_visible_targets and not track.visible:
 			continue
-		var enemy_position: Vector2 = _predict_track_position(track, sample.time)
+		var enemy_position: Vector2 = _predict_enemy_position(
+			track, sample.time, sample.displacement
+		)
 		var support_distance: float = (enemy_position - source_position).length()
 		if support_distance > relief.radius + track.last_measurement.visual_radius:
 			continue
@@ -357,7 +415,7 @@ func _has_single_use_trigger(
 		# claim that an irreversible trigger will actually be consumed.
 		if not track.visible:
 			continue
-		var enemy_position := _predict_track_position(track, sample.time)
+		var enemy_position := _predict_enemy_position(track, sample.time, sample.displacement)
 		var trigger_radius: float = relief.activation_radius + track.last_measurement.visual_radius
 		if (enemy_position - source_position).length() <= trigger_radius:
 			return true
@@ -635,7 +693,7 @@ func _predict_projectile_position(projectile: Dictionary, time: float) -> Vector
 
 
 func _predict_source_position(source: Dictionary, time: float) -> Vector2:
-	return _motion_predictor.predict_position(
+	return _observed_motion_predictor.predict_position(
 		source.relative_position,
 		source.velocity,
 		source.acceleration,
@@ -644,14 +702,10 @@ func _predict_source_position(source: Dictionary, time: float) -> Vector2:
 	)
 
 
-func _predict_track_position(track: Dictionary, time: float) -> Vector2:
-	return _motion_predictor.predict_position(
-		track.relative_position,
-		track.estimated_velocity,
-		track.estimated_acceleration,
-		track.motion_confidence,
-		time
-	)
+func _predict_enemy_position(
+	track: Dictionary, time: float, player_displacement := Vector2.ZERO
+) -> Vector2:
+	return _enemy_motion_predictor.predict_position(track, time, player_displacement)
 
 
 func _closest_point_to_origin(segment_start: Vector2, segment_end: Vector2) -> Vector2:

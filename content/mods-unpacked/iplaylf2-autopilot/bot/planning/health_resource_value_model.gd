@@ -106,6 +106,7 @@ func estimate(observation: Dictionary, rule_projection: Dictionary) -> Dictionar
 		"effective_survival_buffer": effective_buffer,
 		"wave_remaining_fraction": remaining_fraction,
 		"health_scarcity": scarcity,
+		"maximum_consumable_recovery": consumable_recovery,
 	}
 
 

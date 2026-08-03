@@ -77,5 +77,5 @@ README 只提供使用概览；维护细节按主题由以下文档负责：
 - [玩家权限边界](docs/fair-play.md) 定义允许读取的信息和唯一控制面；
 - [架构文档](docs/architecture.md) 定义运行链路、公共观察、机制语义、规划结果和模块责任；
 - [决策采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
-- [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人攻击与投射物入口；
+- [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人运动、攻击与投射物入口；
 - [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。

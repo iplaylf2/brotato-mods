@@ -17,10 +17,14 @@ const MovementTimingModel := preload(
 const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
+const EnemyMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
+)
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
+var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 
 
 func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
@@ -39,8 +43,15 @@ func evaluate(observation: Dictionary, action: Dictionary) -> Dictionary:
 
 	for track in observation.enemy_tracks:
 		var combined_radius: float = geometry.player_radius + track.last_measurement.visual_radius
+		var predicted_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
+			track, local_horizon_seconds, player_velocity * local_horizon_seconds
+		)
+		var predicted_enemy_velocity: Vector2 = (
+			(predicted_enemy_position - track.relative_position)
+			/ max(0.01, local_horizon_seconds)
+		)
 		var ttc := _time_to_collision(
-			track.relative_position, track.estimated_velocity - player_velocity, combined_radius
+			track.relative_position, predicted_enemy_velocity - player_velocity, combined_radius
 		)
 		if ttc <= navigation_horizon_seconds:
 			minimum_ttc = min(minimum_ttc, ttc)

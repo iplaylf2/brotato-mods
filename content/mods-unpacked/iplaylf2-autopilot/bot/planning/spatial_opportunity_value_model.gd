@@ -11,13 +11,13 @@ const OpportunityValueModel := preload(
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
 )
-const ObservedMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
+const EnemyMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
 
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
-var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 
 
 func _evaluate_remote_position(
@@ -58,12 +58,8 @@ func _evaluate_remote_position(
 	for track in observation.enemy_tracks:
 		if track.visible and track.relative_position.length() <= local_prediction_radius:
 			continue
-		var predicted_position: Vector2 = _motion_predictor.predict_position(
-			track.relative_position,
-			track.estimated_velocity,
-			track.estimated_acceleration,
-			track.motion_confidence,
-			time
+		var predicted_position: Vector2 = _enemy_motion_predictor.predict_position(
+			track, time, player_displacement
 		)
 		result.enemy_opportunity += _enemy_opportunity_at_position(
 			observation,
@@ -112,18 +108,17 @@ func local_enemy_value_delta(
 	for track in observation.enemy_tracks:
 		if not track.visible or track.relative_position.length() > local_prediction_radius:
 			continue
-		var predicted_position: Vector2 = _motion_predictor.predict_position(
-			track.relative_position,
-			track.estimated_velocity,
-			track.estimated_acceleration,
-			track.motion_confidence,
-			time
+		var stationary_position: Vector2 = _enemy_motion_predictor.predict_position(
+			track, time, Vector2.ZERO
+		)
+		var candidate_position: Vector2 = _enemy_motion_predictor.predict_position(
+			track, time, player_displacement
 		)
 		var stationary_value: float = _enemy_opportunity_at_position(
 			observation,
 			context,
 			track,
-			predicted_position,
+			stationary_position,
 			Vector2.ZERO,
 			maximum_weapon_range,
 			reach_distance
@@ -132,7 +127,7 @@ func local_enemy_value_delta(
 			observation,
 			context,
 			track,
-			predicted_position,
+			candidate_position,
 			player_displacement,
 			maximum_weapon_range,
 			reach_distance
@@ -177,7 +172,7 @@ func _entity_value(observation: Dictionary, entity: Dictionary, health_value: Di
 				* health_value.recovery_conversion_value
 			)
 		"tree":
-			return _opportunity_value_model.tree_reward_value(observation, entity)
+			return _opportunity_value_model.tree_reward_value(observation, entity, health_value)
 	return 0.0
 
 

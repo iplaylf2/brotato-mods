@@ -150,6 +150,12 @@ visible_world
 `estimated_velocity` 和 `estimated_acceleration`，而
 `last_observed_*` 字段保留最后一次可见时的测量，供诊断和记忆解释。
 
+敌人稳定机制还可形成 `behavior_profile.target_position_response` 与 `behavior_profile.charge_attack`。前者描述移动行为是否
+响应目标位置，以及稳定移动速度和偏好距离；候选路径预测以已观察速度为基线，只加入候选玩家位置相对
+零输入反事实造成的响应差。后者描述冲撞的触发距离、速度、持续时间、可达距离和稳定冷却区间。
+`next_charge_attack_window` 与齐射时间窗采用同一公开规则：确定冷却给出精确时间，已经抽取的随机冷却
+只给出稳定区间。这些版本知识无需以本局受击为前提；它们只改变候选位置与风险评分，不编码动作方向。
+
 可见树木的 `destructible_profile` 公开稳定的破坏命中需求、基础材料、基础消耗品掉率和是否必掉。它不把
 幸运、当前生命或保树效果提前编译进画像；这些玩家状态只在规划层换算成当轮边际价值。
 
@@ -173,10 +179,11 @@ visible_world
 ### 敌人行为画像
 
 场景节点只在观察层内部充当连续性标记，不会进入公共观察。敌人的 `behavior_profile` 由
-`EnemyMechanicCompiler`、`EnemyVolleyObserver` 和 `EnemyBehaviorProfiler` 依次构建：编译器从可见敌人的
-稳定配置编译攻击方式、耐久、射程、弹速、弹量、投放模式、火力强度和击杀收益载荷；齐射观察器形成
-当前的下一轮齐射时间窗；画像器再融合本局运动证据和未知内容的发射归因。稳定内容 ID 只作为编译器的
-内部缓存键；公共观察不包含内容 ID、场景节点或敌人的当前生命。
+`EnemyMechanicCompiler`、`EnemyAttackTimingObserver` 和 `EnemyBehaviorProfiler` 依次构建：机制编译器从可见
+敌人的稳定配置编译攻击、位置响应、耐久和收益载荷，其中位置相关机制委托给
+`EnemyMotionMechanicCompiler`；攻击时序观察器形成当前的下一轮齐射与冲撞时间窗；画像器再融合稳定机制、
+当前时序和未知内容的本局发射归因。稳定内容 ID 只作为编译器的内部缓存键；公共观察不包含内容 ID、
+场景节点或敌人的当前生命。
 
 因此，具有 `ShootingAttackBehavior` 的可见敌人会立即贡献已确认的远程火力压力，无需等到它在本局
 首次开火。敌人节点下常驻的敌方投射物也会编译为 `attached_orbit` 压力并进入可见弹道观察，覆盖
@@ -187,8 +194,11 @@ visible_world
 
 | 字段 | 含义 |
 | --- | --- |
-| `attack_behavior` | 攻击类别、知识来源、置信度、射程、投射物参数、射击间隔、随机边界、投放模式和火力强度 |
+| `projectile_attack` | 投射物攻击类别、知识来源、置信度、射程、投射物参数、射击间隔、随机边界、投放模式和火力强度 |
 | `next_volley_window` | 下一轮齐射时间窗；确定性冷却给出精确时间，随机冷却只给出稳定区间 |
+| `target_position_response` | 敌人对目标位置变化的连续移动响应、偏好距离和稳定速度 |
+| `charge_attack` | 冲撞的触发范围、速度、持续时间、最大可达距离、冷却区间和目标随机性 |
+| `next_charge_attack_window` | 当前下一次冲撞时间窗；确定性与随机冷却的公开规则同齐射时间窗 |
 | `durability.maximum_health` | 不读取当前生命时，用于折算保守移除进度的最大生命基准 |
 | `contact_damage` | 当前可见敌人的接触伤害 |
 | `kill_rewards` | 基础材料、基础消耗品掉率和必掉约束 |
@@ -196,7 +206,7 @@ visible_world
 | `battlefield_effects` | 每秒生产敌人数、每秒强化激活数、每次强化比例，以及敌我治疗量等战场后果 |
 | `removal_effects.visible_projectile_damage` | 与来源一同删除的当前可见投射物原始伤害总量 |
 
-`attack_behavior.knowledge_source` 区分 `stable_mechanics` 与 `observed_emission`。前者是目标版本的稳定
+`projectile_attack.knowledge_source` 区分 `stable_mechanics` 与 `observed_emission`。前者是目标版本的稳定
 机制知识；后者只在缺少标准机制配置时作为降级证据。
 
 ### 地图定位
@@ -211,13 +221,14 @@ visible_world
 
 ### 敌人机制
 
-`EnemyMechanicCompiler` 在敌人可见后只读取稳定攻击配置。它聚合标准射击行为和敌人子节点的常驻
-投射物，输出最小/最大射程、最大弹速、单轮弹量、估计火力强度、投放模式、齐射间隔区间、发射方向/
-速度/原点的随机性、静止危险区、死亡清弹规则、最大生命、接触伤害，以及生产敌人或提高敌群生命、伤害、
-速度和治疗的稳定数值后果。Boss 已注册的各阶段攻击与普通敌人的附加攻击统一从 `_all_attack_behaviors`
-聚合。当前齐射状态由观察层的
-`EnemyVolleyObserver` 单独形成 `next_volley_window`：无随机冷却时公开确定时间，随机冷却只公开稳定区间，
-不读取本轮已抽取结果。当前目标、当前生命和随机状态不进入结果。
+`EnemyMechanicCompiler` 是敌人可见后稳定机制的聚合入口。它直接编译投射物攻击、耐久、接触伤害、奖励
+和战场效果，并委托 `EnemyMotionMechanicCompiler` 编译目标位置响应与冲撞。Boss 各阶段攻击和普通敌人的
+附加攻击统一从 `_all_attack_behaviors` 聚合。稳定配置可以包含攻击区间和随机边界，但不包含本轮已经
+抽取的结果。
+
+当前攻击时序归观察层的 `EnemyAttackTimingObserver` 所有，并分别形成 `next_volley_window` 与
+`next_charge_attack_window`。确定冷却公开精确时间，随机冷却只公开稳定区间；当前目标、当前生命和
+随机状态不进入机制画像。公共字段及其含义由前文的[敌人行为画像](#敌人行为画像)定义。
 
 目标版本的敌人清单、投射物形态、实现映射和升级复核步骤见
 [原版敌人与投射物机制参考](vanilla-enemy-mechanics.md)。目标游戏版本的覆盖结论独立于架构契约维护。
@@ -321,7 +332,8 @@ visible_world
    完整评分。最终可行候选按筛选分数排序；所有质量档在存在足够候选时都至少精确预测前两个候选，使
    武器结果可以改变动作选择，而不只是改写唯一候选的诊断。其余候选仅在最终规划截止前继续预测。
    未做精确武器预测时，预测窗内真实可执行的攻击次数和有限伤害容量
-   形成敌人移除价值筛选代理，树木射程与命中容量形成收获价值代理；精确结果出现后，对应代理退出评分。
+   形成敌人移除价值筛选代理；树木代理复用当前冷却、移动攻击许可和最近合法目标，只省略次级投送与
+   规则结果。精确结果出现后，对应代理退出评分。
 8. 选择器采用统一账本中总效用最高的动作。新旧方向连续性作为控制切换成本计入账本。控制器提交所选
    移动向量，下一次规划重新读取环境。
 
@@ -331,7 +343,9 @@ visible_world
 局部未实现进度、预测窗外的导航终端值，以及控制连续性。一个事实可以被多个预测器观察，但只能由一个
 评分量拥有其决策含义：位置扫掠和 VO 都是碰撞检测证据，合并后才计分；实际拾取消耗品只形成
 `expected_recovery`，未触发拾取的靠近才形成 `consumable_recovery_approach_progress`；满血或溢出拾取
-造成的恢复机会损失形成 `wasted_consumable_recovery`。材料的实际收集与尚未拾取材料的局部接近分别由
+造成的恢复机会损失形成 `wasted_consumable_recovery`。不可逆拾取只在本次实际提交的控制期内确认为
+事件；更长条件预测窗中的地面机会仍是终端势能，不能预支为已经收集。材料的实际收集与尚未拾取材料的
+局部接近分别由
 `material_acquisition_value` 和 `material_approach_progress` 拥有。前者计入材料推迟至后续波次兑现造成的
 成长时机成本；后者在同一未拾取实体集合上比较起点与终点的可达前沿势能。前沿容量由有效导航距离可容纳
 的拾取直径数派生，只聚合势能最高的材料。材料密集时价值不会封顶在单个目标上，分散的低价值远处材料
@@ -344,8 +358,8 @@ visible_world
 直接压力和持续机制后果先合并为敌人移除价值，再由伤害、接近和射程代理共同消费。树木接近只表达空间
 势能差；自动武器预测按原版敌人与树木共用的目标集合选择最近合法目标，并按预期命中折算树木收获进度。
 移动不会把拾取与自动攻击拆成互斥目标：每个候选移动同时累计其路径上的材料、恢复和树木结果，以及该
-路径允许的武器攻击结果。敌人自行移动使用同时间零输入反事实，只让移动真正改变的射程和目标几何影响
-候选差值。
+路径允许的武器攻击结果。敌人的已观察运动对所有候选使用同时间基线；稳定目标响应只加入候选玩家位置
+相对零输入状态造成的运动差，因此追踪经验会改变地图和轨迹评分，却不会变成预设动作。
 移动状态产生的材料周期收益归入 `economy`；护甲、闪避、武器属性和移动速度分别进入生存、攻击与
 运动学预测器。
 
@@ -367,15 +381,15 @@ visible_world
 
 | 字段 | 含义 |
 | --- | --- |
-| `material_acquisition_value` | 动作路径实际进入收集半径的可见材料价值，包含避免推迟至后续波次兑现的成长时机价值 |
-| `material_approach_progress` | 同一组尚未拾取局部材料的可达前沿在动作终点相对起点的有符号势能变化；前沿容量由有效导航距离可容纳的拾取直径数派生，本动作已拾取的材料不再进入该字段 |
+| `material_acquisition_value` | 本次提交控制期内实际进入收集半径的可见材料价值，包含避免推迟至后续波次兑现的成长时机价值 |
+| `material_approach_progress` | 同一组尚未拾取局部材料的可达前沿在提交期终点相对起点的有符号势能变化；前沿容量由有效导航距离可容纳的拾取直径数派生，本动作已拾取的材料不再进入该字段 |
 | `consumable_recovery_approach_progress` | 尚未触发拾取时，对所有可恢复消耗品按当前可兑现恢复聚合的局部接近进度 |
-| `consumed_consumable_recovery_supply` | 拾取消耗品时从地图恢复储备中消耗的恢复量，与实际恢复共同形成当前生命和未来供给的净价值差 |
+| `consumed_consumable_recovery_supply` | 拾取消耗品时从地图恢复储备中转化的恢复量；保留为供给兑现诊断，不再次从动作收益扣除 |
 | `expected_enemy_removal_value_progress` | 预期武器伤害按各敌人的移除价值与最大生命折算后的收益 |
 | `enemy_removal_value_approach_progress` | 当前可见局部敌人在动作终点相对同时间零输入状态的移除机会价值差；敌人自然移动不归因给玩家动作 |
 | `enemy_removal_value_in_range` | 尚未运行精确武器预测时，按攻击冷却、可移动攻击限制和有限伤害容量分配的敌人移除价值代理 |
 | `tree_opportunity_progress` | 对树木攻击范围的有符号接近势能变化，按材料、幸运修正掉落和保树机会成本折算 |
-| `tree_harvest_value_in_range` | 尚未运行精确武器预测时，预测终点处树木射程与命中容量形成的收获价值代理 |
+| `tree_harvest_value_in_range` | 尚未运行精确武器预测时，按当前冷却、移动许可与最近合法目标形成的直接树木命中代理 |
 | `expected_tree_harvest_value_progress` | 原版自动武器把树木选为合法目标后，预期命中按破坏所需命中数折算的收获进度 |
 | `expected_rule_damage` | 玩家效果规则因拾取、治疗、受击或闪避产生的预期敌人伤害 |
 | `expected_recovery` | 候选动作的实际拾取、生命偷取和动作相关事件规则产生的预期恢复量 |
@@ -396,7 +410,7 @@ visible_world
 | 字段 | 含义 |
 | --- | --- |
 | `expected_weapon_damage` | 自动武器对所有敌人的预期总伤害；敌人移除价值另行计分 |
-| `integrated_enemy_proximity_pressure` | 敌人距离与记忆不确定性形成的有界累计压力 |
+| `integrated_enemy_proximity_pressure` | 敌人距离、记忆不确定性和当前时间窗内冲撞可达性形成的有界累计压力 |
 | `integrated_projectile_proximity_pressure` | 敌方投射物位置域扫掠形成的累计邻近压力 |
 | `peak_projectile_contact_risk` | 位置域扫掠确认的峰值投射物接触风险 |
 | `integrated_spawn_pressure` | 靠近可见敌对生成警告的累计压力 |
@@ -422,7 +436,7 @@ visible_world
 | `candidate_velocity` | 结合移动输入与已观察击退衰减后的候选平均速度 |
 | `maximum_armor_adjusted_hit_damage` | 预测会与候选交会的最强单次伤害经过候选护甲换算后的数值 |
 | `weapon_prediction_included` | 标明结果是否包含武器攻击预测，决定筛选代理是否有效 |
-| `wasted_consumable_recovery` | 拾取消耗品时因满血或溢出而未转化为当前生命的恢复量；储备损失已由 `consumed_consumable_recovery_supply` 计价 |
+| `wasted_consumable_recovery` | 拾取消耗品时因满血或溢出而未转化为当前生命的恢复量 |
 | `battlefield_exposure_trace` | 每个预测时刻的位置、原始通道、敌对暴露、减压、环境压力和路径碰撞风险 |
 | `expected_attack_hits` | 武器几何预测得到的预期命中数 |
 | `expected_recovery_events` | 玩家效果规则预测得到的恢复事件数 |
@@ -470,13 +484,16 @@ visible_world
 移动时仍可触发的生命偷取；被动生命流失则从生存余量中扣除。非致命生命和替代供给只服务于本波剩余
 暴露，其价格按本波剩余比例连续下降：波末清场会重建下一波的起始生命，未消费的安全余量不会跨波保值。
 替代供给越充足，普通承伤价格越低。可能结束本局的碰撞仍只看当前生命和单次伤害，使用未折价价值并受
-终止风险可行域保护。拾取消耗品会消耗地图上的替代供给，实际恢复量受缺失生命上限约束。
+终止风险可行域保护。拾取消耗品把地图替代供给转化为当前生命；动作只取得这次转化相对保留供给的边际
+价值，不把同一供给先当资产再扣一次。实际恢复量受缺失生命上限约束。
 
 消耗品的治疗价值取当前可兑现恢复。拾取引发的爆炸、属性或材料效果由候选拾取位置上的事件预测器计算；
 导航终端值使用消耗品的基础恢复机会。
 
-`OpportunityValueModel` 统一把材料、消耗品、树木和敌人移除机会换算为材料等价边际价值，并在每帧
-一次性建立敌人移除价值账本。每个敌人的移除价值等于击杀收益、其直接接触与远程压力负担、来源死亡
+`OpportunityValueModel` 统一把材料、消耗品、树木和敌人移除机会换算为材料等价边际价值。树木收益中的
+材料使用与地面材料相同的本波兑现价格，概率消耗品按当前恢复供给的转化边际价值计价，因此生命越低，
+树木价值会连续提高，无需增加“低血找树”的策略分支。模型在每次规划中一次性建立敌人移除价值账本。
+每个敌人的移除价值等于击杀收益、其直接接触与远程压力负担、来源死亡
 可清除的当前投射物、剩余时间内预期新增敌人造成的负担、强化和治疗对现存
 敌群的负担，再减去波末保留该敌人的收益及其可给玩家提供的治疗机会。所有项先换成材料等价值；武器
 伤害按最大生命比例兑现，接近和导航再乘剩余时间内的可击杀性。
@@ -630,7 +647,7 @@ Godot 性能监视器可能短暂延迟，因此控制层会跳过规划之后�
   `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 - `bot/planning/movement_outcome_predictor.gd` 预测动作结果，`bot/planning/movement_utility_model.gd` 把结果转换为
   效用。`bot/planning/opportunity_value_model.gd` 统一换算材料、消耗品、树木和敌人移除机会的边际价值，
-  并每帧建立共享敌人移除价值账本；
+  并在每次规划中建立共享敌人移除价值账本；
   `bot/planning/spatial_opportunity_value_model.gd` 统一计算局部敌人和导航远场机会的同时间反事实价值差，
   `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量，
   `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线；
@@ -643,9 +660,12 @@ Godot 性能监视器可能短暂延迟，因此控制层会跳过规划之后�
   `bot/observation/remembered_entity_existence_estimator.gd` 估计。观察层只输出语义画像，规划层不读取观察层的
   场景节点或内部实现细节。
 - `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量，
-  `bot/planning/motion/observed_motion_predictor.gd` 负责规划期外推；观察层不得反向依赖规划层。
-- `bot/observation/enemy_volley_observer.gd` 只拥有当前可见敌人的下一轮齐射时间窗；稳定齐射间隔与发射
-  随机性仍由 `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 拥有，避免编译缓存混入战斗期状态。
+  `bot/planning/motion/observed_motion_predictor.gd` 只负责纯观测运动外推；
+  `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 编译稳定目标位置响应与冲撞机制，
+  `bot/planning/motion/enemy_motion_predictor.gd` 将二者合并为敌人候选位置预测。观察层不得反向依赖规划层。
+- `bot/observation/enemy_attack_timing_observer.gd` 只拥有当前可见敌人的下一轮齐射与冲撞时间窗。稳定投射物
+  攻击配置由 `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 拥有；稳定冲撞配置由
+  `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 拥有。两类编译缓存都不得混入战斗期状态。
 - `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
   边界公开帧预算上下文。
 - `bot/planning/planning_compute_budget_policy.gd` 把控制层提供的帧预算上下文转换成计算截止，并维护预算内

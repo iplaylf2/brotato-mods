@@ -35,7 +35,7 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 
 为控制体积，敌人轨迹只保留规划实际消费的 `behavior_profile`，省略重复的行为证据与测量内稳定画像；
 所选动作与高分备选都省略逐采样点暴露轨迹，保留聚合通道、动作路径与效用账本。导航意图记录候选
-位置数、移动偏好、终端价值增益、价值分解和派生空间尺度；每帧共享的逐敌人价值缓存不进入采样。
+位置数、移动偏好、终端价值增益、价值分解和派生空间尺度；单次规划共享的逐敌人价值缓存不进入采样。
 `Vector2` 写成 `{ "x": ..., "y": ... }`，非有限浮点数写成可识别字符串。
 复盘工具应先按 `session_id + player_index + sample_index` 排序，再用
 `decision_index` 和 `physics_frame` 检查缺口。
@@ -146,14 +146,14 @@ TTC cutoff                    = Tnav_effective
    不同设备上的预算利用率、实际扩展数量、掉帧尖峰与行为质量共同校准。瞬时截止表现以
    `planning_duration_budget_utilization` 的 p95/p99 分位数和掉帧频率为验证依据；额外精算价值应比较
    首次出现最终动作的阶段，而不能只比较候选总数。
-4. `OpportunityValueModel` 中树木收获可行性和消耗品掉落机会，以及 `HealthResourceValueModel` 的恢复
-   展望窗、基础生命价值、生存余量曲线和非致命生命的剩余暴露折价，仍需按树木和特殊敌人的实际兑现率、
-   不同构筑下可达消耗品、掉落、被动恢复、生命偷取和被动生命流失的实际兑现率、末段受伤频率及生命
-   收益交换校准。非致命生命折价使用本波剩余比例；恢复展望窗只界定近期替代供给，不得再次充当波末
-   折价窗口。`TerminalCollisionConstraint` 的等价带只处理可能直接结束本局的风险，不得重新扩张为普通
-   承伤预算。
-5. 压力曲线、地图信息兑现价值、机会可达性衰减和控制切换成本决定行为平滑度与取舍，必须比较候选排序、
-   实际受伤、拾取、输出、视口有效面积和方向反转，不能只看最终存活。
+4. `OpportunityValueModel` 中的树木收获可行性、材料兑现价格和消耗品掉落价值，以及
+   `HealthResourceValueModel` 中的恢复展望窗、基础生命价值、生存余量曲线和非致命生命折价，仍需共同
+   校准。样本应覆盖树木与特殊敌人的实际兑现率、不同构筑下各类恢复供给的兑现率、末段受伤频率和生命
+   收益交换。非致命生命按本波剩余比例折价；恢复展望窗只界定近期替代供给，不得再次充当波末折价窗口。
+   `TerminalCollisionConstraint` 的等价带只处理可能直接结束本局的风险，不得扩张为普通承伤预算。
+5. 压力曲线、冲撞时间窗的可达压力、目标位置响应、地图信息兑现价值、机会可达性衰减和控制切换成本
+   共同决定行为平滑度与取舍。校准必须比较候选排序、实际受伤、拾取、输出、视口有效面积和方向反转，
+   不能只看最终存活。
 6. 观察运动的平滑、置信度和记忆不确定性属于估计器参数。校准时必须按“持续可见、刚离开视野、重新
    捕获”分组，避免用不可见期间无法验证的真值倒推合法观察。
 7. `StatOpportunityValueModel` 将诅咒从 `0` 增加到 `1` 的净机会价值基准设为 `0.7` 材料，再按目标版本
@@ -176,19 +176,22 @@ TTC cutoff                    = Tnav_effective
 5. 材料复盘按本波剩余比例分段，比较可见材料数、实际材料增长、`material_acquisition_value` 和有符号
    `material_approach_progress`。再按材料密度比较可达前沿容量、前沿势能变化与实际拾取率，确认密集材料
    不会退化为单个材料的封顶价值。未拾取材料且没有靠近更优前沿时，后者不应继续提供正收益。波末样本
-   还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。
+   还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。不可逆拾取只应来自提交控制期；
+   更长预测窗内尚未发生的拾取必须仍表现为有符号机会进度，材料密集时重点比较逐控制期反转率。
 6. 树木复盘同时比较 `tree_opportunity_progress`、筛选阶段的 `tree_harvest_value_in_range`、完整预测阶段的
    `expected_tree_harvest_value_progress` 及当时的武器时序，不能把进入射程直接当作已经命中或摧毁。战斗
    筛选还应比较 `enemy_removal_value_in_range` 与精确预测结果，确认代理受预测窗内攻击次数和有限伤害容量
-   约束，并确认精确结果没有超过可见目标的总耐久、总移除价值或总收获价值。若筛选第一名在精确预测后
-   收益坍塌，应先修正代理语义；至少两个候选的精算下限只保证结果可比较，不能掩盖代理偏差。同一候选
-   动作可以同时兑现 `material_acquisition_value` 和武器结果，复盘时不得把两类并行收益误判成取舍。
+   约束；树木代理还必须与精算使用相同的当前冷却、移动许可和最近合法目标。确认精确结果没有超过可见
+   目标的总耐久、总移除价值或总收获价值。若筛选第一名在精确预测后收益坍塌，应先修正代理语义；至少
+   两个候选的精算下限只保证结果可比较，不能掩盖代理偏差。同一候选动作可以同时兑现
+   `material_acquisition_value` 和武器结果，复盘时不得把两类并行收益误判成取舍。
 7. 先检查 `decision.candidate_filter`：相对最低值明显更高的终止风险应在武器预测前被拒绝；所有不会直接
    结束本局的普通风险动作仍应显示 `expected_health_loss`，并由统一效用账本与材料、输出、恢复和地图信息
    价值交换。生命资源复盘按本波剩余比例和恢复构筑分层，对照
    `reachable_observed_recovery_supply`、`expected_drop_recovery_supply`、`passive_recovery_supply`、
    `expected_lifesteal_recovery_supply`、`expected_passive_health_drain`、`effective_survival_buffer` 与
-   `marginal_health_value`；确认普通生命价格从波初到波末连续下降、替代供给降低价格，而
+   `marginal_health_value`；确认普通生命价格从波初到波末连续下降、替代供给降低价格，拾取恢复按供给转化
+   的边际价值产生一次收益而不与 `consumed_consumable_recovery_supply` 相消，而
    `terminal_health_value` 不随这些供给折价。
 8. 弯曲弹道应检查解析相位轨迹与扫掠交会，不能用扩大碰撞半径或加大效用权重掩盖外推错误。按“性能
    反馈的可解释范围”检查帧耗时样本、预算利用率、截止超时量、三类预算内工作次数和对应单项

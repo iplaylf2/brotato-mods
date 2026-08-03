@@ -11,8 +11,8 @@ const WeaponAttackPredictor := preload(
 const WeaponFireModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
 )
-const ObservedMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
+const EnemyMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
 const BattlefieldExposureModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_exposure_model.gd"
@@ -44,7 +44,7 @@ const CollisionHealthImpactModel := preload(
 
 var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
 var _weapon_fire_model: Reference = WeaponFireModel.new()
-var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _battlefield_exposure_model: Reference = BattlefieldExposureModel.new()
 var _velocity_obstacle_risk_model: Reference = VelocityObstacleRiskModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
@@ -184,7 +184,12 @@ func complete_prediction(
 	outcome.weapon_prediction_included = include_weapon_prediction
 	if include_weapon_prediction:
 		_weapon_attack_predictor.accumulate_outcome(observation, action, outcome, planning_context)
-	_player_rule_outcome_predictor.accumulate_outcome(observation, action, outcome)
+	_player_rule_outcome_predictor.accumulate_outcome(
+		observation,
+		action,
+		outcome,
+		_samples_through(action.samples, planning_context.control_interval_seconds)
+	)
 	return outcome
 
 
@@ -197,13 +202,20 @@ func _predict_action_outcomes(
 ) -> void:
 	var samples: Array = action.samples
 	assert(not samples.empty())
-	outcome.material_acquisition_value = _material_acquisition_value(observation, samples)
-	outcome.material_approach_progress = _material_approach_progress(observation, samples)
-	outcome.consumable_recovery_approach_progress = _consumable_recovery_approach_progress(
-		observation, samples
+	var committed_samples: Array = _samples_through(
+		samples, planning_context.control_interval_seconds
 	)
-	outcome.tree_opportunity_progress = _tree_opportunity_progress(observation, action)
-	outcome.tree_harvest_value_in_range = _tree_harvest_value_in_range(observation, action)
+	outcome.material_acquisition_value = _material_acquisition_value(observation, committed_samples)
+	outcome.material_approach_progress = _material_approach_progress(observation, committed_samples)
+	outcome.consumable_recovery_approach_progress = _consumable_recovery_approach_progress(
+		observation, committed_samples
+	)
+	outcome.tree_opportunity_progress = _tree_opportunity_progress(
+		observation, action, committed_samples.back().displacement, planning_context
+	)
+	outcome.tree_harvest_value_in_range = _weapon_attack_predictor.estimate_tree_harvest_value(
+		observation, action, planning_context
+	)
 	var final_sample: Dictionary = samples.back()
 	var enemy_approach_value: float = _spatial_opportunity_value_model.local_enemy_value_delta(
 		observation, planning_context, final_sample.displacement, final_sample.time
@@ -311,7 +323,12 @@ func _consumable_recovery_approach_progress(observation: Dictionary, samples: Ar
 	return progress
 
 
-func _tree_opportunity_progress(observation: Dictionary, action: Dictionary) -> float:
+func _tree_opportunity_progress(
+	observation: Dictionary,
+	action: Dictionary,
+	committed_displacement: Vector2,
+	planning_context: Dictionary
+) -> float:
 	var maximum_range: float = _usable_weapon_range(
 		observation.player_state.weapons, action.movement != Vector2.ZERO
 	)
@@ -321,43 +338,27 @@ func _tree_opportunity_progress(observation: Dictionary, action: Dictionary) -> 
 	var reach_distance: float = _movement_geometry.derive(observation).opportunity_reach_distance
 	for tree in observation.visible_world.trees:
 		var initial_distance: float = tree.relative_position.length()
-		var final_distance: float = (tree.relative_position - action.samples.back().displacement).length()
+		var final_distance: float = (tree.relative_position - committed_displacement).length()
 		interaction += (
 			(
 				_interaction_potential(final_distance, maximum_range, reach_distance)
 				- _interaction_potential(initial_distance, maximum_range, reach_distance)
 			)
-			* _opportunity_value_model.tree_reward_value(observation, tree)
+			* _opportunity_value_model.tree_reward_value(
+				observation, tree, planning_context.state_factors.health_resource_value
+			)
 		)
 	return interaction
 
 
-func _tree_harvest_value_in_range(observation: Dictionary, action: Dictionary) -> float:
-	var maximum_range: float = _usable_weapon_range(
-		observation.player_state.weapons, action.movement != Vector2.ZERO
-	)
-	if maximum_range <= 0.0:
-		return 0.0
-	var final_displacement: Vector2 = action.samples.back().displacement
-	var hit_capacity: float = (
-		_weapon_fire_model.expected_hit_rate(
-			observation.player_state.weapons, action.movement != Vector2.ZERO
-		)
-		* action.forecast_seconds
-	)
-	var result := 0.0
-	for tree in observation.visible_world.trees:
-		var final_distance: float = (tree.relative_position - final_displacement).length()
-		if final_distance > maximum_range + tree.get("visual_radius", 0.0):
-			continue
-		var required_hits: float = max(
-			1.0,
-			tree.get("destructible_profile", {}).get("destruction", {}).get("required_hits", 1.0)
-		)
-		result += (
-			_opportunity_value_model.tree_reward_value(observation, tree)
-			* min(1.0, hit_capacity / required_hits)
-		)
+func _samples_through(samples: Array, committed_seconds: float) -> Array:
+	var result := []
+	for sample in samples:
+		if sample.time > committed_seconds + 0.0001:
+			break
+		result.push_back(sample)
+	if result.empty():
+		result.push_back(samples[0])
 	return result
 
 
@@ -403,7 +404,9 @@ func _enemy_removal_value_in_range(
 			for track in observation.enemy_tracks:
 				if not track.visible:
 					continue
-				var predicted_position: Vector2 = _predict_track_position(track, attack_time)
+				var predicted_position: Vector2 = _predict_enemy_position(
+					track, attack_time, player_displacement
+				)
 				var distance: float = (predicted_position - player_displacement).length()
 				if (
 					distance < attack.delivery.minimum_range
@@ -447,14 +450,10 @@ func _sample_displacement(samples: Array, time: float) -> Vector2:
 	return samples.back().displacement
 
 
-func _predict_track_position(track: Dictionary, time: float) -> Vector2:
-	return _motion_predictor.predict_position(
-		track.relative_position,
-		track.estimated_velocity,
-		track.estimated_acceleration,
-		track.motion_confidence,
-		time
-	)
+func _predict_enemy_position(
+	track: Dictionary, time: float, player_displacement := Vector2.ZERO
+) -> Vector2:
+	return _enemy_motion_predictor.predict_position(track, time, player_displacement)
 
 
 func _usable_weapon_range(weapons: Array, is_moving: bool) -> float:

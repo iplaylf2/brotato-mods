@@ -1,6 +1,6 @@
 # 原版敌人与投射物机制参考
 
-本文是 Autopilot 适配 PC 版 Brotato `1.1.15.4` 时的敌人攻击与投射物机制参考，用于判断
+本文是 Autopilot 适配 PC 版 Brotato `1.1.15.4` 时的敌人运动、攻击与投射物机制参考，用于判断
 新机制应由哪个观察或编译入口承接，以及升级目标游戏版本时需要重新检查什么。本文不定义玩家
 权限或模块边界；权限规则见 [玩家权限边界](fair-play.md)，实现责任见 [架构文档](architecture.md)。
 
@@ -9,9 +9,11 @@
 
 ## 机制覆盖边界
 
-Autopilot 按以下入口理解敌人攻击和弹道：
+Autopilot 按以下入口理解敌人运动、攻击和弹道：
 
 - 敌人注册的全部 `ShootingAttackBehavior`，包括普通攻击、附加攻击和 Boss 各阶段攻击；
+- 敌人注册的 `ChargingAttackBehavior`，以及 `FollowTargetMovementBehavior` 和
+  `StayInRangeFromPlayerMovementBehavior`；
 - 敌人节点下常驻的 `EnemyProjectile`；
 - 主敌方投射物容器中的移动、静止和动画危险区；
 - 不属于任何可移除敌人的环境弹幕。
@@ -21,6 +23,8 @@ Autopilot 按以下入口理解敌人攻击和弹道：
 | 入口 | 目标版本内容 |
 | --- | --- |
 | 标准或继承的射击行为 | `spitter`、`horned_spitter`、`junkie`、`dire_junkie`、`fly`、`horned_fly`、`lamprey`、`tentacle`、`slasher`、`mad_slasher`、`butcher`、`colossus`、`croc`、`gargoyle`、`invoker`、`mantis`、`mom`、`monk`、`rhino`、`predator` |
+| 标准冲撞行为 | `charger`、`horned_charger`，以及复用 `ChargingAttackBehavior` 的阶段或扩展内容 |
+| 目标位置响应 | 复用 `FollowTargetMovementBehavior` 或 `StayInRangeFromPlayerMovementBehavior` 的敌人 |
 | 敌人子节点常驻投射物 | 腐化树的单枚旋转投射物；`predator` 的九枚旋转投射物 |
 | 投射物形态 | 普通移动弹、正弦横摆弹、静止或动画斩击区、柱状区域、附着旋转投射物、环境弹幕 |
 | 额外击杀收益 | `looter`、增加诅咒且必掉消耗品的 `evil_mob`，以及其他稳定标记为战利品的敌人 |
@@ -28,10 +32,11 @@ Autopilot 按以下入口理解敌人攻击和弹道：
 ## Autopilot 处理方式
 
 标准射击行为和敌人子节点中的常驻投射物都有可移除的敌人来源。敌人可见后，
-`EnemyMechanicCompiler` 聚合其全部标准射击行为与常驻投射物，编译射程、弹速、弹量、火力强度、投放
-模式、静止危险区、死亡清弹规则、齐射间隔、发射随机边界和最大生命耐久基准。`EnemyVolleyObserver` 另行
-形成当前的下一轮齐射时间窗：无随机冷却时给出确定时间；有随机冷却时只给出稳定范围，不读取尚未通过
-表现揭示的本轮随机结果。
+`EnemyMechanicCompiler` 聚合其标准射击与常驻投射物，并委托 `EnemyMotionMechanicCompiler` 编译冲撞和
+目标位置响应。两者共同形成射程、弹速、弹量、火力强度、投放模式、静止危险区、死亡清弹规则、
+攻击间隔、冲撞可达性、目标响应和最大生命耐久基准。
+`EnemyAttackTimingObserver` 另行形成当前的下一轮齐射与冲撞时间窗：无随机冷却时给出确定时间；有随机
+冷却时只给出稳定范围，不读取尚未通过表现揭示的本轮随机结果。
 
 腐化树和 `predator` 的旋转投射物不在主敌方投射物容器中，因此观察器还会遍历可见敌人的子节点。
 环境弹幕没有可移除的敌人来源，只作为具体可见弹道参与规避，不会产生敌人移除机会。
@@ -63,13 +68,14 @@ Autopilot 按以下入口理解敌人攻击和弹道：
 
 升级目标游戏版本时，应重新检查：
 
-1. 所有引用或继承 `entities/units/enemies/attack_behaviors/shooting_attack_behavior.gd` 的敌人场景；
-2. Boss 状态是否继续通过 `_all_attack_behaviors` 注册；
-3. 敌人场景中是否新增常驻 `EnemyProjectile` 子节点；
-4. 是否出现绕开上述入口、自行生成敌方投射物的敌人脚本；
-5. 投射物容器、运动字段、曲线弹道解析参数、射击随机边界和死亡时清除投射物的规则是否发生变化；
-6. 战利品敌人的基础材料、消耗品掉率、必掉约束和诅咒收益是否变化；
-7. “机制覆盖边界”中的敌人清单和投射物形态是否仍然完整；
-8. 目标版本声明、恢复工程的游戏版本和本文的版本号是否一致。
+1. 所有引用或继承标准射击与冲撞行为脚本的敌人场景；
+2. 跟随目标和与玩家保持距离的移动行为字段及其挂载位置；
+3. Boss 状态是否继续通过 `_all_attack_behaviors` 注册；
+4. 敌人场景中是否新增常驻 `EnemyProjectile` 子节点；
+5. 是否出现绕开上述入口、自行生成敌方投射物的敌人脚本；
+6. 投射物容器、运动字段、曲线弹道解析参数、攻击随机边界和死亡时清除投射物的规则是否发生变化；
+7. 战利品敌人的基础材料、消耗品掉率、必掉约束和诅咒收益是否变化；
+8. “机制覆盖边界”中的敌人清单和投射物形态是否仍然完整；
+9. 目标版本声明、恢复工程的游戏版本和本文的版本号是否一致。
 
 若入口发生变化，先更新机制编译或观察边界，并在目标环境完成验证，再修改目标版本声明。

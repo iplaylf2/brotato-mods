@@ -11,6 +11,7 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 			"ranged_attack_inferred": measurement.ranged_attack_inferred,
 			"visible_removable_projectile_damage": measurement.visible_removable_projectile_damage,
 			"next_volley_window": measurement.next_volley_window.duplicate(true),
+			"next_charge_attack_window": measurement.next_charge_attack_window.duplicate(true),
 		}
 	return {
 		"stable_mechanic_profile": measurement.stable_mechanic_profile.duplicate(true),
@@ -18,15 +19,16 @@ func accumulate_evidence(previous: Dictionary, measurement: Dictionary) -> Dicti
 		previous.ranged_attack_inferred or measurement.ranged_attack_inferred,
 		"visible_removable_projectile_damage": measurement.visible_removable_projectile_damage,
 		"next_volley_window": measurement.next_volley_window.duplicate(true),
+		"next_charge_attack_window": measurement.next_charge_attack_window.duplicate(true),
 	}
 
 
 func build_profile(evidence: Dictionary) -> Dictionary:
-	var attack_behavior: Dictionary = evidence.stable_mechanic_profile.attack_behavior.duplicate(
+	var projectile_attack: Dictionary = evidence.stable_mechanic_profile.projectile_attack.duplicate(
 		true
 	)
-	if attack_behavior.kind == "unconfirmed" and evidence.ranged_attack_inferred:
-		attack_behavior = {
+	if projectile_attack.kind == "unconfirmed" and evidence.ranged_attack_inferred:
+		projectile_attack = {
 			"kind": "ranged_projectile_inferred",
 			"confidence": 0.9,
 			"knowledge_source": "observed_emission",
@@ -36,8 +38,12 @@ func build_profile(evidence: Dictionary) -> Dictionary:
 			"delivery_modes": ["observed_projectile"],
 		}
 	return {
-		"attack_behavior": attack_behavior,
+		"projectile_attack": projectile_attack,
+		"charge_attack": evidence.stable_mechanic_profile.charge_attack.duplicate(true),
+		"target_position_response":
+		evidence.stable_mechanic_profile.target_position_response.duplicate(true),
 		"next_volley_window": evidence.next_volley_window.duplicate(true),
+		"next_charge_attack_window": evidence.next_charge_attack_window.duplicate(true),
 		"durability": evidence.stable_mechanic_profile.durability.duplicate(true),
 		"contact_damage": evidence.stable_mechanic_profile.contact_damage,
 		"kill_rewards": evidence.stable_mechanic_profile.kill_rewards.duplicate(true),

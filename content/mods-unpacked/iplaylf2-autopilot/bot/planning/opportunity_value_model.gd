@@ -32,9 +32,23 @@ func material_collection_value(observation: Dictionary) -> float:
 	return 1.0 + (1.0 - remaining_ratio)
 
 
-func tree_reward_value(observation: Dictionary, tree: Dictionary) -> float:
+func tree_reward_value(observation: Dictionary, tree: Dictionary, health_value := {}) -> float:
 	var rewards: Dictionary = tree.get("destructible_profile", {}).get("kill_rewards", {})
 	var kill_value := kill_reward_value(observation, rewards)
+	# Tree materials are still wave pickups, so their timing value must use the
+	# same price as already visible materials. A possible consumable also carries
+	# the current value of converting replacement supply into health; a fixed
+	# "fruit bonus" cannot express the low-health case.
+	kill_value += (
+		max(0.0, rewards.get("base_materials", 0.0))
+		* (material_collection_value(observation) - 1.0)
+	)
+	if not health_value.empty():
+		kill_value += (
+			_consumable_drop_chance(observation, rewards)
+			* health_value.get("maximum_consumable_recovery", 0.0)
+			* health_value.get("recovery_conversion_value", 0.0)
+		)
 	return (
 		max(0.0, kill_value - _living_tree_preservation_value(observation))
 		* tree_harvest_feasibility(observation, tree)
@@ -151,17 +165,20 @@ func consumable_recovery_value(observation: Dictionary, consumable: Dictionary) 
 
 func kill_reward_value(observation: Dictionary, rewards: Dictionary) -> float:
 	var value: float = max(0.0, rewards.get("base_materials", 0.0))
-	var drop_chance: float = clamp(rewards.get("consumable_drop_chance", 0.0), 0.0, 1.0)
-	if rewards.get("guaranteed_consumable", false):
-		drop_chance = 1.0
-	else:
-		var luck: float = observation.player_state.effective_stats.luck
-		drop_chance = clamp(drop_chance * max(0.0, 1.0 + luck / 100.0), 0.0, 1.0)
+	var drop_chance: float = _consumable_drop_chance(observation, rewards)
 	value += drop_chance * CONSUMABLE_DROP_OPPORTUNITY_VALUE
 	value += _stat_opportunity_value_model.value(
 		observation, rewards.get("player_stat_changes", [])
 	)
 	return value
+
+
+func _consumable_drop_chance(observation: Dictionary, rewards: Dictionary) -> float:
+	if rewards.get("guaranteed_consumable", false):
+		return 1.0
+	var chance: float = rewards.get("consumable_drop_chance", 0.0)
+	var luck: float = observation.player_state.effective_stats.luck
+	return clamp(chance * max(0.0, 1.0 + luck / 100.0), 0.0, 1.0)
 
 
 func _visible_projectile_cleanup_value(
@@ -187,10 +204,10 @@ func _visible_projectile_cleanup_value(
 func _direct_enemy_pressure(observation: Dictionary, track: Dictionary) -> float:
 	var maximum_player_health: float = max(1.0, observation.player_state.health.maximum)
 	var contact_pressure: float = track.behavior_profile.contact_damage / maximum_player_health
-	var attack: Dictionary = track.behavior_profile.attack_behavior
+	var projectile_attack: Dictionary = track.behavior_profile.projectile_attack
 	var ranged_pressure: float = (
-		attack.get("pressure_intensity", 0.0) * attack.get("confidence", 0.0)
-		if attack.get("creates_projectile_pressure", false)
+		projectile_attack.get("pressure_intensity", 0.0) * projectile_attack.get("confidence", 0.0)
+		if projectile_attack.get("creates_projectile_pressure", false)
 		else 0.0
 	)
 	return contact_pressure + ranged_pressure

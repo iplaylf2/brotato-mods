@@ -11,8 +11,8 @@ const ObservedMotionEstimator := preload(
 const EnemyMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_mechanic_compiler.gd"
 )
-const EnemyVolleyObserver := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/enemy_volley_observer.gd"
+const EnemyAttackTimingObserver := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/enemy_attack_timing_observer.gd"
 )
 const StructureMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/structures/structure_mechanic_compiler.gd"
@@ -34,7 +34,7 @@ var _main: Node
 var _players: Array
 var _motion_estimators := []
 var _enemy_mechanic_compiler: Reference = EnemyMechanicCompiler.new()
-var _enemy_volley_observer: Reference = EnemyVolleyObserver.new()
+var _enemy_attack_timing_observer: Reference = EnemyAttackTimingObserver.new()
 var _structure_mechanic_compiler: Reference = StructureMechanicCompiler.new()
 var _ally_mechanic_compiler: Reference = AllyMechanicCompiler.new()
 var _consumable_profile_adapter: Reference = ConsumableProfileAdapter.new()
@@ -70,11 +70,10 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 		var emitted_projectiles: Array = projectile_emissions_by_source.get(enemy._source, [])
 		enemy.features.ranged_attack_inferred = not emitted_projectiles.empty()
 		enemy.features.visible_removable_projectile_damage = 0.0
-		var attack: Dictionary = enemy.features.stable_mechanic_profile.attack_behavior
-		if attack.get("all_projectiles_removed_on_death", false):
+		var projectile_attack: Dictionary = enemy.features.stable_mechanic_profile.projectile_attack
+		if projectile_attack.get("all_projectiles_removed_on_death", false):
 			for projectile in emitted_projectiles:
 				enemy.features.visible_removable_projectile_damage += projectile.contact_damage
-
 	return {
 		# Internal inputs for observed world memory; never expose them through the service.
 		"enemy_observations": enemies,
@@ -118,7 +117,10 @@ func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 				{
 					"visual_radius": _get_visual_radius(enemy),
 					"stable_mechanic_profile": _enemy_mechanic_compiler.compile(enemy),
-					"next_volley_window": _enemy_volley_observer.observe(enemy),
+					"next_volley_window":
+					_enemy_attack_timing_observer.observe_projectile_volley_window(enemy),
+					"next_charge_attack_window":
+					_enemy_attack_timing_observer.observe_charge_attack_window(enemy),
 					"ranged_attack_inferred": false,
 				},
 			}

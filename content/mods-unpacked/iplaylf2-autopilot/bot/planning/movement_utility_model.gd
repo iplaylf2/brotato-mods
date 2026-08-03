@@ -61,8 +61,8 @@ func build_context(observation: Dictionary) -> Dictionary:
 					if recovery_profile.consumable_available
 					else 0.0
 				),
-				"expected_recovery": health_price,
-				"consumed_consumable_recovery_supply": -health_value.recovery_supply_value,
+				"expected_recovery": health_value.recovery_conversion_value,
+				"consumed_consumable_recovery_supply": 0.0,
 				"integrated_allied_healing_support":
 				health_value.recovery_conversion_value if recovery_profile.available else 0.0,
 			},
@@ -190,7 +190,9 @@ func _information_value_per_viewport(
 		)
 		observation_count += 1
 	for tree in observation.visible_world.trees:
-		observed_value += _opportunity_value_model.tree_reward_value(observation, tree)
+		observed_value += _opportunity_value_model.tree_reward_value(
+			observation, tree, health_value
+		)
 		observation_count += 1
 	if not observation.enemy_tracks.empty():
 		observed_value += (

@@ -4,8 +4,8 @@ extends Reference
 # score movement only; this module never invokes or mutates weapons, targets, or
 # attacks.
 
-const ObservedMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
+const EnemyMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
 const WeaponFireModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_fire_model.gd"
@@ -17,10 +17,59 @@ const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
 
-var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _weapon_fire_model: Reference = WeaponFireModel.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
+
+
+# Screening uses the same current cooldown, legal primary target, and movement
+# permission as exact prediction. It estimates only direct tree hits and avoids
+# the old average-fire-rate proxy that routinely collapsed to zero in exact scoring.
+func estimate_tree_harvest_value(
+	observation: Dictionary, action: Dictionary, planning_context: Dictionary
+) -> float:
+	var result := 0.0
+	var harvested_hits := {}
+	for observed_weapon in observation.player_state.weapons:
+		if (
+			action.movement != Vector2.ZERO
+			and not observed_weapon.attack_model.timing.permitted_while_moving
+		):
+			continue
+		var attack_model: Dictionary = _movement_state_projector.project_attack_model(
+			observed_weapon, observation, action.movement != Vector2.ZERO
+		)
+		var shot_times: Array = _weapon_fire_model.scheduled_attack_times(
+			attack_model, 0.0, action.forecast_seconds
+		)
+		for shot_time in shot_times:
+			var displacement: Vector2 = _sample_displacement(action.samples, shot_time)
+			var targets := _targets_at_time(observation, displacement, shot_time, planning_context)
+			var primary: Dictionary = _nearest_legal_target(
+				targets,
+				attack_model.delivery.minimum_range,
+				attack_model.delivery.maximum_range + 50.0
+			)
+			if primary.empty() or primary.kind != "tree":
+				continue
+			var required_hits: float = max(1.0, primary.required_hits)
+			var remaining_hits: float = max(
+				0.0, required_hits - harvested_hits.get(primary.track_id, 0.0)
+			)
+			var expected_hits: float = min(
+				remaining_hits,
+				(
+					max(1.0, float(attack_model.delivery.paths.count))
+					* clamp(attack_model.delivery.paths.primary_probability_floor, 0.0, 1.0)
+				)
+			)
+			harvested_hits[primary.track_id] = (
+				harvested_hits.get(primary.track_id, 0.0)
+				+ expected_hits
+			)
+			result += expected_hits / required_hits * primary.harvest_value
+	return result
 
 
 func accumulate_outcome(
@@ -89,7 +138,9 @@ func _cap_forecast_outcome(
 	)
 	var total_tree_harvest_value := 0.0
 	for tree in observation.visible_world.trees:
-		total_tree_harvest_value += _opportunity_value_model.tree_reward_value(observation, tree)
+		total_tree_harvest_value += _opportunity_value_model.tree_reward_value(
+			observation, tree, planning_context.state_factors.health_resource_value
+		)
 	outcome.expected_tree_harvest_value_progress = clamp(
 		outcome.expected_tree_harvest_value_progress, 0.0, total_tree_harvest_value
 	)
@@ -447,7 +498,7 @@ func _targets_at_time(
 			{
 				"kind": "enemy",
 				"track_id": track.track_id,
-				"position": _predict_track_position(track, time) - displacement,
+				"position": _predict_enemy_position(track, time, displacement) - displacement,
 				"radius": track.last_measurement.visual_radius,
 				"maximum_health": maximum_health,
 				"removal_value_per_health":
@@ -474,7 +525,10 @@ func _targets_at_time(
 						"required_hits", 1.0
 					)
 				),
-				"harvest_value": _opportunity_value_model.tree_reward_value(observation, tree),
+				"harvest_value":
+				_opportunity_value_model.tree_reward_value(
+					observation, tree, planning_context.state_factors.health_resource_value
+				),
 			}
 		)
 	return targets
@@ -510,14 +564,10 @@ func _sample_displacement(samples: Array, time: float) -> Vector2:
 	return samples.back().displacement
 
 
-func _predict_track_position(track: Dictionary, time: float) -> Vector2:
-	return _motion_predictor.predict_position(
-		track.relative_position,
-		track.estimated_velocity,
-		track.estimated_acceleration,
-		track.motion_confidence,
-		time
-	)
+func _predict_enemy_position(
+	track: Dictionary, time: float, player_displacement := Vector2.ZERO
+) -> Vector2:
+	return _enemy_motion_predictor.predict_position(track, time, player_displacement)
 
 
 func _empty_attack_outcome() -> Dictionary:

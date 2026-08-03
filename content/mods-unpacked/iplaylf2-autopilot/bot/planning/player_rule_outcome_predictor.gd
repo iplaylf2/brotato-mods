@@ -3,8 +3,8 @@ extends Reference
 # Converts declarative player rules into action outcomes using only the
 # public observation and candidate path geometry.
 
-const ObservedMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
+const EnemyMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
 const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
@@ -16,23 +16,25 @@ const StatOpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
 )
 
-var _motion_predictor: Reference = ObservedMotionPredictor.new()
+var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
 
 
-func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
+func accumulate_outcome(
+	observation: Dictionary, action: Dictionary, outcome: Dictionary, committed_samples: Array
+) -> void:
 	outcome.expected_recovery = _rule_projector.project_recovery(
 		observation.player_state.effect_rules, "healing", outcome.expected_recovery
 	)
 	if outcome.expected_recovery <= 0.0:
 		outcome.expected_recovery_events = 0.0
 	var material_events := _pickup_events(
-		observation.visible_world.materials, action.samples, observation.player_state.pickup
+		observation.visible_world.materials, committed_samples, observation.player_state.pickup
 	)
 	var consumable_events := _pickup_events(
-		observation.visible_world.consumables, action.samples, observation.player_state.pickup
+		observation.visible_world.consumables, committed_samples, observation.player_state.pickup
 	)
 	for event in material_events:
 		var recovery_before: float = outcome.expected_recovery
@@ -206,7 +208,9 @@ func _first_incoming_hit_event(observation: Dictionary, samples: Array) -> Dicti
 		for track in observation.enemy_tracks:
 			if not track.visible:
 				continue
-			var enemy_position: Vector2 = _predict_track_position(track, sample.time)
+			var enemy_position: Vector2 = _predict_enemy_position(
+				track, sample.time, sample.displacement
+			)
 			var collision_radius: float = (
 				observation.player_state.collision_radius
 				+ track.last_measurement.visual_radius
@@ -247,7 +251,7 @@ func _delivered_enemy_weight(tracks: Array, delivery: Dictionary, event: Diction
 	for track in tracks:
 		if not track.visible:
 			continue
-		var enemy_position := _predict_track_position(track, event.time)
+		var enemy_position := _predict_enemy_position(track, event.time, event.player_displacement)
 		if enemy_position.distance_to(center) <= radius + track.last_measurement.visual_radius:
 			result += track.recency_confidence
 	return min(result, max(0.0, delivery.capacity_per_event))
@@ -267,11 +271,7 @@ func _condition_matches(condition: Dictionary, event: Dictionary, observation: D
 	return true
 
 
-func _predict_track_position(track: Dictionary, time: float) -> Vector2:
-	return _motion_predictor.predict_position(
-		track.relative_position,
-		track.estimated_velocity,
-		track.estimated_acceleration,
-		track.motion_confidence,
-		time
-	)
+func _predict_enemy_position(
+	track: Dictionary, time: float, player_displacement := Vector2.ZERO
+) -> Vector2:
+	return _enemy_motion_predictor.predict_position(track, time, player_displacement)
