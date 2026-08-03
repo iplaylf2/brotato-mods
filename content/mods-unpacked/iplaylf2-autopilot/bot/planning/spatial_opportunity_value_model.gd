@@ -81,12 +81,15 @@ func _evaluate_remote_position(
 
 
 func value_delta(
-	observation: Dictionary, context: Dictionary, player_displacement: Vector2, time: float
+	observation: Dictionary,
+	context: Dictionary,
+	player_displacement: Vector2,
+	time: float,
+	stationary := {}
 ) -> Dictionary:
 	var geometry: Dictionary = _movement_geometry.derive(observation)
-	var stationary: Dictionary = _evaluate_remote_position(
-		observation, context, Vector2.ZERO, time, geometry
-	)
+	if stationary.empty():
+		stationary = _evaluate_remote_position(observation, context, Vector2.ZERO, time, geometry)
 	var candidate: Dictionary = _evaluate_remote_position(
 		observation, context, player_displacement, time, geometry
 	)
@@ -97,6 +100,12 @@ func value_delta(
 		"enemy_opportunity": candidate.enemy_opportunity - stationary.enemy_opportunity,
 		"total": candidate.total - stationary.total,
 	}
+
+
+func stationary_value(observation: Dictionary, context: Dictionary, time: float) -> Dictionary:
+	return _evaluate_remote_position(
+		observation, context, Vector2.ZERO, time, _movement_geometry.derive(observation)
+	)
 
 
 func local_enemy_value_delta(

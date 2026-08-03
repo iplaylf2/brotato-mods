@@ -1,22 +1,17 @@
 extends Reference
 
-# Converts measured physics-frame headroom into a deadline-gated compute budget.
-# Baseline planning may cross the deadline; budgeted work must leave a guard
-# based on its observed unit duration.
+# Converts measured physics-frame headroom into a deadline and a continuous
+# budget-pressure signal. It owns time admission only; search breadth belongs
+# to PlanningSearchFidelityAllocator and collision sampling remains geometric.
 
 const PLANNING_DURATION_EMA_SAMPLE_WEIGHT := 0.25
 const WORK_UNIT_DURATION_EMA_SAMPLE_WEIGHT := 0.25
 const BASELINE_DEVIATION_RESERVE := 2.0
 const DEFAULT_WORK_UNIT_DURATION_USEC := 150.0
 const DEADLINE_GUARD_MULTIPLIER := 1.5
-const NAVIGATION_DEADLINE_FRACTION := 0.2
-const MOVEMENT_REFINEMENT_DEADLINE_FRACTION := 0.6
 const WORK_NAVIGATION_EVALUATION := "navigation_evaluation"
 const WORK_MOVEMENT_REFINEMENT := "movement_refinement"
 const WORK_WEAPON_PREDICTION := "weapon_prediction"
-const QUALITY_FULL := "full"
-const QUALITY_CONSTRAINED := "constrained"
-const QUALITY_CRITICAL := "critical"
 
 var _planning_duration_usec_ema := 0.0
 var _has_planning_duration_estimate := false
@@ -25,7 +20,7 @@ var _frame_budget_context := {}
 
 
 func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
-	_frame_budget_context = frame_budget_context.duplicate(true)
+	_frame_budget_context = frame_budget_context.duplicate(false)
 
 
 func allocate(planning_started_usec: int) -> Dictionary:
@@ -39,20 +34,22 @@ func allocate(planning_started_usec: int) -> Dictionary:
 		if has_deadline
 		else planning_started_usec
 	)
-	var quality_mode := _quality_mode(planning_budget_usec)
+	var budget_pressure := _budget_pressure(planning_budget_usec)
 	return {
-		"allocation_mode": "deadline_gated",
-		"quality_mode": quality_mode,
+		"budget_model": "measured_frame_headroom",
+		"budget_pressure": budget_pressure,
 		"has_deadline": has_deadline,
 		"planning_started_usec": planning_started_usec,
 		"planning_deadline_usec": planning_deadline_usec,
-		"navigation_deadline_usec":
-		planning_started_usec + int(planning_budget_usec * NAVIGATION_DEADLINE_FRACTION),
-		"movement_refinement_deadline_usec":
-		planning_started_usec + int(planning_budget_usec * MOVEMENT_REFINEMENT_DEADLINE_FRACTION),
 		"planning_duration_budget_usec": planning_budget_usec,
 		"planning_duration_usec_ema":
 		_planning_duration_usec_ema if _has_planning_duration_estimate else null,
+		"predicted_planning_budget_utilization":
+		(
+			null
+			if not _has_planning_duration_estimate or planning_budget_usec <= 0.0
+			else _planning_duration_usec_ema / planning_budget_usec
+		),
 		"physics_frame_capacity_usec":
 		_frame_budget_context.get("physics_frame_capacity_usec", 0.0),
 		"baseline_physics_duration_usec_ema":
@@ -65,33 +62,32 @@ func allocate(planning_started_usec: int) -> Dictionary:
 	}
 
 
-func _quality_mode(planning_budget_usec: float) -> String:
+func _budget_pressure(planning_budget_usec: float) -> float:
+	if not _frame_budget_context.get("has_frame_time_sample", false):
+		return 0.0
+	if planning_budget_usec <= 0.0:
+		return 1.0
 	if not _has_planning_duration_estimate:
-		return QUALITY_FULL
-	if planning_budget_usec <= 0.0 or _planning_duration_usec_ema >= planning_budget_usec:
-		return QUALITY_CRITICAL
-	if _planning_duration_usec_ema >= planning_budget_usec * 0.72:
-		return QUALITY_CONSTRAINED
-	return QUALITY_FULL
+		return 0.0
+	var utilization: float = _planning_duration_usec_ema / planning_budget_usec
+	# Squaring leaves headroom for ordinary variation, then increases pressure
+	# smoothly as predicted planning time approaches the available frame budget.
+	return pow(min(utilization, 1.0), 2.0)
 
 
-func can_start_budgeted_work(compute_budget: Dictionary, work_kind: String) -> bool:
+func can_start_budgeted_work(
+	compute_budget: Dictionary, work_kind: String, work_unit_count: int = 1
+) -> bool:
 	if not compute_budget.has_deadline:
 		return false
-	var deadline_key := ""
-	if work_kind == WORK_NAVIGATION_EVALUATION:
-		deadline_key = "navigation_deadline_usec"
-	elif work_kind == WORK_MOVEMENT_REFINEMENT:
-		deadline_key = "movement_refinement_deadline_usec"
-	elif work_kind == WORK_WEAPON_PREDICTION:
-		deadline_key = "planning_deadline_usec"
-	else:
-		return false
-	var deadline_usec: int = int(compute_budget[deadline_key])
+	var deadline_usec: int = int(compute_budget.planning_deadline_usec)
 	var estimated_duration: float = _work_unit_duration_usec_ema.get(
 		work_kind, DEFAULT_WORK_UNIT_DURATION_USEC
 	)
-	return OS.get_ticks_usec() + int(estimated_duration * DEADLINE_GUARD_MULTIPLIER) < deadline_usec
+	return (
+		OS.get_ticks_usec() + int(estimated_duration * work_unit_count * DEADLINE_GUARD_MULTIPLIER)
+		< deadline_usec
+	)
 
 
 func observe_work_duration(work_kind: String, duration_usec: float) -> void:
@@ -130,9 +126,7 @@ func _planning_duration_budget_usec() -> float:
 	var baseline_deviation: float = _frame_budget_context.get(
 		"physics_duration_deviation_usec_ema", 0.0
 	)
-	var scheduled_planner_count: int = max(
-		1, int(_frame_budget_context.get("scheduled_planner_count", 1))
-	)
+	var scheduled_planner_count: int = int(_frame_budget_context.scheduled_planner_count)
 	return (
 		max(
 			0.0,

@@ -15,6 +15,7 @@ const OpportunityValueModel := preload(
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _health_resource_value_model: Reference = HealthResourceValueModel.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _scoring_schema_validated := false
 
 
 func build_context(observation: Dictionary) -> Dictionary:
@@ -62,7 +63,11 @@ func build_context(observation: Dictionary) -> Dictionary:
 					else 0.0
 				),
 				"expected_recovery": health_value.recovery_conversion_value,
-				"consumed_consumable_recovery_supply": 0.0,
+				# Replacement supply lowers the shadow price of taking damage. Charging
+				# that same price when a pickup is consumed puts insurance and consumption
+				# on one ledger instead of letting the same reserve be valued twice.
+				"consumed_consumable_recovery_supply": -health_value.recovery_supply_value,
+				"consumed_single_use_support_supply": -health_price,
 				"integrated_allied_healing_support":
 				health_value.recovery_conversion_value if recovery_profile.available else 0.0,
 			},
@@ -83,6 +88,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"expected_enemy_removal_value_progress": 1.0,
 				"enemy_removal_value_approach_progress": 1.0,
 				"expected_rule_damage": removal_value_ledger.mean_value_per_health,
+				"expected_allied_damage": removal_value_ledger.mean_value_per_health,
 			},
 			"navigation": {"navigation_terminal_value_gain": 1.0},
 			# This is a switching cost, not a goal preference.
@@ -95,7 +101,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"economy": {"tree_harvest_value_in_range": 1.0},
 			"combat": {"enemy_removal_value_in_range": 1.0},
 		},
-		"exposure_policy":
+		"environmental_pressure_weights":
 		{
 			"enemy_proximity": 1.0,
 			"enemy_contact": 1.0,
@@ -122,8 +128,9 @@ func build_context(observation: Dictionary) -> Dictionary:
 		},
 		"enemy_removal_value_ledger": removal_value_ledger,
 	}
-	if OS.is_debug_build():
+	if OS.is_debug_build() and not _scoring_schema_validated:
 		_assert_valid_scoring_schema(context)
+		_scoring_schema_validated = true
 	return context
 
 

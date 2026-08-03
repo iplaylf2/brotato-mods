@@ -14,8 +14,8 @@ const WeaponFireModel := preload(
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
-const BattlefieldExposureModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_exposure_model.gd"
+const BattlefieldInfluenceModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 )
 const VelocityObstacleRiskModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/velocity_obstacle_risk_model.gd"
@@ -48,7 +48,7 @@ const CollisionHealthImpactModel := preload(
 var _weapon_attack_predictor: Reference = WeaponAttackPredictor.new()
 var _weapon_fire_model: Reference = WeaponFireModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
-var _battlefield_exposure_model: Reference = BattlefieldExposureModel.new()
+var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
 var _velocity_obstacle_risk_model: Reference = VelocityObstacleRiskModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
@@ -58,34 +58,6 @@ var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
 var _spatial_opportunity_value_model: Reference = SpatialOpportunityValueModel.new()
 var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
-
-
-func predict_collision_outcome(
-	observation: Dictionary, action: Dictionary, planning_context: Dictionary
-) -> Dictionary:
-	var result: Dictionary = _battlefield_exposure_model.predict_collision(
-		observation, action, planning_context.exposure_policy
-	)
-	result.merge(_velocity_obstacle_risk_model.evaluate(observation, action), true)
-	result.collision_risk = max(result.peak_path_collision_risk, result.velocity_obstacle_risk)
-	result.hostile_collision_risk = max(
-		result.peak_path_collision_risk, result.hostile_velocity_obstacle_risk
-	)
-	var predicted_hit_damage: float = max(
-		result.maximum_path_collision_damage, result.maximum_velocity_obstacle_damage
-	)
-	result.merge(
-		_collision_health_impact_model.evaluate(
-			observation,
-			action,
-			result.hostile_collision_risk,
-			result.integrated_hostile_collision_risk,
-			predicted_hit_damage,
-			planning_context.state_factors.positive_damage_is_terminal_rule
-		),
-		true
-	)
-	return result
 
 
 func predict(
@@ -118,7 +90,9 @@ func predict_base(
 		"consumable_recovery_approach_progress": 0.0,
 		"wasted_consumable_recovery": 0.0,
 		"consumed_consumable_recovery_supply": 0.0,
+		"consumed_single_use_support_supply": 0.0,
 		"expected_weapon_damage": 0.0,
+		"expected_allied_damage": 0.0,
 		"expected_enemy_removal_value_progress": 0.0,
 		"enemy_removal_value_approach_progress": 0.0,
 		"enemy_removal_value_in_range": 0.0,
@@ -144,8 +118,8 @@ func predict_base(
 		"expected_health_loss": 0.0,
 		"terminal_collision_risk": 0.0,
 	}
-	var battlefield_outcome: Dictionary = _battlefield_exposure_model.predict(
-		observation, action, planning_context.exposure_policy
+	var battlefield_outcome: Dictionary = _battlefield_influence_model.predict(
+		observation, action, planning_context.environmental_pressure_weights
 	)
 	outcome.merge(battlefield_outcome, true)
 	outcome.merge(_velocity_obstacle_risk_model.evaluate(observation, action), true)

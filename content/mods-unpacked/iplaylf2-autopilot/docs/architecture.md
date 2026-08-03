@@ -11,7 +11,7 @@
 | 修改公共数据或记忆语义 | [观察契约](#观察契约) | [玩家权限边界](fair-play.md) |
 | 接入版本机制 | [机制知识](#机制知识) | [敌人与投射物参考](vanilla-enemy-mechanics.md)、[道具与武器审计](vanilla-item-weapon-mechanics.md) |
 | 修改决策行为或诊断字段 | [滚动规划](#滚动规划) | [决策采样与模型校准](model-calibration.md) |
-| 调整性能预算或排查掉帧 | [截止准入与质量降级](#截止准入与质量降级) | [性能反馈的可解释范围](model-calibration.md#性能反馈的可解释范围) |
+| 调整性能预算或排查掉帧 | [截止准入与连续保真度](#截止准入与连续保真度) | [性能反馈的可解释范围](model-calibration.md#性能反馈的可解释范围) |
 | 调整文件归属或依赖方向 | [模块责任](#模块责任) | — |
 
 ## 运行链路
@@ -167,8 +167,9 @@ visible_world
 ### 友方角色与构筑物
 
 可见构筑物由 `visible_world.structures` 单独表示，并带有与投射物相同的当前运动字段；这使游走机器人
-一类移动作用区也只能按已观察运动外推。`influence.pressure_relief` 描述炮塔射程、地雷一次性爆炸区或
-减速场，`influence.healing_support` 描述治疗覆盖；公共画像只公开半径、相对强度、激活约束、是否一次性、
+一类移动作用区也只能按已观察运动外推。`influence.combat_support` 描述炮塔射程、地雷一次性爆炸区或
+减速场，`influence.healing_support` 描述治疗覆盖；战斗支援分别公开玩家启用半径、玩家/敌人触发半径，
+避免把持续启用条件与一次性触发事件混为一谈。公共画像还公开作用半径、相对强度、是否一次性、
 同时目标容量和是否依赖恢复机会。花园已经生成的果实通过可见消耗品参与规划，不把未知冷却或未来产出
 提前计分。
 
@@ -291,7 +292,8 @@ visible_world
 ### 友方与构筑物作用画像
 
 `AllyMechanicCompiler` 与 `StructureMechanicCompiler` 把可见玩家、宠物和构筑物编译为同一类数值化
-作用区；它们可以在机制编译边界识别原版类型，但规划层只接收几何、强度、激活、容量和恢复机会约束。
+作用区；它们可以在机制编译边界识别原版类型，但规划层只接收几何、强度、启用条件、触发条件、容量和
+恢复机会约束。
 两者都不读取当前目标、冷却、生命或未知的未来产出。
 
 ## 滚动规划
@@ -306,9 +308,9 @@ visible_world
 
 1. 控制器提供由实测物理帧耗时形成的帧预算上下文。规划器先用保守位移上界排除在导航时域内无法影响
    玩家可达区域的投射物；敌人因缺少统一机动上界而全部保留。计算预算政策再把每位存活玩家可用的
-   帧余量转换为阶段截止和搜索质量级别；近场时间采样和八方向动作基线始终保持碰撞分辨率，持续过载时
-   优先收缩远场导航与附加精算。
-2. 导航意图规划器以同一终点总价值比较原点、均匀基线方向、正价值机会的精确方向和预算内角区间；
+   帧余量转换为最终截止和连续预算压力。搜索保真度分配器再按对象最早可能产生物理影响的时间分配搜索广度：
+   近场随预算压力下降较慢，远场下降较快；零输入、价值模型给出的导航方向和碰撞时间采样始终保留。
+2. 导航意图规划器以同一终点总价值比较原点、均匀基线方向、正价值机会的精确方向和额外角区间；
    机会方向提高搜索分辨率。每个终点同时计算材料、恢复、树木、敌人、地图信息和环境暴露的价值差；
    动态敌人与环境暴露都以同一未来时刻的零输入状态为反事实基线，只把玩家移动实际改变的部分归给动作。
    地图项直接使用候选视口覆盖的有效地图面积与未知前沿面积，
@@ -322,17 +324,18 @@ visible_world
    不会给波次结束后无法发生的收益或碰撞计价。较近威胁不会反向截短时间域。角向分辨率使相邻指令
    经过一个提交期后的端点间距不超过玩家半径；时间采样使相邻玩家位移不超过碰撞直径，确定性曲线弹的
    相位步长不超过 `π/2`。
-5. 全部动作先经过碰撞结果投影；该阶段只遍历敌人和投射物，不计算炮塔、地雷、治疗、拾取或经济规则。
-   碰撞风险取位置域扫掠证据与速度空间 TTC 证据的较大值，同一次交会不会因两个检测器都发现它而相加；
-   位置域投射物使用扫掠线段，避免高速弹体穿过采样间隙。
+5. 每个动作只生成一次不含自动武器攻击的基础结果，筛选评分直接复用该结果，不再重复战场与速度障碍
+   预测。碰撞风险取位置域扫掠证据与速度空间 TTC 证据的较大值，同一次
+   交会不会因两个检测器都发现它而相加；位置域投射物使用扫掠线段，避免高速弹体穿过采样间隙。
 6. 峰值碰撞与累计接触证据先按可见威胁伤害、候选移动状态下的护甲/闪避、命中保护、原版最短无敌帧
-   间隔和当前生命换算为预期生命损失。只有可能直接结束本局的碰撞形成硬可行域：约束保留最低终止风险
-   等价带。所有普通预期掉血都进入统一效用账本，与材料、恢复、交战和信息收益交换。
-   八方向基线与导航偏好方向继续完整计分；只有在碰撞几何派生的更细角度提供更低风险逃生能力时，才将
-   对应方向加入基线评价，等风险冗余角度不重复运行昂贵预测。
-7. 在动作细分截止前，规划器围绕当前高分动作的相邻角区间插入中点，逐个执行碰撞投影和不含武器攻击的
-   完整评分。最终可行候选按筛选分数排序；所有质量档在存在足够候选时都至少精确预测前两个候选，使
-   武器结果可以改变动作选择，而不只是改写唯一候选的诊断。其余候选仅在最终规划截止前继续预测。
+   间隔和当前生命换算为预期生命损失；可能耗尽生命的部分另以未折价的终止风险价格进入同一效用账本。
+   规划器不在效用账本外设置碰撞硬筛选，因此承伤、材料、恢复、交战和信息收益使用同一选择语义。
+   按搜索保真度保留的均匀基线与导航偏好方向继续完整计分。均匀格点数量虽是整数，但由连续曲线取整产生，
+   不存在共享的质量档或跨模块档位分支。
+7. 在最终截止与当轮搜索保真度给出的精炼额度内，规划器围绕当前高分动作的相邻角区间插入中点，逐个
+   执行碰撞投影和不含武器攻击的完整评分。候选按筛选分数排序；只有截止能同时容纳两个武器预测时才进入精确比较，
+   其余候选在截止前继续预测。无法形成两个可比精确结果时，所有候选统一沿用筛选代理，不混用两种评分
+   语义。
    未做精确武器预测时，预测窗内真实可执行的攻击次数和有限伤害容量
    形成敌人移除价值筛选代理；树木代理复用当前冷却、移动攻击许可和最近合法目标，只省略次级投送与
    规则结果。精确结果出现后，对应代理退出评分。
@@ -343,9 +346,10 @@ visible_world
 
 进入最终动作选择的量按责任而不是按数据来源划分为最小基底：环境暴露、碰撞风险、已经实现的事件结果、
 局部未实现进度、预测窗外的导航终端值，以及控制连续性。一个事实可以被多个预测器观察，但只能由一个
-评分量拥有其决策含义：位置扫掠和 VO 都是碰撞检测证据，合并后才计分；实际拾取消耗品只形成
-`expected_recovery`，未触发拾取的靠近才形成 `consumable_recovery_approach_progress`；满血或溢出拾取
-造成的恢复机会损失形成 `wasted_consumable_recovery`。不可逆拾取只在本次实际提交的控制期内确认为
+评分量拥有其决策含义：位置扫掠和 VO 都是碰撞检测证据，合并后才计分；实际拾取消耗品形成
+`expected_recovery`，并由 `consumed_consumable_recovery_supply` 结清离开地图的恢复储备；未触发拾取的
+靠近才形成 `consumable_recovery_approach_progress`，满血或溢出拾取造成的恢复机会损失另由
+`wasted_consumable_recovery` 诊断。不可逆拾取只在本次实际提交的控制期内确认为
 事件；提交期外尚未拾取的地面机会只能形成机会势能，不能预支为已经收集。材料的实际收集与尚未拾取
 材料的局部接近分别由
 `material_acquisition_value` 和 `material_approach_progress` 拥有。前者计入材料推迟至后续波次兑现造成的
@@ -355,7 +359,8 @@ visible_world
 所有候选都相同的被动恢复只影响规划上下文，不进入动作结果；筛选代理量在武器结果出现后退出评分。
 
 效用模型把评分字段唯一分配给六个决策目标：`survival`、`recovery`、`economy`、`combat`、
-`navigation` 和 `control_stability`。调试构建在生成评分上下文时断言同一字段不能进入两个目标；
+`navigation` 和 `control_stability`。调试构建在每个效用模型实例首次生成评分上下文时验证同一字段不能进入
+两个目标；
 `objective_utility_breakdown` 公开目标级总账，`field_utility_breakdown` 保留字段级解释。敌人的击杀收益、
 直接压力和持续机制后果先合并为敌人移除价值，再由伤害、接近和射程代理共同消费。树木接近只表达空间
 势能差；自动武器预测按原版敌人与树木共用的目标集合选择最近合法目标，并按预期命中折算树木收获进度。
@@ -376,8 +381,9 @@ visible_world
 
 状态为 `ready` 的规划结果同时提供评分账本和只读诊断。顶层 `model` 保存统一时间契约和
 本次决策实际使用的派生空间尺度；`selection_diagnostics` 保存最大效用选择方式和候选数量；
-`candidate_filter` 保存最低终止碰撞风险、终止风险可行域、被拒绝动作数和裁剪的
-冗余方向。这些诊断只解释校准样本和最终选择，不参与效用评分。
+`weapon_scoring_mode` 区分本轮使用统一筛选代理还是可比精确结果。`compute_budget.phase_duration_usec` 按
+观察准备、导航、基础预测、筛选完成、方向细分与武器预测
+记录阶段耗时。这些诊断只解释校准样本和最终选择，不参与效用评分。
 
 以下字段按当轮价值上下文换算后进入动作总分。筛选代理只在尚未完成精确武器预测时生效，精确结果出现
 后由对应结果字段接替，不会重复计分：
@@ -387,7 +393,8 @@ visible_world
 | `material_acquisition_value` | 本次提交控制期内实际进入收集半径的可见材料价值，包含避免推迟至后续波次兑现的成长时机价值 |
 | `material_approach_progress` | 尚未拾取材料的局部份额在提交期终点相对起点的有符号可达前沿势能变化；局部份额与导航份额连续互补，前沿容量由有效导航距离可容纳的拾取直径数派生，本动作已拾取的材料不再进入该字段 |
 | `consumable_recovery_approach_progress` | 尚未触发拾取时，对所有可恢复消耗品按当前可兑现恢复聚合的局部接近进度 |
-| `consumed_consumable_recovery_supply` | 拾取消耗品时从地图恢复储备中转化的恢复量；保留为供给兑现诊断，不再次从动作收益扣除 |
+| `consumed_consumable_recovery_supply` | 拾取消耗品时离开地图的恢复储备，按恢复供给影子价格扣除；使恢复收益与储备消耗进入同一账本，避免重复计值 |
+| `consumed_single_use_support_supply` | 候选路径由玩家或敌人触发地雷等一次性支援时消耗的储备，以支援强度和存在置信度折算，并按当前生命资源价格扣除 |
 | `expected_enemy_removal_value_progress` | 预期武器伤害按各敌人的移除价值与最大生命折算后的收益 |
 | `enemy_removal_value_approach_progress` | 当前可见局部敌人在动作终点相对同时间零输入状态的移除机会价值差；敌人自然移动不归因给玩家动作 |
 | `enemy_removal_value_in_range` | 尚未运行精确武器预测时，按攻击冷却、可移动攻击限制和有限伤害容量分配的敌人移除价值代理 |
@@ -395,6 +402,7 @@ visible_world
 | `tree_harvest_value_in_range` | 尚未运行精确武器预测时，按当前冷却、移动许可与最近合法目标形成的直接树木命中代理 |
 | `expected_tree_harvest_value_progress` | 原版自动武器把树木选为合法目标后，预期命中按破坏所需命中数折算的收获进度 |
 | `expected_rule_damage` | 玩家效果规则因拾取、治疗、受击或闪避产生的预期敌人伤害 |
+| `expected_allied_damage` | 地雷等一次性友方作用对当前可见爆炸范围内敌人的预期伤害，按敌人移除价值计分 |
 | `expected_recovery` | 候选动作的实际拾取、生命偷取和动作相关事件规则产生的预期恢复量 |
 | `expected_stat_upgrade_equivalents` | 效果规则产生的永久或临时属性变化折合成的期望一级升级份数 |
 | `expected_stat_opportunity_value` | 属性变化影响未来事件机会所产生的材料等价边际价值 |
@@ -403,7 +411,7 @@ visible_world
 | `integrated_allied_healing_support` | 动作沿途处于友方治疗或治疗增益覆盖内的累计支援暴露 |
 | `integrated_environmental_exposure` | 敌人接近、生成、远程火力、地图边缘和队友阻塞扣除对应减压后的沿途环境暴露；不含碰撞 |
 | `expected_health_loss` | 峰值碰撞风险与沿途累计接触按原版最短无敌帧间隔换算预期命中次数，再结合最大单次伤害、候选护甲、闪避和命中保护得到的预期生命消耗 |
-| `terminal_collision_risk` | 单次命中或预测窗内的累计接触可能耗尽当前生命时保留的终止碰撞风险；用于终止约束和终止效用 |
+| `terminal_collision_risk` | 单次命中或预测窗内的累计接触可能耗尽当前生命时保留的终止碰撞风险；按未折价生命价值进入生存效用 |
 | `navigation_terminal_value_gain` | 本动作对最佳导航终点总增益的有符号兑现值：按输入相对零输入造成的提交位移在终点方向上的距离比例计算；反向位移产生负值 |
 | `standing_seconds`、`moving_seconds` | 对应移动状态在预测窗口内的持续时间，只承载该状态的周期材料收益 |
 | `heading_continuity` | 旧输入与新输入实际产生的提交位移方向之点积，并按地图约束后的控制位移兑现比例缩放；被边界完全截停的输入不获得延续收益 |
@@ -423,7 +431,7 @@ visible_world
 | `integrated_allied_body_pressure` | 多人模式下靠近其他玩家实体形成的累计阻塞压力 |
 | `integrated_allied_pressure_relief` | 构筑物或战斗宠物对相关敌人环境压力的累计原始减压量 |
 | `integrated_projectile_interception_relief` | 友方角色先于玩家截获威胁弹道后形成的累计投射物减压 |
-| `integrated_hostile_exposure` | 按暴露政策加权后的沿途总敌对暴露 |
+| `integrated_hostile_exposure` | 按环境压力通道权重合成的沿途总敌对暴露 |
 | `integrated_exposure_relief` | 受对应敌压上限约束的沿途总减压 |
 | `peak_environmental_pressure` | 动作预测中任一采样点的峰值环境暴露 |
 | `peak_path_collision_risk` | 位置域采样和扫掠得到的峰值碰撞风险 |
@@ -474,7 +482,7 @@ visible_world
 `terminal_value_gain` 是终点总增益，不是单个动作结果中的本提交期兑现字段
 `navigation_terminal_value_gain`；
 `origin_value` 是零输入反事实的零值基线；`position_evaluation_count` 包含原点，
-`baseline_position_evaluation_count` 与 `budgeted_position_evaluation_count` 分别记录基线和预算内评价次数；
+`baseline_position_evaluation_count` 与 `extra_position_evaluation_count` 分别记录基线和额外评价次数；
 `sampling_radius` 是地图边界裁剪前的候选半径，不声称是实际行进距离。
 
 导航终点的环境暴露按局部生存效用使用的同一动态风险价格计入成本。动作评价仍检查完整路径并执行扫掠
@@ -492,10 +500,10 @@ visible_world
 计算生命的边际价值。替代供给包括展望窗内可达的已观察消耗品、剩余时间内的概率掉落、被动恢复，以及
 移动时仍可触发的生命偷取；被动生命流失则从生存余量中扣除。非致命生命和替代供给只服务于本波剩余
 暴露，其价格按本波剩余比例连续下降：波末清场会重建下一波的起始生命，未消费的安全余量不会跨波保值。
-替代供给越充足，普通承伤价格越低。可能结束本局的碰撞使用未折价价值并受终止风险可行域保护；终止风险
+替代供给越充足，普通承伤价格越低。可能结束本局的碰撞使用未折价价值；终止风险
 同时考虑最强单次命中和预测窗内按原版最短无敌帧间隔折算的累计接触。拾取消耗品把地图替代供给转化为
-当前生命；动作只取得这次转化相对保留供给的边际价值，不把同一供给先当资产再扣一次。实际恢复量受缺失
-生命上限约束。
+当前生命。`expected_recovery` 记录实际恢复收益，`consumed_consumable_recovery_supply` 结清离开地图的
+储备价值；两者在同一账本中形成从储备到当前生命的净变化。实际恢复量受缺失生命上限约束。
 
 消耗品的治疗价值取当前可兑现恢复。拾取引发的爆炸、属性或材料效果由候选拾取位置上的事件预测器计算；
 导航终端值使用消耗品的基础恢复机会。
@@ -513,16 +521,16 @@ visible_world
 效用模型对 `integrated_environmental_exposure`、`expected_health_loss` 和
 `terminal_collision_risk` 施加生存成本。位置域
 `peak_path_collision_risk` 与速度空间 `velocity_obstacle_risk` 取较大值后只作为生命成本的输入，不重复
-计分。VO 使用连续 TTC 风险；碰撞约束只拒绝终止风险明显更高的动作，可行域内的所有非终止风险与收益
-仍在同一效用账本交换。环境暴露变化率和两类碰撞证据只保留在诊断账本中。敌人轨迹的位置不确定半径
+计分。VO 使用连续 TTC 风险；终止与非终止风险都在同一效用账本内和其他结果交换，不另设硬筛选。
+环境暴露变化率和两类碰撞证据只保留在诊断账本中。敌人轨迹的位置不确定半径
 只扩大邻近压力，不扩大 VO 的实体碰撞圆；物理碰撞几何始终使用玩家与敌人的实体半径，避免把“可能
 位于某处”误写成“TTC 为零”。
 
 友方作用区进入公共效用账本。炮塔和战斗宠物只有在
-预测敌人进入其作用范围且仍对玩家形成近身压力时才产生减压价值；猫炮还要求玩家进入其可见激活区。
-地雷按一次性机会计分：当前可见敌人的预测路径用于计算触发和爆炸覆盖，离开视野的记忆轨迹形成环境
-压力。治疗覆盖随缺失生命提高权重。水母盾只在预测会先于玩家
-截获威胁弹道时计分。
+预测敌人进入其作用范围且仍对玩家形成近身压力时才产生减压价值；猫炮还要求玩家进入其可见启用范围。
+地雷按一次性机会计分：原版踏板同时接受玩家与敌人，因此两者的预测路径都可消耗储备；只有当前可见
+敌人进入爆炸覆盖时才兑现伤害价值，离开视野的记忆轨迹只形成环境压力。治疗覆盖随缺失生命提高权重。
+水母盾只在预测会先于玩家截获威胁弹道时计分。
 原版玩家和敌人的碰撞层不与构筑物碰撞；构筑物不参与实体掩体计算。
 
 ### 武器预测
@@ -533,7 +541,7 @@ visible_world
 树木收获进度也不能超过可见树木的总收获价值。原版的装填、扩散、贯穿、弹射、近战形态和命中后效果
 只在机制编译边界变换成这些量。预测结果只参与移动动作效用。
 
-### 截止准入与质量降级
+### 截止准入与连续保真度
 
 计算预算以实测物理帧余量和规划成本为输入。`PhysicsFrameBudgetMonitor` 读取 Godot
 `Performance.TIME_PHYSICS_PROCESS`。该监视值按已完成渲染帧更新；控制层按
@@ -547,19 +555,21 @@ visible_world
 ```
 
 `MovementPlanner` 用 `OS.get_ticks_usec()` 测量从投射物可达性过滤到动作选择完成的主要规划路径。
-`PlanningComputeBudgetPolicy` 把本轮帧余量转换成单调时钟截止，并以近期规划耗时占预算的比例选择完整、
-受限或临界质量。完整质量使用派生的近场角度和八方向导航；近场动作在所有质量档保留八方向基线，远场
-导航在受限、临界质量下分别收缩为六方向、四方向。各档都额外保留零输入及当前价值模型产生的导航偏好
-方向。所有质量档在至少有两个可行候选时都完整预测前两个候选的武器结果，保证精确结果能够改变选择；
-预算内导航评价、局部角度细分和其余武器预测只在预计单项耗时仍容纳于阶段截止时启动。导航评价使用
-总预算前 `20%`，局部动作细分使用前 `60%`。
+`PlanningComputeBudgetPolicy` 把本轮帧余量转换成单调时钟截止，并将近期规划耗时占预算的比例平方、截断为
+连续预算压力。它只负责时间准入：额外导航评价、局部角度细分和其余武器预测，仅在预计单项耗时仍
+容纳于统一最终截止时启动。武器预测只有能同时容纳两个可比候选时才启动；否则选择器统一使用筛选代理。
 
-完整质量的动作角向覆盖由玩家碰撞半径和一个提交期的移动距离推导；受限与临界质量仍保留八方向近场
-均匀基线。时间采样由碰撞直径、控制期与相关曲线弹最大角频率推导，所有质量级别保持一致。碰撞筛选从
-当前质量的均匀动作格点，以及完整质量下具有额外逃生分辨率的必要角度形成可执行基线，再在优胜动作的
-相邻角区间递归插入中点。导航评价在完整质量下从八方向开始，受限与临界质量下分别从六方向、四方向
-开始，再按预算加入正价值机会方向并细分优胜角区间。近场与远场搜索都受质量级别和截止时间约束，但
-空间上更接近角色、直接影响避碰的近场基线降级得更少。
+动作角向覆盖上限由玩家碰撞半径和一个提交期的移动距离推导。`PlanningSearchFidelityAllocator` 以此前
+规划耗时对当前帧余量的连续压力，以及敌人、投射物、敌对生成警告最早进入玩家可达范围的时间，计算
+搜索保真度：
+`q = q_min ^ (budget_pressure × (0.5 + 0.5 × normalized_time²))`。最早影响时间以近场时域归一化，因此近场
+只承担一半压力、下降斜率较缓，但持续过载时不会无限保留全部宽度；远场较快到达搜索保真度下限。方向数由
+`ceil(上限 × q)` 取偶数并保留至少四方向；导航额外评价额度与移动角区间精炼额度都从同一画像派生。
+整数化只发生在候选构造边界，不反向形成质量档。
+
+时间采样由碰撞直径、控制期与相关曲线弹最大角频率推导，不随搜索保真度降低。动作搜索从当轮均匀动作
+格点与导航偏好方向形成可执行基线，再在优胜动作的相邻角区间递归插入中点。导航与近场的额外工作同时
+受曲线额度和统一最终截止约束，避免任一前置阶段通过内部循环耗尽后续计算时间。
 
 `ProjectileReachabilityFilter` 在重复战术扫掠之前，用导航时域内玩家最大位移、可见投射物当前速度、
 已观察加速度和已解析曲线速度的保守积分上界判断规划域可达性。不能影响局部可达域的投射物仍保留在
@@ -575,9 +585,8 @@ visible_world
 
 | 字段 | 含义 |
 | --- | --- |
-| `allocation_mode`、`quality_mode`、`has_deadline` | 当前使用的截止准入、搜索质量级别，以及本轮是否已有有效帧耗时样本 |
-| `planning_started_usec`、`planning_deadline_usec` | 规划起点与全部预算内计算的最终截止 |
-| `navigation_deadline_usec`、`movement_refinement_deadline_usec` | 导航评价和局部移动细分的累计阶段截止 |
+| `budget_model`、`budget_pressure`、`has_deadline` | 当前使用的帧余量预算模型、由预测预算利用率平方得到的 `[0, 1]` 预算压力，以及本轮是否有可用最终截止 |
+| `planning_started_usec`、`planning_deadline_usec` | 规划起点与本轮计算的最终截止 |
 | `planning_deadline_overrun_usec` | 实际结束时超过最终截止的微秒数；无帧样本时为 `null` |
 | `estimated_work_unit_duration_usec` | `navigation_evaluation`、`movement_refinement`、`weapon_prediction` 单次耗时的 EMA |
 | `physics_frame_capacity_usec` | 由物理帧率派生的单帧容量 |
@@ -586,13 +595,20 @@ visible_world
 | `has_frame_time_sample`、`scheduled_planner_count` | 帧耗时样本是否有效，以及共享余量的规划器数量 |
 | `planning_duration_budget_usec` | 分配给单个规划器的本轮耗时预算 |
 | `planning_duration_usec`、`planning_duration_usec_ema` | 本轮实测规划耗时及其指数移动平均 |
+| `predicted_planning_budget_utilization` | 分配时已知的规划耗时 EMA 与本轮预算之比；用于形成预算压力 |
 | `planning_duration_budget_utilization` | 本轮实测耗时与耗时预算之比；大于 `1` 表示超出预算 |
+
+`search_fidelity` 独立公开搜索广度分配：`fidelity_model`、`earliest_physical_influence_seconds`、
+`reference_seconds`、`movement_search_fidelity` 与 `navigation_search_fidelity` 解释曲线输入和结果；
+`movement_direction_count`、`navigation_direction_count`、`navigation_extra_evaluation_limit` 与
+`movement_refinement_limit` 记录曲线在离散候选边界形成的本轮额度。该画像只分配搜索计算，不改变碰撞
+时间采样，也不改变敌人、材料、消耗品、构筑物或风险本身的价值。
 
 基础方向之外加入导航偏好方向，并单独加入零移动输入。单步动作空间使用确定性自适应角区间，不需要
 模拟退火；若以后允许多个自由动作段，组合数会指数增长，届时再考虑束搜索或交叉熵方法。
 
 Godot 性能监视器按渲染帧而非物理回调更新，因此控制层会去重同一渲染帧，并排除包含规划的监视值世代。
-单项耗时 EMA 只能阻止启动预计无法在截止前完成的预算内工作，不能中断已经开始的单项计算；基线工作、
+单项耗时 EMA 只能阻止启动预计无法在截止前完成的额外工作，不能中断已经开始的单项计算；基线工作、
 首次成本估计、同帧突发负载和监视值更新延迟仍可能造成超预算。预算为零或尚无帧样本时只执行基线工作。
 
 ## 模块责任
@@ -616,12 +632,13 @@ Godot 性能监视器按渲染帧而非物理回调更新，因此控制层会�
 | `Predictor` | 沿时间或候选动作推演未来结果 | `predict` 或 `accumulate_outcome` |
 | `Projector` | 将同一组已知规则或状态映射到候选表示，不模拟世界演化 | `project` |
 | `Model` | 封装可复用的领域关系或评价规律 | 领域动词 |
+| `Generator` | 按已给空间与画像构造候选集合，不拥有评价或选择 | `generate`、`make_*` |
+| `Selector` | 从已评分候选中选择结果，不拥有预测或评分 | `select` |
 | `Planner` | 协调候选生成、预测、评价与选择，产出一个完整决策 | `plan` |
 | `Monitor` | 读取运行时监视值，维护平滑状态并公开上下文 | `observe_*`、`build_context` |
-| `Constraint` | 根据不可违反的语义边界形成可行域 | `apply` |
-| `Pruner` | 删除不增加能力或信息的冗余候选，不改变可行域语义 | `prune` |
-| `Filter` | 按明确判据产生输入子集，并公开过滤诊断 | `apply` |
+| `Filter` | 按明确判据产生输入子集，并公开过滤诊断 | `filter` |
 | `Refiner` | 根据已评价候选提出更细的搜索候选，不拥有评价或停止策略 | `propose_*` |
+| `Allocator` | 把既有资源信号映射为某一计算维度的本轮额度，不拥有资源测量或行为价值 | `allocate` |
 | `Policy` | 根据资源上下文形成计算预算或其他可调策略 | 领域动词，或 `set_frame_budget_context`、`allocate`、`observe_*` |
 | `Telemetry` | 按既定采样政策持久化诊断记录，不参与被记录的决策 | `start`、`record_decision`、`close` |
 
@@ -645,7 +662,8 @@ Godot 性能监视器按渲染帧而非物理回调更新，因此控制层会�
   `bot/planning/weapon_fire_model.gd` 统一定义与目标无关的射击时序、单次命中伤害，以及命中、伤害和
   生命偷取速率，
   `bot/planning/weapon_attack_predictor.gd` 负责已获准候选动作的目标几何。
-- `bot/planning/battlefield_exposure_model.gd` 拥有环境暴露、位置域碰撞风险、友方减压、挡弹时序和动作诊断；
+- `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、位置域碰撞风险、战斗支援伤害与消耗、友方减压、
+  治疗和挡弹时序；
   `bot/planning/navigation_intent_planner.gd` 为局部预测未拥有的目标和动作窗外的价值形成导航偏好。
   规划时间域及其波次剩余时间裁剪由 `bot/planning/movement_timing_model.gd` 唯一定义，体型、
   速度与这些时域形成的共享空间尺度由 `bot/planning/movement_geometry_model.gd` 统一派生；后者区分不会
@@ -654,10 +672,8 @@ Godot 性能监视器按渲染帧而非物理回调更新，因此控制层会�
   证据合并；`bot/planning/motion/projectile_motion_predictor.gd` 解析积分已形成的确定性弹道，
   `bot/planning/collision_health_impact_model.gd` 把峰值及累计接触证据按原版无敌帧下界换算为预期生命损失与
   终止风险；
-  `bot/planning/terminal_collision_constraint.gd` 只拥有可能直接结束本局的终止风险可行域，普通承伤始终由
-  效用模型与其他收益交换；`bot/planning/health_resource_value_model.gd` 根据当前生存余量、近期可达消耗品、
+  `bot/planning/health_resource_value_model.gd` 根据当前生存余量、近期可达消耗品、
   概率掉落、被动生命变化、生命偷取及剩余暴露时间，统一给掉血、恢复和替代供给计算边际价值；
-  `bot/planning/movement_candidate_pruner.gd` 只裁剪不增加避碰能力的冗余角度；
   `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 - `bot/planning/movement_outcome_predictor.gd` 预测动作结果，`bot/planning/movement_utility_model.gd` 把结果转换为
   效用。`bot/planning/opportunity_value_model.gd` 统一换算材料、消耗品、树木和敌人移除机会的边际价值，
@@ -682,8 +698,9 @@ Godot 性能监视器按渲染帧而非物理回调更新，因此控制层会�
   `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 拥有。两类编译缓存都不得混入战斗期状态。
 - `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
   边界公开帧预算上下文。
-- `bot/planning/planning_compute_budget_policy.gd` 把控制层提供的帧预算上下文转换成计算截止，并维护预算内
-  工作的耗时估计；`projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；
+- `bot/planning/planning_compute_budget_policy.gd` 把控制层提供的帧预算上下文转换成统一最终截止与连续预算
+  压力，并维护额外工作的耗时估计；`planning_search_fidelity_allocator.gd` 独占从预算压力和物理影响时间到
+  搜索保真度及额外工作额度的映射，不拥有行为效用；`projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；
   `adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止策略仍归调用方。
 - `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；
   `MovementPlanner` 拥有规划结果及其诊断语义，采样器只删除重复画像，不改变保留字段的语义值。
@@ -698,7 +715,7 @@ Godot 性能监视器按渲染帧而非物理回调更新，因此控制层会�
   近似，不提供机器人控制意义上的稳定性或安全证明。
 - POMDP 的信念状态观点用于区分“已经观察到的世界”与“对当前世界的置信估计”。地图探索不再编码方向，
   而把候选视点减少边界不确定性、保留有效地图视野的量作为后续决策价值；生命则按可替代供给和生存余量
-  形成边际价值。终止碰撞风险单独进入可行域，普通风险仍留在效用账本中交换。
+  形成边际价值。终止碰撞风险使用未折价生命价值，但仍与普通风险及其他动作结果在同一效用账本交换。
 
 主要参考：[Khatib, *Real-Time Obstacle Avoidance for Manipulators and Mobile Robots*
 (1986)](https://khatib.stanford.edu/publications/pdfs/Khatib_1986_IJRR.pdf)；[Fiorini & Shiller,

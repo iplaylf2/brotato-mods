@@ -2,8 +2,8 @@ extends Reference
 
 # Searches reachable terminal states using observed opportunities.
 
-const BattlefieldExposureModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_exposure_model.gd"
+const BattlefieldInfluenceModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 )
 const MovementTimingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
@@ -22,14 +22,8 @@ const SpatialOpportunityValueModel := preload(
 )
 
 const SIMILAR_DIRECTION_DOT := 0.97
-# Far-field navigation yields angular resolution before near-field control: it
-# shapes terminal intent, while local collision projection still retains its
-# octant safety baseline in every quality mode.
-const BASELINE_DIRECTION_COUNT := 8
-const CONSTRAINED_DIRECTION_COUNT := 6
-const CRITICAL_DIRECTION_COUNT := 4
 
-var _exposure_model: Reference = BattlefieldExposureModel.new()
+var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _direction_refiner: Reference = AdaptiveDirectionRefiner.new()
 var _map_information_value_model: Reference = MapInformationValueModel.new()
@@ -40,6 +34,7 @@ func plan(
 	observation: Dictionary,
 	context: Dictionary,
 	compute_budget: Dictionary,
+	search_fidelity: Dictionary,
 	compute_budget_policy: Reference
 ) -> Dictionary:
 	var scale: Dictionary = _spatial_scale(observation)
@@ -49,22 +44,27 @@ func plan(
 	var sampling_radius: float = min(
 		map_extent.radius, scale.command_speed * navigation_horizon_seconds
 	)
-	var quality_mode: String = compute_budget.get("quality_mode", "full")
-	var baseline_direction_count := BASELINE_DIRECTION_COUNT
-	if quality_mode == "constrained":
-		baseline_direction_count = CONSTRAINED_DIRECTION_COUNT
-	elif quality_mode == "critical":
-		baseline_direction_count = CRITICAL_DIRECTION_COUNT
+	var baseline_direction_count: int = search_fidelity.navigation_direction_count
+	var extra_evaluation_limit: int = search_fidelity.navigation_extra_evaluation_limit
 	var baseline_directions: Array = _uniform_directions(baseline_direction_count)
 	var opportunity_directions: Array = _spatial_opportunity_value_model.candidate_directions(
 		observation, context
 	)
-	var origin: Dictionary = _evaluate_position(observation, context, Vector2.ZERO, 0.0)
+	var stationary_exposure_by_time := {}
+	var stationary_opportunity_by_time := {}
+	var origin: Dictionary = _evaluate_position(
+		observation,
+		context,
+		Vector2.ZERO,
+		0.0,
+		stationary_exposure_by_time,
+		stationary_opportunity_by_time
+	)
 	var best: Dictionary = origin
 	var position_evaluation_count: int = 1
 	var evaluated_directions := []
 	var direction_scores := []
-	var budgeted_position_evaluation_count: int = 0
+	var extra_position_evaluation_count: int = 0
 	for direction in baseline_directions:
 		var result: Dictionary = _evaluate_direction(
 			observation,
@@ -73,7 +73,9 @@ func plan(
 			sampling_radius,
 			map_extent,
 			scale,
-			navigation_horizon_seconds
+			navigation_horizon_seconds,
+			stationary_exposure_by_time,
+			stationary_opportunity_by_time
 		)
 		if result.empty():
 			continue
@@ -84,6 +86,8 @@ func plan(
 			best = result
 
 	for candidate in opportunity_directions:
+		if extra_position_evaluation_count >= extra_evaluation_limit:
+			break
 		var direction: Vector2 = candidate.direction
 		if _has_similar_direction(evaluated_directions, direction):
 			continue
@@ -99,7 +103,9 @@ func plan(
 			sampling_radius,
 			map_extent,
 			scale,
-			navigation_horizon_seconds
+			navigation_horizon_seconds,
+			stationary_exposure_by_time,
+			stationary_opportunity_by_time
 		)
 		compute_budget_policy.observe_work_duration(
 			compute_budget_policy.WORK_NAVIGATION_EVALUATION,
@@ -108,14 +114,17 @@ func plan(
 		if result.empty():
 			continue
 		position_evaluation_count += 1
-		budgeted_position_evaluation_count += 1
+		extra_position_evaluation_count += 1
 		evaluated_directions.push_back(direction)
 		direction_scores.push_back({"movement": direction, "score": result.value})
 		if result.value > best.value:
 			best = result
 
-	while compute_budget_policy.can_start_budgeted_work(
-		compute_budget, compute_budget_policy.WORK_NAVIGATION_EVALUATION
+	while (
+		extra_position_evaluation_count < extra_evaluation_limit
+		and compute_budget_policy.can_start_budgeted_work(
+			compute_budget, compute_budget_policy.WORK_NAVIGATION_EVALUATION
+		)
 	):
 		var direction: Vector2 = _direction_refiner.propose_direction(direction_scores)
 		if direction == Vector2.ZERO:
@@ -128,7 +137,9 @@ func plan(
 			sampling_radius,
 			map_extent,
 			scale,
-			navigation_horizon_seconds
+			navigation_horizon_seconds,
+			stationary_exposure_by_time,
+			stationary_opportunity_by_time
 		)
 		compute_budget_policy.observe_work_duration(
 			compute_budget_policy.WORK_NAVIGATION_EVALUATION,
@@ -138,7 +149,7 @@ func plan(
 			direction_scores.push_back({"movement": direction, "score": -INF})
 			continue
 		position_evaluation_count += 1
-		budgeted_position_evaluation_count += 1
+		extra_position_evaluation_count += 1
 		evaluated_directions.push_back(direction)
 		direction_scores.push_back({"movement": direction, "score": result.value})
 		if result.value > best.value:
@@ -155,8 +166,9 @@ func plan(
 		"terminal_value_gain": terminal_value_gain,
 		"position_evaluation_count": position_evaluation_count,
 		"baseline_position_evaluation_count":
-		position_evaluation_count - budgeted_position_evaluation_count,
-		"budgeted_position_evaluation_count": budgeted_position_evaluation_count,
+		position_evaluation_count - extra_position_evaluation_count,
+		"extra_position_evaluation_count": extra_position_evaluation_count,
+		"extra_position_evaluation_limit": extra_evaluation_limit,
 		"origin_value": origin.value,
 		"selected_value": best.value,
 		"selected_value_breakdown": best.value_breakdown,
@@ -175,7 +187,9 @@ func _evaluate_direction(
 	sampling_radius: float,
 	map_extent: Dictionary,
 	scale: Dictionary,
-	navigation_horizon_seconds: float
+	navigation_horizon_seconds: float,
+	stationary_exposure_by_time: Dictionary,
+	stationary_opportunity_by_time: Dictionary
 ) -> Dictionary:
 	var position: Vector2 = direction * sampling_radius
 	if not _inside_domain(position, map_extent):
@@ -185,20 +199,38 @@ func _evaluate_direction(
 	var forecast_seconds: float = min(
 		navigation_horizon_seconds, position.length() / max(1.0, scale.command_speed)
 	)
-	return _evaluate_position(observation, context, position, forecast_seconds)
+	return _evaluate_position(
+		observation,
+		context,
+		position,
+		forecast_seconds,
+		stationary_exposure_by_time,
+		stationary_opportunity_by_time
+	)
 
 
 func _evaluate_position(
-	observation: Dictionary, context: Dictionary, position: Vector2, time: float
+	observation: Dictionary,
+	context: Dictionary,
+	position: Vector2,
+	time: float,
+	stationary_exposure_by_time: Dictionary,
+	stationary_opportunity_by_time: Dictionary
 ) -> Dictionary:
-	var exposure: Dictionary = _exposure_model.sample_point(
-		observation, position, time, context.exposure_policy
+	var exposure: Dictionary = _battlefield_influence_model.sample_point(
+		observation, position, time, context.environmental_pressure_weights
 	)
-	var stationary_exposure: Dictionary = _exposure_model.sample_point(
-		observation, Vector2.ZERO, time, context.exposure_policy
-	)
+	if not stationary_exposure_by_time.has(time):
+		stationary_exposure_by_time[time] = _battlefield_influence_model.sample_point(
+			observation, Vector2.ZERO, time, context.environmental_pressure_weights
+		)
+	var stationary_exposure: Dictionary = stationary_exposure_by_time[time]
+	if not stationary_opportunity_by_time.has(time):
+		stationary_opportunity_by_time[time] = _spatial_opportunity_value_model.stationary_value(
+			observation, context, time
+		)
 	var opportunity_delta: Dictionary = _spatial_opportunity_value_model.value_delta(
-		observation, context, position, time
+		observation, context, position, time, stationary_opportunity_by_time[time]
 	)
 	var information_value: float = (
 		_map_information_value_model.value_delta(observation, position)

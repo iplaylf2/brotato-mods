@@ -17,7 +17,6 @@ const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
 
-const FULL_BASELINE_DIRECTION_COUNT := 8
 const MAX_PROJECTILE_PHASE_STEP := PI / 2.0
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
@@ -26,20 +25,15 @@ var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 
 
 func generate(
-	observation: Dictionary, navigation_intent: Dictionary, compute_budget: Dictionary
+	observation: Dictionary, navigation_intent: Dictionary, search_fidelity: Dictionary
 ) -> Array:
 	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var forecast_seconds := _forecast_window(observation, timing)
 	var sample_count := _forecast_sample_count(observation, forecast_seconds, timing)
-	var direction_count: int = _movement_geometry.derive(observation).direction_count
-	var directions := _candidate_directions(
-		direction_count, navigation_intent, compute_budget.get("quality_mode", "full")
-	)
-	var quality_mode: String = compute_budget.get("quality_mode", "full")
+	var direction_count: int = search_fidelity.movement_direction_count
+	var directions := _candidate_directions(direction_count, navigation_intent)
 	var actions := [
-		_make_action(
-			observation, "no_movement_input", Vector2.ZERO, forecast_seconds, sample_count, true
-		)
+		_make_action(observation, "no_movement_input", Vector2.ZERO, forecast_seconds, sample_count)
 	]
 	for direction_index in directions.size():
 		var direction: Vector2 = directions[direction_index]
@@ -49,8 +43,7 @@ func generate(
 				"movement_input_%s" % direction_index,
 				direction,
 				forecast_seconds,
-				sample_count,
-				quality_mode != "full" or _is_baseline_direction(direction, navigation_intent)
+				sample_count
 			)
 		)
 	return actions
@@ -67,8 +60,7 @@ func make_refined_action(
 		"refined_movement_input_%s" % refined_action_index,
 		direction.normalized(),
 		forecast_template.forecast_seconds,
-		forecast_template.samples.size(),
-		false
+		forecast_template.samples.size()
 	)
 
 
@@ -77,8 +69,7 @@ func _make_action(
 	action_id: String,
 	movement: Vector2,
 	forecast_seconds: float,
-	sample_count: int,
-	is_baseline_candidate: bool
+	sample_count: int
 ) -> Dictionary:
 	var samples := []
 	for step in range(1, sample_count + 1):
@@ -100,27 +91,19 @@ func _make_action(
 		"movement": movement,
 		"forecast_seconds": forecast_seconds,
 		"samples": samples,
-		"is_baseline_candidate": is_baseline_candidate,
 	}
 
 
-func _candidate_directions(
-	direction_count: int, navigation_intent: Dictionary, quality_mode: String
-) -> Array:
+func _candidate_directions(direction_count: int, navigation_intent: Dictionary) -> Array:
 	var result := []
-	# Near-field control keeps an octant safety baseline in every quality mode.
-	# Only full quality adds the geometry-derived fine lattice; compute pressure is
-	# absorbed more aggressively by the longer-horizon navigation search.
-	var effective_direction_count := (
-		direction_count
-		if quality_mode == "full"
-		else FULL_BASELINE_DIRECTION_COUNT
-	)
-	for direction_index in effective_direction_count:
+	# The fidelity policy derives the uniform lattice continuously from compute
+	# pressure and physical influence time. Every retained heading receives the
+	# unchanged swept-collision sampling contract.
+	for direction_index in direction_count:
 		result.push_back(
-			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(effective_direction_count))
+			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))
 		)
-	# Keep the value-derived navigation direction in every quality mode. It is one
+	# Keep the value-derived navigation direction at every precision. It is one
 	# bounded candidate, not an expanded angular search, and preserves observed
 	# opportunity seeking when compute is constrained.
 	var movement_preference: Vector2 = navigation_intent.movement_preference
@@ -128,16 +111,6 @@ func _candidate_directions(
 		var preferred_direction := movement_preference.normalized()
 		if not _has_similar_direction(result, preferred_direction):
 			result.push_back(preferred_direction)
-	# Full-quality geometry also retains exact octants for smooth comparison when
-	# the derived fine lattice does not share those angles.
-	if quality_mode != "full":
-		return result
-	for baseline_index in FULL_BASELINE_DIRECTION_COUNT:
-		var baseline_direction := Vector2.RIGHT.rotated(
-			TAU * float(baseline_index) / float(FULL_BASELINE_DIRECTION_COUNT)
-		)
-		if not _has_similar_direction(result, baseline_direction):
-			result.push_back(baseline_direction)
 	return result
 
 
@@ -216,15 +189,6 @@ func _forecast_sample_count(
 	# spatial sweeps on the same resolution contract.
 	var control_samples := int(ceil(forecast_seconds / timing.control_interval_seconds))
 	return int(max(max(1, spatial_samples), max(phase_samples, control_samples)))
-
-
-func _is_baseline_direction(direction: Vector2, navigation_intent: Dictionary) -> bool:
-	var baseline_step := TAU / float(FULL_BASELINE_DIRECTION_COUNT)
-	var nearest_baseline_angle := round(direction.angle() / baseline_step) * baseline_step
-	if abs(wrapf(direction.angle() - nearest_baseline_angle, -PI, PI)) <= 0.001:
-		return true
-	var preference: Vector2 = navigation_intent.movement_preference
-	return preference != Vector2.ZERO and direction.dot(preference.normalized()) > 0.999
 
 
 func _encounter_time(position: Vector2, velocity: Vector2, threat_radius: float) -> float:

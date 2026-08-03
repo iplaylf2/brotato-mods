@@ -236,10 +236,16 @@ func _battlefield_effect_burden(
 		+ effects.get("enemy_damage_fraction_per_activation", 0.0)
 		+ effects.get("enemy_speed_fraction_per_activation", 0.0)
 	)
+	# Vanilla buffers only boost entities whose is_boosted flag is still false.
+	# One activation also affects at most nb_entities_boosted_at_once, which is
+	# already represented by the compiled activation rate. Cap the forecast by
+	# the number of other entities instead of multiplying every activation by the
+	# whole population and repeatedly charging the same boost.
+	var eligible_enemy_count := max(0, observation.enemy_tracks.size() - 1)
+	var expected_amplified_enemy_count := min(activation_count, eligible_enemy_count)
 	var amplification_burden: float = (
-		activation_count
+		expected_amplified_enemy_count
 		* amplification_fraction
-		* max(1, observation.enemy_tracks.size() - 1)
 		* mean_enemy_burden
 	)
 	var wave_number: float = max(1, observation.wave_state.number)

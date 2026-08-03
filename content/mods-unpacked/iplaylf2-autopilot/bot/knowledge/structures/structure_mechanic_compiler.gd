@@ -9,21 +9,23 @@ const DEFAULT_LANDMINE_SCALE := 1.0
 
 func compile(structure: Node) -> Dictionary:
 	var profile := {
-		"pressure_relief": _empty_zone(),
+		"combat_support": _empty_zone(),
 		"healing_support": _empty_zone(),
 	}
 	if structure is Garden:
 		return profile
 	if structure is Landmine:
-		profile.pressure_relief = _compile_landmine(structure)
+		profile.combat_support = _compile_landmine(structure)
 		return profile
 	if _has_slow_field(structure):
-		profile.pressure_relief = {
+		profile.combat_support = {
 			"active": true,
 			"radius": _get_circle_radius(structure.get_node("SlowHitbox/Collision")),
-			"activation_radius": 0.0,
-			"player_activation_radius": 0.0,
+			"enemy_trigger_radius": 0.0,
+			"player_enablement_radius": 0.0,
+			"player_trigger_radius": 0.0,
 			"intensity": 0.65,
+			"damage": 0.0,
 			"single_use": false,
 			"simultaneous_target_capacity": INF,
 		}
@@ -39,8 +41,9 @@ func compile(structure: Node) -> Dictionary:
 		profile.healing_support = {
 			"active": true,
 			"radius": radius,
-			"activation_radius": 0.0,
-			"player_activation_radius": 0.0,
+			"enemy_trigger_radius": 0.0,
+			"player_enablement_radius": 0.0,
+			"player_trigger_radius": 0.0,
 			"intensity": clamp(float(stats.damage) * projectiles / cycle_seconds / 3.0, 0.1, 2.5),
 			"single_use": false,
 			"requires_recovery_opportunity": false,
@@ -52,12 +55,14 @@ func compile(structure: Node) -> Dictionary:
 			* clamp(float(stats.accuracy), 0.2, 1.0)
 			/ cycle_seconds
 		)
-		profile.pressure_relief = {
+		profile.combat_support = {
 			"active": true,
 			"radius": radius,
-			"activation_radius": 0.0,
-			"player_activation_radius": 0.0,
+			"enemy_trigger_radius": 0.0,
+			"player_enablement_radius": 0.0,
+			"player_trigger_radius": 0.0,
 			"intensity": clamp(expected_output / 25.0, 0.1, 2.5),
+			"damage": 0.0,
 			"single_use": false,
 			"simultaneous_target_capacity": 1.0,
 		}
@@ -71,12 +76,18 @@ func _compile_landmine(structure: Node) -> Dictionary:
 	var damage := 10.0
 	if "stats" in structure and structure.stats != null:
 		damage = max(1.0, float(structure.stats.damage))
+	var trigger_radius := _get_landmine_trigger_radius(structure)
 	return {
 		"active": true,
 		"radius": BASE_EXPLOSION_RADIUS * scale,
-		"activation_radius": _get_landmine_activation_radius(structure),
-		"player_activation_radius": 0.0,
+		"enemy_trigger_radius": trigger_radius,
+		"player_enablement_radius": 0.0,
+		# Vanilla's Area2D collision mask includes both players and enemies. A
+		# player entering the plate arms it and leaving explodes it, so player
+		# movement consumes the same one-shot resource even though it is friendly.
+		"player_trigger_radius": trigger_radius,
 		"intensity": clamp(damage / 30.0, 0.2, 2.5),
+		"damage": damage,
 		"single_use": true,
 		"simultaneous_target_capacity": INF,
 	}
@@ -98,7 +109,7 @@ func _get_circle_radius(collision: CollisionShape2D) -> float:
 	return 0.0
 
 
-func _get_landmine_activation_radius(structure: Node) -> float:
+func _get_landmine_trigger_radius(structure: Node) -> float:
 	if not structure.has_node("Area2D/Collision"):
 		return 24.0
 	var collision: Node = structure.get_node("Area2D/Collision")
@@ -116,9 +127,11 @@ func _empty_zone() -> Dictionary:
 	return {
 		"active": false,
 		"radius": 0.0,
-		"activation_radius": 0.0,
-		"player_activation_radius": 0.0,
+		"enemy_trigger_radius": 0.0,
+		"player_enablement_radius": 0.0,
+		"player_trigger_radius": 0.0,
 		"intensity": 0.0,
+		"damage": 0.0,
 		"single_use": false,
 		"simultaneous_target_capacity": 0.0,
 		"requires_recovery_opportunity": false,

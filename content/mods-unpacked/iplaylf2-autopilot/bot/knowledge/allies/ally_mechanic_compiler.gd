@@ -6,7 +6,7 @@ extends Reference
 
 func compile(agent: Node, kind: String) -> Dictionary:
 	var profile := {
-		"pressure_relief": _empty_zone(),
+		"combat_support": _empty_zone(),
 		"healing_support": _empty_zone(),
 		"projectile_interception": _empty_zone(),
 	}
@@ -14,7 +14,7 @@ func compile(agent: Node, kind: String) -> Dictionary:
 		return profile
 
 	var combat_zone := _compile_combat_zone(agent)
-	profile.pressure_relief = combat_zone
+	profile.combat_support = combat_zone
 
 	var healing_zone := _compile_healing_zone(agent)
 	profile.healing_support = healing_zone
@@ -57,9 +57,10 @@ func _compile_combat_zone(agent: Node) -> Dictionary:
 		best_zone = {
 			"active": true,
 			"radius": radius,
-			"activation_radius": 0.0,
-			"player_activation_radius":
+			"enemy_trigger_radius": 0.0,
+			"player_enablement_radius":
 			_get_collision_radius(agent, "PlayerTriggerZone/CollisionShape2D"),
+			"player_trigger_radius": 0.0,
 			"intensity": intensity,
 			"single_use": false,
 			"simultaneous_target_capacity": 1.0,
@@ -74,8 +75,9 @@ func _compile_healing_zone(agent: Node) -> Dictionary:
 	return {
 		"active": true,
 		"radius": radius,
-		"activation_radius": 0.0,
-		"player_activation_radius": 0.0,
+		"enemy_trigger_radius": 0.0,
+		"player_enablement_radius": 0.0,
+		"player_trigger_radius": 0.0,
 		"intensity": 0.5,
 		"single_use": false,
 		"requires_recovery_opportunity": true,
@@ -91,8 +93,9 @@ func _compile_interception_zone(agent: Node) -> Dictionary:
 	return {
 		"active": true,
 		"radius": radius,
-		"activation_radius": 0.0,
-		"player_activation_radius": 0.0,
+		"enemy_trigger_radius": 0.0,
+		"player_enablement_radius": 0.0,
+		"player_trigger_radius": 0.0,
 		"intensity": 1.0,
 		"single_use": false,
 	}
@@ -114,8 +117,9 @@ func _empty_zone() -> Dictionary:
 	return {
 		"active": false,
 		"radius": 0.0,
-		"activation_radius": 0.0,
-		"player_activation_radius": 0.0,
+		"enemy_trigger_radius": 0.0,
+		"player_enablement_radius": 0.0,
+		"player_trigger_radius": 0.0,
 		"intensity": 0.0,
 		"single_use": false,
 		"simultaneous_target_capacity": 0.0,

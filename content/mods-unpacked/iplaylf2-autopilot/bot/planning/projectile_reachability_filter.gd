@@ -14,7 +14,7 @@ const MovementGeometryModel := preload(
 var _movement_geometry: Reference = MovementGeometryModel.new()
 
 
-func apply(observation: Dictionary) -> Dictionary:
+func filter(observation: Dictionary) -> Dictionary:
 	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var horizon_seconds: float = timing.effective_navigation_horizon_seconds
