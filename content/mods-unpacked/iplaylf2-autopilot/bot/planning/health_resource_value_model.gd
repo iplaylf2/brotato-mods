@@ -9,6 +9,9 @@ const PlayerRuleProjector := preload(
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
+const ConsumableDropProbabilityModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
+)
 const WeaponAttackCapacityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
 )
@@ -19,6 +22,7 @@ const SURVIVAL_BUFFER_VALUE := 12.0
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 
 
@@ -194,7 +198,9 @@ func _expected_drop_supply(
 	var horizon_fraction := clamp(horizon_seconds / remaining_seconds, 0.0, 1.0)
 	for track in observation.enemy_tracks:
 		var rewards: Dictionary = track.behavior_profile.get("kill_rewards", {})
-		var drop_chance := _drop_chance(observation, rewards)
+		var drop_chance: float = _consumable_drop_probability_model.any_consumable_drop_chance(
+			observation, rewards
+		)
 		result += (
 			consumable_recovery
 			* drop_chance
@@ -208,20 +214,12 @@ func _expected_drop_supply(
 		var rewards: Dictionary = tree.get("destructible_profile", {}).get("kill_rewards", {})
 		result += (
 			consumable_recovery
-			* _drop_chance(observation, rewards)
+			* _consumable_drop_probability_model.any_consumable_drop_chance(observation, rewards)
 			* _opportunity_value_model.tree_harvest_feasibility(observation, tree)
 			* tree.existence_confidence
 			* horizon_fraction
 		)
 	return result
-
-
-func _drop_chance(observation: Dictionary, rewards: Dictionary) -> float:
-	if rewards.get("guaranteed_consumable", false):
-		return 1.0
-	var chance: float = rewards.get("consumable_drop_chance", 0.0)
-	var luck: float = observation.player_state.effective_stats.luck
-	return clamp(chance * max(0.0, 1.0 + luck / 100.0), 0.0, 1.0)
 
 
 func _consumable_recovery(observation: Dictionary, consumable: Dictionary) -> float:

@@ -59,7 +59,6 @@ func predict_base(
 	var outcome := {
 		"material_acquisition_value": 0.0,
 		"wasted_consumable_recovery": 0.0,
-		"consumable_item_choice_value": 0.0,
 		"consumed_consumable_recovery_supply": 0.0,
 		"consumed_single_use_support_supply": 0.0,
 		"expected_weapon_damage": 0.0,

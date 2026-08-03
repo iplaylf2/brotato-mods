@@ -134,13 +134,15 @@ func _compile_battlefield_effects(enemy: Node) -> Dictionary:
 func _compile_kill_rewards(enemy: Node, archetype: String) -> Dictionary:
 	var rewards := {
 		"base_materials": 0.0,
-		"consumable_drop_chance": 0.0,
+		"base_consumable_drop_chance": 0.0,
+		"item_box_conditional_chance": 0.0,
 		"guaranteed_consumable": false,
 		"player_stat_changes": [],
 	}
 	if "stats" in enemy and enemy.stats != null:
 		rewards.base_materials = max(0.0, float(enemy.stats.value))
-		rewards.consumable_drop_chance = clamp(float(enemy.stats.item_drop_chance), 0.0, 1.0)
+		rewards.base_consumable_drop_chance = clamp(float(enemy.stats.base_drop_chance), 0.0, 1.0)
+		rewards.item_box_conditional_chance = clamp(float(enemy.stats.item_drop_chance), 0.0, 1.0)
 		rewards.guaranteed_consumable = bool(enemy.stats.always_drop_consumables)
 	if archetype == "evil_mob":
 		rewards.player_stat_changes.push_back({"stat": "curse", "operation": "add", "value": 1.0})

@@ -7,13 +7,11 @@ extends Reference
 func adapt(consumable: Node) -> Dictionary:
 	var result := {
 		"base_recovery": 0.0,
-		"deferred_item_choice": false,
 		"traits": [],
 	}
 	if not "consumable_data" in consumable or consumable.consumable_data == null:
 		return result
 	var data: Resource = consumable.consumable_data
-	result.deferred_item_choice = bool(data.to_be_processed_at_end_of_wave)
 	for effect in data.effects:
 		if effect is ConsumableHealingEffect:
 			result.base_recovery += effect.value

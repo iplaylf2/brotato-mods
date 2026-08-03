@@ -15,15 +15,11 @@ const PlayerRuleProjector := preload(
 const StatOpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
 )
-const OpportunityValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
-)
 
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
-var _opportunity_value_model: Reference = OpportunityValueModel.new()
 
 
 func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Dictionary) -> void:
@@ -91,10 +87,6 @@ func _apply_consumable_event(
 	observation: Dictionary, event: Dictionary, outcome: Dictionary
 ) -> void:
 	var profile: Dictionary = event.entity.get("pickup_profile", {})
-	if profile.get("deferred_item_choice", false):
-		outcome.consumable_item_choice_value += (_opportunity_value_model.deferred_item_choice_value(
-			observation
-		))
 	var recovery_before: float = outcome.expected_recovery
 	outcome.expected_recovery += profile.get("base_recovery", 0.0)
 	_apply_event_rules(observation, "consumable_pickup", event, outcome)

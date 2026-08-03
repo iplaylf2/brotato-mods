@@ -10,7 +10,8 @@ func compile(neutral: Node) -> Dictionary:
 		"kill_rewards":
 		{
 			"base_materials": 0.0,
-			"consumable_drop_chance": 0.0,
+			"base_consumable_drop_chance": 0.0,
+			"item_box_conditional_chance": 0.0,
 			"guaranteed_consumable": false,
 		},
 	}
@@ -20,6 +21,7 @@ func compile(neutral: Node) -> Dictionary:
 		return result
 	var stats: Resource = neutral.stats
 	result.kill_rewards.base_materials = max(0.0, float(stats.value))
-	result.kill_rewards.consumable_drop_chance = clamp(float(stats.item_drop_chance), 0.0, 1.0)
+	result.kill_rewards.base_consumable_drop_chance = clamp(float(stats.base_drop_chance), 0.0, 1.0)
+	result.kill_rewards.item_box_conditional_chance = clamp(float(stats.item_drop_chance), 0.0, 1.0)
 	result.kill_rewards.guaranteed_consumable = bool(stats.always_drop_consumables)
 	return result

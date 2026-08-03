@@ -68,7 +68,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"economy":
 			{
 				"material_acquisition_value": 1.0,
-				"consumable_item_choice_value": 1.0,
 				"expected_stat_upgrade_equivalents": 1.0,
 				"expected_stat_opportunity_value": 1.0,
 				"expected_material_gain": 1.0,
