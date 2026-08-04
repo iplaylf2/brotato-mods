@@ -2,8 +2,8 @@ extends Reference
 
 # Predicts the outcome of one feasible movement vector over a threat-timed
 # forecast. Every scored consequence uses that same forecast; the shorter
-# control interval is retained only as an execution diagnostic and as the
-# fraction of a longer navigation plan that this input can actually realize.
+# control interval is retained only as an execution diagnostic for the input
+# that will actually be submitted before replanning.
 
 const WeaponOutcomeFieldModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_outcome_field_model.gd"
@@ -137,8 +137,13 @@ func predict_base(
 		_movement_damage_exposure_reduction(observation, action)
 		* outcome.collision_risk
 	)
+	# Navigation is a consequence of sustaining the candidate over the same
+	# forecast used by exposure, collision, pickups, rules, and weapon outcomes.
+	# The controller still commits only one control interval before replanning;
+	# shortening this field alone made local combat receive several times the
+	# horizon of strategic movement in the same utility comparison.
 	outcome.navigation_terminal_value_gain = _navigation_value_progress(
-		observation, committed_action, planning_context
+		observation, action, planning_context
 	)
 	return outcome
 
@@ -218,13 +223,13 @@ func _navigation_value_progress(
 	observation: Dictionary, action: Dictionary, planning_context: Dictionary
 ) -> float:
 	# Realize the terminal value field at this action's direction using only the
-	# displacement caused by the submitted movement input.
-	var committed_sample: Dictionary = action.samples.back()
-	var committed_displacement: Vector2 = committed_sample.displacement
+	# displacement caused by the candidate movement input.
+	var terminal_sample: Dictionary = action.samples.back()
+	var terminal_displacement: Vector2 = terminal_sample.displacement
 	var zero_input_displacement: Vector2 = _player_kinematics_model.predict_displacement(
-		observation, Vector2.ZERO, committed_sample.time
+		observation, Vector2.ZERO, terminal_sample.time
 	)
-	var controlled_displacement: Vector2 = committed_displacement - zero_input_displacement
+	var controlled_displacement: Vector2 = terminal_displacement - zero_input_displacement
 	if controlled_displacement.length_squared() <= 0.0:
 		return 0.0
 	var directional_samples: Array = planning_context.navigation_directional_value_samples

@@ -15,7 +15,8 @@ func _init() -> void:
 		return
 	_check_target_response()
 	_check_swept_enemy_contact()
-	_check_directional_navigation_value()
+	_check_navigation_horizon_consistency()
+	_check_navigation_opportunity_retention()
 	_check_pickup_interaction_geometry()
 	_check_visible_material_quantity_estimate()
 	_check_spatial_target_control()
@@ -93,8 +94,8 @@ func _check_swept_enemy_contact() -> void:
 	var weights := _influence_weights()
 	var outcome: Dictionary = influence.predict(observation, action, weights, 0.1)
 	_expect(
-		is_equal_approx(outcome.peak_path_collision_risk, 0.5),
-		"enemy contact must be detected between safe-looking sample endpoints"
+		is_equal_approx(outcome.peak_path_collision_risk, 1.0),
+		"a swept collision-boundary crossing must be a complete contact opportunity"
 	)
 	_expect(
 		is_equal_approx(outcome.maximum_path_collision_raw_damage, 3.0),
@@ -112,21 +113,23 @@ func _check_swept_enemy_contact() -> void:
 		observation, action, _path_collision_evidence(swarm_outcome), false
 	)
 	_expect(
-		swarm_impact.expected_health_loss > single_impact.expected_health_loss,
-		"independent swept contacts must increase expected health loss after iframes are applied"
+		is_equal_approx(swarm_impact.expected_health_loss, single_impact.expected_health_loss),
+		"simultaneous swept contacts must remain one complete hit under vanilla iframes"
 	)
 
 
-func _check_directional_navigation_value() -> void:
-	var predictor_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_outcome_predictor.gd"
-	)
+func _check_navigation_horizon_consistency() -> void:
+	var predictor_script: Script = _load_movement_outcome_script()
 	var predictor: Reference = predictor_script.new()
 	var observation := _planning_observation([])
 	var action := {
-		"movement": Vector2.LEFT,
-		"forecast_seconds": 0.1,
-		"samples": [{"time": 0.1, "displacement": Vector2(-10.0, 0.0)}],
+		"movement": Vector2.RIGHT,
+		"forecast_seconds": 0.4,
+		"samples":
+		[
+			{"time": 0.1, "displacement": Vector2(10.0, 0.0), "movement": Vector2.RIGHT},
+			{"time": 0.4, "displacement": Vector2(40.0, 0.0), "movement": Vector2.RIGHT},
+		],
 	}
 	var context := {
 		"control_interval_seconds": 0.1,
@@ -137,19 +140,83 @@ func _check_directional_navigation_value() -> void:
 			{
 				"direction": Vector2.RIGHT,
 				"terminal_distance": 100.0,
-				"terminal_value_delta": 4.0,
+				"terminal_value_delta": 1.0,
 			},
 			{
 				"direction": Vector2.LEFT,
 				"terminal_distance": 100.0,
-				"terminal_value_delta": 1.0,
+				"terminal_value_delta": 0.0,
 			},
-		]
+		],
 	}
 	var outcome: Dictionary = predictor.predict_base(observation, action, context)
 	_expect(
-		is_equal_approx(outcome.navigation_terminal_value_gain, 0.1),
-		"an action aligned with a sampled direction must realize its proportional field value"
+		is_equal_approx(outcome.navigation_terminal_value_gain, 0.4),
+		(
+			"navigation and local consequences must realize the same sustained-action "
+			+ "forecast horizon"
+		)
+	)
+
+
+func _check_navigation_opportunity_retention() -> void:
+	var planner_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_intent_planner.gd"
+	)
+	var planner: Reference = planner_script.new()
+	var diagonal := Vector2(1.0, 1.0).normalized()
+	var tree := {
+		"kind": "tree",
+		"memory_record_id": 1,
+		"relative_position": diagonal * 500.0,
+		"last_observed_relative_position": diagonal * 500.0,
+		"existence_confidence": 1.0,
+		"destructible_profile":
+		{
+			"destruction": {"required_hits": 1.0},
+			"kill_rewards":
+			{
+				"base_materials": 10.0,
+				"base_consumable_drop_chance": 0.0,
+				"item_box_conditional_chance": 0.0,
+			},
+		},
+	}
+	var observation := _planning_observation([])
+	observation.remembered_entities = [tree]
+	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
+	observation.visibility = {
+		"viewport_size": Vector2.ZERO,
+		"viewport_offset_from_player": Vector2.ZERO,
+	}
+	var context := {
+		"environmental_pressure_weights": _influence_weights(),
+		"state_factors":
+		{
+			"health_inventory_value":
+			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0},
+			"information_value_per_viewport": 0.0,
+			"environmental_exposure_value": 1.0,
+		},
+		"target_completion_ledger": _completion_ledger({}, {1: 1.0}),
+	}
+	var compute_budget := {"has_deadline": false}
+	var compute_policy_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_compute_budget_policy.gd"
+	)
+	var result: Dictionary = planner.plan(
+		observation,
+		context,
+		compute_budget,
+		{"navigation_direction_count": 4, "navigation_extra_evaluation_limit": 0},
+		compute_policy_script.new()
+	)
+	_expect(
+		result.movement_preference.dot(diagonal) > 0.99,
+		(
+			"an off-lattice value-derived opportunity must remain distinguishable "
+			+ "when search fidelity reaches its floor"
+		)
 	)
 
 
@@ -819,6 +886,13 @@ func _load_collision_health_impact_script() -> Script:
 func _load_spatial_opportunity_script() -> Script:
 	var script: Script = load(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/spatial_opportunity_value_model.gd"
+	)
+	return script
+
+
+func _load_movement_outcome_script() -> Script:
+	var script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_outcome_predictor.gd"
 	)
 	return script
 

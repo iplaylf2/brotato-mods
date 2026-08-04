@@ -4,17 +4,21 @@
 [架构文档](architecture.md) 定义；信息与控制权限由 [玩家权限边界](fair-play.md) 定义。本文只维护代码
 所有权和跨模块契约，不重复算法说明。
 
-## 顶层依赖
+## 运行时边界与依赖
 
 | 模块 | 责任 | 公共边界 |
 | --- | --- | --- |
-| `bot/control` | 安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`get_decision_sample_path()` 提供当前采样文件；`AutopilotMovementBehavior` 是唯一控制输出 |
-| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价及最大效用选择 | `MovementPlanner.plan()`；其余模块是规划包内部协作者 |
-| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.get_observation()` 提供防御性副本；`get_planning_observation()` 提供同步只读规划视图 |
+| `mod_main.gd` | 安装主场景扩展，接入 Mod Loader 配置并发布启用状态 | `is_enabled()` 与 `enabled_changed`；不创建战斗期观察或规划对象 |
+| `extensions/main.gd` | 作为组合根响应玩家生成、启用切换和房间清理，按顺序创建或停止观察服务与控制器 | 主场景上的 `autopilot_observation_service` 与 `autopilot_controller` 只提供诊断入口；不承载观察或规划语义 |
+| `bot/control` | 安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.initialize()`、`shutdown()` 和计划诊断入口；`AutopilotMovementBehavior` 是唯一控制输出 |
+| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价及最大效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
+| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 提供同步只读规划视图 |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
 
-依赖方向为 `control → observation`、`control → planning` 和 `observation → knowledge`。`planning` 只接收
-已经移除场景节点的观察字典，不反向依赖 `control`、`observation` 或 `knowledge`。
+依赖从组合根向领域边界单向展开：`mod_main.gd → extensions/main.gd`，主场景扩展再依赖 `control` 与
+`observation`；`control → observation`、`control → planning`，`observation → knowledge`。`planning` 只接收
+已经移除场景节点的观察字典，不反向依赖 `control`、`observation` 或 `knowledge`。控制层对
+`MovementTimingModel` 的依赖只共享重规划间隔；时域派生及其解释权仍属于规划包。
 
 所有新增能力必须先满足玩家权限边界。玩家效果的原版字段映射由 `bot/knowledge/player_effects` 拥有，
 消耗品稳定画像由 `bot/knowledge/pickups` 拥有；公共规则轴及其解释权属于规划模型，不能随原版字段数量
@@ -23,7 +27,7 @@
 
 ## 规划包的子目录边界
 
-`bot/planning` 根目录是主要协作包：其中组件共同服务唯一入口 `MovementPlanner`，并存在密集的包内依赖。
+`bot/planning` 根目录是主要协作包：其中大多数组件共同服务规划入口 `MovementPlanner`，并存在密集的包内依赖。
 只有可单独消费的稳定子协议进入子目录：
 
 - `motion` 拥有“规范运动观察与稳定响应 → 未来位置和可达包络”的协议，供暴露、交会、事件与动作采样
@@ -44,6 +48,8 @@
 - `bot/knowledge/pickups/material_quantity_estimator.gd` 只把可见材料缩放估算为目标版本机制保证的单位下界；
   `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定恢复与处理画像。二者都不读取
   不可见实体或未来随机结果。
+- `bot/knowledge/neutrals/neutral_destruction_compiler.gd` 拥有可见树木的稳定破坏需求与掉落画像；
+  `bot/knowledge/projectiles/projectile_motion_compiler.gd` 把可见投射物的稳定运动配置编译为解析运动模型。
 - `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
   `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量；
   `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线。
@@ -98,6 +104,9 @@
   `bot/planning/player_rule_projector.gd` 将规则归约为正交状态。这些模块都不能读取场景节点。
 - `bot/planning/movement_outcome_predictor.gd` 组合动作结果；`bot/planning/movement_utility_model.gd` 将结果换算
   为效用。预测和评分是两个边界，选择器不拥有二者。
+- `bot/planning/movement_action_generator.gd` 从可执行输入空间构造基线与细分候选；
+  `bot/planning/movement_action_selector.gd` 只选择总效用最高的已评分候选；`MovementPlanner` 协调生成、
+  预测、评分、细分与选择，不把新行为政策藏进选择器。
 
 ### 计算预算与遥测
 

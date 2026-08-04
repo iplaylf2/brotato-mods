@@ -51,10 +51,16 @@ func plan(
 	)
 	var baseline_direction_count: int = search_fidelity.navigation_direction_count
 	var extra_evaluation_limit: int = search_fidelity.navigation_extra_evaluation_limit
-	var baseline_directions: Array = _uniform_directions(baseline_direction_count)
 	var opportunity_directions: Array = _spatial_opportunity_value_model.candidate_directions(
 		observation, context
 	)
+	var baseline_directions: Array = _baseline_directions(
+		baseline_direction_count, opportunity_directions
+	)
+	# The value field's highest reachable opportunity bound is part of the semantic
+	# baseline, not optional search refinement. Otherwise frame pressure removes
+	# the only heading that can represent an off-lattice tree, pickup, or enemy,
+	# even though every later stage promises to retain the navigation preference.
 	var stationary_exposure_by_time := {}
 	var stationary_opportunity_by_time := {}
 	var origin: Dictionary = _evaluate_position(
@@ -284,6 +290,16 @@ func _uniform_directions(direction_count: int) -> Array:
 		result.push_back(
 			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))
 		)
+	return result
+
+
+func _baseline_directions(direction_count: int, opportunity_directions: Array) -> Array:
+	var result: Array = _uniform_directions(direction_count)
+	if opportunity_directions.empty():
+		return result
+	var opportunity_direction: Vector2 = opportunity_directions[0].direction
+	if not _has_similar_direction(result, opportunity_direction):
+		result.push_back(opportunity_direction)
 	return result
 
 

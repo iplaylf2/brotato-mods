@@ -50,7 +50,7 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 实现变更后应建立新的校准数据集，不把此前实现产生的样本纳入当前比较。运行时只写入当前结构，不读取
 或迁移采样文件。
 
-### 可解释范围
+### 样本能解释什么
 
 采样是定期截面，不是逐帧回放。两条 `decision_sample` 之间仍会发生未记录的重规划，因此不能从文件
 恢复每个控制周期的移动输入，也不能把后一条观察直接归因于前一条采样决策。
@@ -67,7 +67,7 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 因此，采样适合比较记录时刻的候选排序、价值上下文、派生尺度和可观察的短期预测误差，不足以单独证明
 整条反事实路径或未观察结果正确。需要逐控制周期验证时，应先扩展采样契约，而不是从现有缺口推断。
 
-### 性能反馈的可解释范围
+### 性能与计算预算
 
 #### 搜索预算
 
@@ -76,7 +76,8 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 `planning_duration_budget_usec = 0`，且预算利用率为 `null`。
 `budget_pressure` 是此前规划耗时 EMA 相对本轮余量的连续压力；`search_fidelity` 再记录最早物理影响时间、
 移动与导航搜索保真度及其离散候选额度。它们只解释搜索计算分配，不代表碰撞采样精度、动作结果优劣或
-目标价值。
+目标价值。导航基线除均匀方向外，至多再保留一个不与格点重合的最高机会价值上界方向；该方向属于
+`baseline_position_evaluation_count`，不属于截止准入控制的额外评价。
 
 `planning_duration_budget_utilization` 使用本轮实测耗时除以本轮预算。大于 `1` 表示本轮超出预算；单次
 超出可能来自基线工作、工作量突变、单项耗时低估、系统调度或性能监视延迟。连续超出时，应比较
@@ -258,8 +259,9 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
 尚未进入收集圈时，机会价值必须继续存在；未扫近任何材料时，路径机会不应继续提供正收益。波末样本
 还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。动作预测窗内的拾取是持续采用
 该候选输入时的条件结果，不是已经执行的事实。另行区分导航意图中的终点总增益
-`terminal_value_gain` 与动作结果中的本提交期兑现值 `navigation_terminal_value_gain`：后者应先将相邻
-`directional_value_samples` 的终点单位距离价值作环形线性插值，再乘以输入相对零输入造成的提交位移。
+`terminal_value_gain` 与动作结果中的预测窗兑现值 `navigation_terminal_value_gain`：后者应先将相邻
+`directional_value_samples` 的终点单位距离价值作环形线性插值，再乘以输入相对零输入在动作预测窗内
+造成的位移。它与输出、暴露和条件承伤使用同一持续动作时域，不能缩短为提交期后再与完整动作窗收益比较。
 材料密集或路线穿过多个材料簇时，重点比较逐控制期反转率。出现 `material_assimilation.active` 的敌人时，
 还应比较材料与玩家、敌人的预计到达次序、后续实际材料消失及候选排序；没有可争夺材料时，该画像本身
 不应形成固定击杀优先级。
@@ -312,7 +314,7 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
 
 ### 性能
 
-按 [性能反馈的可解释范围](#性能反馈的可解释范围) 检查帧耗时样本、预算利用率、截止超时量、导航与角度
+按 [性能与计算预算](#性能与计算预算) 检查帧耗时样本、预算利用率、截止超时量、导航与角度
 细分次数及对应单项耗时 EMA；结合敌人、原始投射物及延后投射物数量解释成本变化。
 
 校准目标是减少系统性偏差并提高跨构筑稳定性，不是让单局结果贴合某个理想路线。任何新常数都应先说明

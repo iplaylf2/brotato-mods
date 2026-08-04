@@ -207,7 +207,10 @@ func _sample_enemy_pressure(
 			- geometry.player_radius
 			- track.behavior_profile.contact_radius
 		)
-		var contact := clamp(-physical_clearance / geometry.player_radius, 0.0, 1.0)
+		# Crossing the collision boundary is a complete contact opportunity; overlap
+		# depth is not hit probability. The previous depth ramp assigned almost zero
+		# damage to the grazing contacts that vanilla resolves as ordinary hits.
+		var contact := _intersection_contact_evidence(physical_clearance)
 		channels.contact = max(channels.contact, contact * track.recency_confidence)
 		if contact > 0.0:
 			var contact_evidence: float = contact * track.recency_confidence
@@ -487,7 +490,7 @@ func _sample_projectile_pressure(
 		)
 		var projectile_pressure: float = proximity * proximity
 		channels.projectile += projectile_pressure
-		var contact_evidence: float = clamp(-clearance / geometry.player_radius, 0.0, 1.0)
+		var contact_evidence: float = _intersection_contact_evidence(clearance)
 		channels.projectile_contact = max(channels.projectile_contact, contact_evidence)
 		var intercepted: bool = interception_sample >= 0 and sample_index >= interception_sample
 		if contact_evidence > 0.0 and not intercepted:
@@ -525,9 +528,9 @@ func _sample_projectile_point_pressure(
 		)
 		channels.projectile += proximity * proximity
 		channels.projectile_contact = max(
-			channels.projectile_contact, clamp(-clearance / geometry.player_radius, 0.0, 1.0)
+			channels.projectile_contact, _intersection_contact_evidence(clearance)
 		)
-		if clearance < 0.0:
+		if clearance <= 0.0:
 			channels.contact_damage = max(channels.contact_damage, projectile.contact_damage)
 
 
@@ -754,6 +757,10 @@ func _closest_fraction_to_origin(segment_start: Vector2, segment_end: Vector2) -
 	if length_squared <= 0.0:
 		return 0.0
 	return clamp(-segment_start.dot(segment) / length_squared, 0.0, 1.0)
+
+
+func _intersection_contact_evidence(clearance: float) -> float:
+	return 1.0 if clearance <= 0.0 else 0.0
 
 
 func _saturate(value: float) -> float:
