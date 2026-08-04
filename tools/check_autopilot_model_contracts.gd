@@ -16,7 +16,9 @@ func _init() -> void:
 	_check_target_response()
 	_check_swept_enemy_contact()
 	_check_pickup_interaction_geometry()
+	_check_spatial_target_control()
 	_check_weapon_outcome_contracts()
+	_check_health_inventory_loss()
 	quit(1 if _failed else 0)
 
 
@@ -99,9 +101,7 @@ func _check_swept_enemy_contact() -> void:
 
 
 func _check_pickup_interaction_geometry() -> void:
-	var spatial_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/spatial_opportunity_value_model.gd"
-	)
+	var spatial_script: Script = _load_spatial_opportunity_script()
 	var spatial: Reference = spatial_script.new()
 	var material := {
 		"kind": "material",
@@ -123,6 +123,7 @@ func _check_pickup_interaction_geometry() -> void:
 				"dodge_chance": 0.0,
 				"hit_protection": 0,
 			},
+			"effective_stats": {"luck": 0.0},
 			"movement": {"knockback_velocity": Vector2.ZERO},
 			"effect_rules": [],
 			"weapons": [],
@@ -132,11 +133,83 @@ func _check_pickup_interaction_geometry() -> void:
 		"localization": {"map_bounds": _unknown_bounds()},
 	}
 	var value: Dictionary = spatial.stationary_value(
-		observation, {"state_factors": {"health_resource_value": {}}}, 0.0
+		observation, {"state_factors": {"health_inventory_value": {}}}, 0.0
 	)
 	_expect(
 		value.material_opportunity > 0.0 and value.material_opportunity < 1.0,
 		"pickup opportunity must persist until the material center reaches the collection circle"
+	)
+
+
+func _check_spatial_target_control() -> void:
+	var spatial_script: Script = _load_spatial_opportunity_script()
+	var observation := {
+		"physics_frame": 4,
+		"wave_state": {"number": 5, "seconds_remaining": 20.0, "duration_seconds": 40.0},
+		"player_state":
+		{
+			"collision_radius": 10.0,
+			"pickup": {"attraction_radius": 100.0, "collection_radius": 20.0},
+			"runtime_stats":
+			{
+				"move_speed": 100.0,
+				"armor": 0.0,
+				"dodge_chance": 0.0,
+				"hit_protection": 0,
+			},
+			"effective_stats": {"luck": 0.0},
+			"movement": {"knockback_velocity": Vector2.ZERO},
+			"effect_rules": [],
+			"weapons": [{"slot": 0, "attack_model": _weapon_attack_model()}],
+		},
+		"remembered_entities": [],
+		"enemy_tracks":
+		[
+			_enemy_track(Vector2(-100.0, 0.0), Vector2.ZERO, false),
+			_enemy_track(Vector2(200.0, 0.0), Vector2.ZERO, false),
+		],
+		"localization": {"map_bounds": _unknown_bounds()},
+	}
+	observation.enemy_tracks[1].track_id = 2
+	observation.enemy_tracks[0].behavior_profile.durability = {"maximum_health": 10.0}
+	observation.enemy_tracks[1].behavior_profile.durability = {"maximum_health": 10.0}
+	var context := {
+		"enemy_removal_value_ledger": {"removal_value_by_track_id": {1: 1.0, 2: 100.0}},
+		"state_factors": {"health_inventory_value": {}},
+	}
+	var spatial: Reference = spatial_script.new()
+	var enemy_delta: Dictionary = spatial.value_delta(
+		observation, context, Vector2(100.0, 0.0), 1.0
+	)
+	_expect(
+		enemy_delta.enemy_opportunity > 0.0,
+		"closing on a positive-removal-value enemy must retain a navigation gradient"
+	)
+
+	observation.physics_frame = 5
+	observation.enemy_tracks = []
+	observation.remembered_entities = [
+		{
+			"kind": "tree",
+			"relative_position": Vector2(200.0, 0.0),
+			"existence_confidence": 1.0,
+			"destructible_profile":
+			{
+				"destruction": {"required_hits": 1.0},
+				"kill_rewards":
+				{
+					"base_materials": 8.0,
+					"base_consumable_drop_chance": 0.0,
+					"item_box_conditional_chance": 0.0,
+				},
+			},
+		}
+	]
+	spatial = spatial_script.new()
+	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(100.0, 0.0), 1.0)
+	_expect(
+		tree_delta.tree_opportunity > 0.0,
+		"closing on a positive-value tree must retain a navigation gradient"
 	)
 
 
@@ -186,9 +259,9 @@ func _check_weapon_outcome_contracts() -> void:
 			"control_interval_seconds": 0.1,
 			"enemy_removal_value_ledger":
 			{
-				"removal_values": {1: 10.0, 2: 100.0},
+				"removal_value_by_track_id": {1: 10.0, 2: 100.0},
 			},
-			"state_factors": {"health_resource_value": {}},
+			"state_factors": {"health_inventory_value": {}},
 		}
 	)
 	_expect(
@@ -200,6 +273,26 @@ func _check_weapon_outcome_contracts() -> void:
 		"automatic weapon value must belong to the nearest fully available target"
 	)
 	observation.physics_frame = 4
+	observation.player_state.weapons.push_back({"slot": 1, "attack_model": _weapon_attack_model()})
+	var shared_delivery_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(
+		observation,
+		action,
+		shared_delivery_outcome,
+		{
+			"control_interval_seconds": 0.1,
+			"enemy_removal_value_ledger": {"removal_value_by_track_id": {1: 10.0, 2: 100.0}},
+			"state_factors": {"health_inventory_value": {}},
+		}
+	)
+	_expect(
+		is_equal_approx(
+			shared_delivery_outcome.expected_weapon_damage, 2.0 * outcome.expected_weapon_damage
+		),
+		"weapons sharing target geometry must retain their independent attack capacity"
+	)
+	observation.player_state.weapons.pop_back()
+	observation.physics_frame = 5
 	low_value_track.relative_position = Vector2(200.0, 0.0)
 	high_value_track.relative_position = Vector2(100.0, 0.0)
 	var high_value_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
@@ -209,8 +302,8 @@ func _check_weapon_outcome_contracts() -> void:
 		high_value_outcome,
 		{
 			"control_interval_seconds": 0.1,
-			"enemy_removal_value_ledger": {"removal_values": {1: 10.0, 2: 100.0}},
-			"state_factors": {"health_resource_value": {}},
+			"enemy_removal_value_ledger": {"removal_value_by_track_id": {1: 10.0, 2: 100.0}},
+			"state_factors": {"health_inventory_value": {}},
 		}
 	)
 	_expect(
@@ -220,7 +313,7 @@ func _check_weapon_outcome_contracts() -> void:
 		),
 		"positioning that makes a higher-value target nearest must produce higher combat value"
 	)
-	observation.physics_frame = 5
+	observation.physics_frame = 6
 	high_value_track.relative_position = Vector2(320.0, 0.0)
 	high_value_track.last_measurement.visual_radius = 100.0
 	observation.enemy_tracks = [high_value_track]
@@ -231,13 +324,54 @@ func _check_weapon_outcome_contracts() -> void:
 		outside_center_range_outcome,
 		{
 			"control_interval_seconds": 0.1,
-			"enemy_removal_value_ledger": {"removal_values": {2: 100.0}},
-			"state_factors": {"health_resource_value": {}},
+			"enemy_removal_value_ledger": {"removal_value_by_track_id": {2: 100.0}},
+			"state_factors": {"health_inventory_value": {}},
 		}
 	)
 	_expect(
 		is_equal_approx(outside_center_range_outcome.expected_weapon_damage, 0.0),
 		"target visual size must not extend the center-distance automatic targeting range"
+	)
+
+
+func _check_health_inventory_loss() -> void:
+	var health_inventory_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_inventory_value_model.gd"
+	)
+	var health_inventory_model: Reference = health_inventory_script.new()
+	var abundant_supply_value := {
+		"immediate_survival_buffer": 4.0,
+		"projected_health_inventory": 100.0,
+		"terminal_health_loss_unit_value": 10.0,
+	}
+	var scarce_supply_value: Dictionary = abundant_supply_value.duplicate()
+	scarce_supply_value.projected_health_inventory = 4.0
+	_expect(
+		(
+			health_inventory_model.health_loss_value(2.0, abundant_supply_value)
+			< health_inventory_model.health_loss_value(2.0, scarce_supply_value)
+		),
+		"time-feasible replacement supply must lower non-terminal health opportunity cost"
+	)
+	var abundant_catastrophic_loss: float = health_inventory_model.health_loss_value(
+		5.0, abundant_supply_value
+	)
+	_expect(
+		is_equal_approx(
+			(
+				abundant_catastrophic_loss
+				- health_inventory_model.health_loss_value(3.0, abundant_supply_value)
+			),
+			2.0 * abundant_supply_value.terminal_health_loss_unit_value
+		),
+		"future replacement supply must not absorb current-buffer terminal loss"
+	)
+	_expect(
+		(
+			abundant_catastrophic_loss
+			< health_inventory_model.health_loss_value(5.0, scarce_supply_value)
+		),
+		"replacement liquidity may reduce only the survivable part of a risky action"
 	)
 
 
@@ -248,6 +382,13 @@ func _empty_weapon_outcome(field_names: Array) -> Dictionary:
 	outcome.expected_recovery = 0.0
 	outcome.expected_recovery_events = 0.0
 	return outcome
+
+
+func _load_spatial_opportunity_script() -> Script:
+	var script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/spatial_opportunity_value_model.gd"
+	)
+	return script
 
 
 func _weapon_attack_model() -> Dictionary:

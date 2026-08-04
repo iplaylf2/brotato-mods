@@ -88,9 +88,10 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 
 #### 武器结果场的性能边界
 
-自动武器不按候选动作展开射击事件。每次规划最多计算移动状态的九个格点和一个静止样本；目标覆盖本身
-随“武器数 × 当前可见目标数”增长，直接贯穿的走廊交会在每个格点对覆盖目标成对比较，因此密集目标下
-包含二次项；增加候选方向仍只增加插值工作。性能复盘应同时比较武器数、可见敌人与树木数、目标密度、
+自动武器不按候选动作展开射击事件。每次规划最多计算移动状态的九个格点和一个静止样本；每个路径采样
+只排序一次目标，锁定与直接路径几何相同的武器共享覆盖结果。直接贯穿的走廊交会仍在每种唯一几何下对
+覆盖目标成对比较，因此密集目标下包含二次项；增加候选方向仍只增加插值工作。性能复盘应同时比较唯一
+武器投送几何数、武器数、可见敌人与树木数、目标密度、
 候选数和 `phase_duration_usec.action_evaluation`。用候选数近似不变的样本估计目标规模成本，再用目标规模
 近似不变的样本检查候选加密成本；后者若仍近似线性增长，应排查其他逐候选通道。所有候选必须使用同一
 分辨率和同一期望语义，不能随预算切换为逐发预测或降低格点数，否则候选排序会混入计算模式差异。
@@ -114,7 +115,9 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 | 原版规则或运行时测量 | 玩家碰撞半径、敌人与投射物接触半径、拾取半径、武器时序、锁定距离与最大飞行距离、候选状态下的可执行移动速度、护甲减伤公式、道具箱最低回收价值、一级属性升级增量、诅咒概率曲线、原版每物理帧以 `0.1` 为权重衰减击退所对应的指数衰减率 | 保持原版或观察为唯一真相源；升级目标版本时复核 |
 | 由状态与统一控制契约派生 | 控制/近端/局部/导航时域、有效时域、动作方向数上限、时间采样数、控制距离、敌人/投射物压力距离、遇敌余量、边缘与队友机动余量、漫游归一距离、机会可达距离、局部预测半径、TTC 风险与截断时域 | 不独立调参；只复核物理 tick 数、控制步数、碰撞直径倍数或解析弹道相位分辨率 |
 | 稳定机制与保守代理 | 未提供标准射程时的远程压力距离、无法读取外观时仅供可见性、邻近压力和命中路径交会使用的默认外观半径、以最大生命表示的保守耐久基准 | 保留来源和保守含义；不得把代理值跨用途用于锁定范围、碰撞、伤害或其他更高证据等级的职责 |
-| 经验启发式 | 生命稀缺曲线与剩余暴露折价、材料推迟兑现的成长时机价值、材料吸收竞速时域与成长负担代理、地图再观察价值、诅咒净机会价值基准、预算压力指数、搜索保真度下限、即时影响压力份额、影响时间曲率、额外工作额度、耗时 EMA 与截止保护倍率、运动估计平滑与遗忘阈值 | 不宣称物理真实性；通过当前实现产生的样本校准 |
+| 经验启发式 | 生命库存的对数障碍尺度与生命补充影子价格、材料推迟兑现的成长时机价值、材料吸收竞速时域与成长负担代理、地图再观察价值、诅咒净机会价值基准、预算压力指数、搜索保真度下限、即时影响压力份额、影响时间曲率、额外工作额度、耗时 EMA 与截止保护倍率、运动估计平滑与遗忘阈值 | 不宣称物理真实性；通过当前实现产生的样本校准 |
+
+### 统一时空派生
 
 `MovementTimingModel` 与 `MovementGeometryModel` 统一拥有时间和空间派生关系。设物理频率为 `f`、玩家
 碰撞半径为 `r`、当前可执行移动速度为 `v`，控制、近端、默认局部、局部上限和导航时域分别为
@@ -150,6 +153,26 @@ TTC cutoff                    = Tnav_effective
 同一次决策中得到一致尺度。结构时域与有效时域保存在 `decision.model.timing`，空间尺度保存在
 `decision.model.derived.movement_geometry`，便于分别验证时间裁剪和几何派生关系。
 
+### 生命库存定价
+
+生命库存使用清场时域，而不是动作的局部预测窗。设当前生命为 `H`、最强可见下一击的护甲后伤害储备为
+`R`、清场前按到达时间、存在置信度和目标完成可行性折算的生命补充为 `S`、同期被动流失为 `D`、材料
+等价风险尺度为 `K`，则：
+
+```text
+immediate_survival_buffer       = B  = max(1, H - R)
+projected_health_inventory      = I  = max(1, B + S - D)
+marginal_health_unit_value           = K / I
+terminal_health_loss_unit_value      = K / B
+survivable_action_loss          = Ls = min(L, max(0, B - 1))
+survivable_loss_value                = integral[x=0..Ls] K / max(1, I - x) dx
+terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_unit_value
+```
+
+已观察消耗品按到达后仍可利用的波次比例和存在置信度计入 `S`；概率掉落按目标完成可行性与掉落概率计入，
+被动恢复和生命偷取按剩余可作用时间及各自速率计入。因而时间只改变具体补充与收益是否还能兑现，不构成
+独立风险偏好。
+
 ## 仍需校准的假设
 
 以下参数目前有合理职责，但没有足够证据把具体数值视为可靠常数：
@@ -171,14 +194,16 @@ TTC cutoff                    = Tnav_effective
    瞬时截止表现以 `planning_duration_budget_utilization` 的 p95/p99 分位数和掉帧频率为验证依据；完整
    动作评价的成本应结合 `action_count` 与 `phase_duration_usec.action_evaluation` 比较，不能从额外工作
    次数反推。
-4. `OpportunityValueModel` 中的树木收获可行性、材料兑现价格和掉落机会价值，以及
-   `HealthResourceValueModel` 中的恢复展望窗、基础生命价值、生存余量曲线和非致命生命折价，仍需共同
-   校准。道具箱的最低回收价值是目标版本规则，不作为自由权重调节；需要校准的是基础消耗品概率、其中
-   成为箱子的条件概率，以及箱子与果实的实际兑现率。箱子同时产生道具选择与治疗，两项收益应分别进入
-   对应账本；已经落地的箱子会在波末自动收集，不得再以道具选择价值吸引移动。样本应覆盖树木与特殊敌人
-   的实际兑现率、不同构筑下各类恢复供给的兑现率、末段受伤频率和生命收益交换。非致命生命按本波剩余
-   比例折价；恢复展望窗只界定近期替代供给，不得再次充当波末折价窗口。
-   终止风险使用未折价生命价格，但不应在效用账本之外形成另一套动作选择规则。
+4. `TargetCompletionFeasibilityModel` 的敌人击杀与树木摧毁可行性、`OpportunityValueModel` 的材料兑现
+   价格和掉落机会价值，以及 `HealthInventoryValueModel` 的 `HEALTH_INVENTORY_VALUE_SCALE` 和各类生命
+   补充的实际兑现率，仍需共同校准。风险尺度只表达材料收益与生命库存的交换偏好，不拥有时间窗、生命
+   阈值或动作禁令。道具箱的最低回收价值是目标版本规则，不作为自由权重调节；需要校准的是基础消耗品
+   概率、其中成为箱子的条件概率，以及箱子与果实的实际兑现率。箱子同时产生道具选择与治疗，两项收益
+   应分别进入对应账本；已经落地的箱子会在波末自动收集，不得再以道具选择价值吸引移动。样本应覆盖树木
+   与特殊敌人的实际兑现率、不同构筑下各类生命补充的兑现率、末段受伤频率和生命收益交换。本波剩余时间
+   只界定生命补充与收益的可兑现性，不直接产生生命折价。清场前可兑现的补充进入预计生命库存并降低
+   非致命承伤的机会成本，但不得扩张当前即时生存缓冲。
+   终止风险不应在效用账本之外形成另一套动作选择规则。
 5. 压力曲线、冲撞时间窗及扫掠走廊、目标位置响应、地图再观察价值和机会可达性衰减共同决定行为平滑度
    与取舍。校准必须比较候选排序、实际受伤、拾取、输出、新观察与再观察面积和方向反转，不能只看最终
    存活。冲撞样本还应按直接瞄准玩家、玩家周边随机点和任意地图点分层，确认横向脱离只因走廊交会减少
@@ -230,17 +255,18 @@ TTC cutoff                    = Tnav_effective
    跨度和实际输出趋势，若群体平均近似产生系统性排序偏差，应改进通用核或网格，而不是为武器或敌人
    添加目标优先级。
 8. 同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、提交期诊断
-   `expected_health_loss` 和 `field_utility_breakdown.forecast_health_resource_loss_value`：终止与非终止风险
-   都应由统一效用账本与材料、输出、恢复和地图信息价值交换，不能在选择器外再次过滤。生命资源复盘按
+   `expected_health_loss` 和 `field_utility_breakdown.forecast_health_inventory_loss_value`：终止与非终止风险
+   都应由统一效用账本与材料、输出、恢复和地图信息价值交换，不能在选择器外再次过滤。生命库存复盘按
    本波剩余比例和恢复构筑分层，对照
-   `reachable_observed_recovery_supply`、`expected_drop_recovery_supply`、`passive_recovery_supply`、
-   `expected_lifesteal_recovery_supply`、`expected_passive_health_drain`、`effective_survival_buffer` 与
-   `marginal_health_value`；确认普通生命价格从波初到波末连续下降、替代供给降低价格，同时大量预计损失
-   因消耗后的生存缓冲变稀缺而高于当前边际价格的线性外推；拾取恢复按供给转化的边际价值产生收益，
-   同时 `consumed_consumable_recovery_supply` 按供给影子价格结清离开地图的储备；
+   `reachable_observed_replenishment`、`expected_drop_replenishment`、`passive_replenishment`、
+   `expected_lifesteal_replenishment`、`expected_passive_health_drain`、`immediate_survival_buffer`、
+   `projected_health_inventory` 与 `marginal_health_unit_value`；确认时间本身不改变同一库存状态的生命价格，
+   清场前可兑现补充会降低非致命承伤成本，而超过 `immediate_survival_buffer` 的部分仍按终止价值计价；
+   拾取恢复按 `recovery_conversion_unit_value` 产生收益，同时 `consumed_consumable_recovery_supply` 按
+   `replenishment_unit_value` 结清离开地图的储备；
    满血接触不应继续免费享受该储备带来的生命折价。地雷路径还应联合检查
    `consumed_single_use_support_supply` 与 `expected_allied_damage`，确认空踩只消耗储备，而覆盖敌人的引爆
-   能由当轮伤害机会抵偿，且 `terminal_health_value` 不随这些供给折价。
+   能由当轮伤害机会抵偿，且 `terminal_health_loss_unit_value` 不随这些供给折价。
 9. 群体接触应同时检查峰值风险、累计敌对接触、预期命中次数与原版无敌帧间隔，并对照外观半径与稳定
    接触形状，避免把持续贴身压缩成单次伤害或把精灵留白当作碰撞。追击敌人应按目标位置响应分步预测，
    再以敌我相对线段扫掠复核，并区分进入偏好距离后停住与向外恢复距离的行为。弯曲弹道应检查解析相位

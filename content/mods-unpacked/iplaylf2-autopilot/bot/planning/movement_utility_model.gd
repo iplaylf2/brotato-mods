@@ -5,15 +5,15 @@ extends Reference
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
-const HealthResourceValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health_resource_value_model.gd"
+const HealthInventoryValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_inventory_value_model.gd"
 )
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
-var _health_resource_value_model: Reference = HealthResourceValueModel.new()
+var _health_inventory_value_model: Reference = HealthInventoryValueModel.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
 var _scoring_schema_validated := false
 
@@ -26,11 +26,11 @@ func build_context(observation: Dictionary) -> Dictionary:
 	)
 	var player_rule_projection: Dictionary = _rule_projector.project(observation)
 	var recovery_profile: Dictionary = player_rule_projection.recovery
-	var health_value: Dictionary = _health_resource_value_model.estimate(
+	var health_inventory_value: Dictionary = _health_inventory_value_model.estimate(
 		observation, player_rule_projection
 	)
-	var health_price: float = health_value.marginal_health_value
-	var terminal_health_price: float = health_value.terminal_health_value
+	var marginal_health_unit_value: float = health_inventory_value.marginal_health_unit_value
+	var terminal_health_loss_unit_value: float = health_inventory_value.terminal_health_loss_unit_value
 	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
 	var damage_is_terminal_rule: bool = player_rule_projection.survival.terminal_on_positive_damage
 	var current_unprotected_damage_is_terminal: bool = (
@@ -38,32 +38,40 @@ func build_context(observation: Dictionary) -> Dictionary:
 		and observation.player_state.runtime_stats.hit_protection <= 0
 	)
 	var removal_value_ledger: Dictionary = _opportunity_value_model.build_enemy_removal_value_ledger(
-		observation, health_price
+		observation, marginal_health_unit_value
 	)
 	var information_value_per_viewport := _information_value_per_viewport(
-		observation, removal_value_ledger, health_value, wave_time_remaining_ratio
+		observation, removal_value_ledger, health_inventory_value, wave_time_remaining_ratio
 	)
 	var context := {
 		"objective_weights":
 		{
 			"survival":
 			{
-				"integrated_environmental_exposure": -health_price,
+				"integrated_environmental_exposure": -marginal_health_unit_value,
 				"forecast_terminal_collision_risk":
-				-terminal_health_price * max(1.0, health_value.observed_hit_reserve),
-				"forecast_health_resource_loss_value": -1.0,
-				"movement_damage_exposure_reduction": health_price,
+				(
+					-terminal_health_loss_unit_value
+					* max(1.0, health_inventory_value.immediate_hit_reserve)
+				),
+				"forecast_health_inventory_loss_value": -1.0,
+				"movement_damage_exposure_reduction": marginal_health_unit_value,
 			},
 			"recovery":
 			{
-				"expected_recovery": health_value.recovery_conversion_value,
+				"expected_recovery": health_inventory_value.recovery_conversion_unit_value,
 				# Replacement supply lowers the shadow price of taking damage. Charging
 				# that same price when a pickup is consumed puts insurance and consumption
 				# on one ledger instead of letting the same reserve be valued twice.
-				"consumed_consumable_recovery_supply": -health_value.recovery_supply_value,
-				"consumed_single_use_support_supply": -health_price,
+				"consumed_consumable_recovery_supply":
+				-health_inventory_value.replenishment_unit_value,
+				"consumed_single_use_support_supply": -marginal_health_unit_value,
 				"integrated_allied_healing_support":
-				health_value.recovery_conversion_value if recovery_profile.available else 0.0,
+				(
+					health_inventory_value.recovery_conversion_unit_value
+					if recovery_profile.available
+					else 0.0
+				),
 			},
 			"economy":
 			{
@@ -78,8 +86,8 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"combat":
 			{
 				"expected_enemy_removal_value_progress": 1.0,
-				"expected_rule_damage": removal_value_ledger.mean_value_per_health,
-				"expected_allied_damage": removal_value_ledger.mean_value_per_health,
+				"expected_rule_damage": removal_value_ledger.mean_removal_value_per_enemy_health,
+				"expected_allied_damage": removal_value_ledger.mean_removal_value_per_enemy_health,
 			},
 			"navigation": {"navigation_terminal_value_gain": 1.0},
 		},
@@ -102,11 +110,12 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"positive_damage_is_terminal_rule": damage_is_terminal_rule,
 			"current_unprotected_damage_is_terminal": current_unprotected_damage_is_terminal,
 			"recovery_profile": recovery_profile,
-			"health_resource_value": health_value,
-			"mean_enemy_removal_value_per_health": removal_value_ledger.mean_value_per_health,
+			"health_inventory_value": health_inventory_value,
+			"mean_removal_value_per_enemy_health":
+			removal_value_ledger.mean_removal_value_per_enemy_health,
 			"living_enemy_preservation_value": removal_value_ledger.living_enemy_preservation_value,
 			"information_value_per_viewport": information_value_per_viewport,
-			"environmental_exposure_value": health_price,
+			"environmental_exposure_value": marginal_health_unit_value,
 		},
 		"enemy_removal_value_ledger": removal_value_ledger,
 	}
@@ -118,9 +127,11 @@ func build_context(observation: Dictionary) -> Dictionary:
 
 func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	var scored_outcome := outcome.duplicate(false)
-	scored_outcome.forecast_health_resource_loss_value = (_health_resource_value_model.loss_value(
-		outcome.forecast_expected_health_loss, context.state_factors.health_resource_value
-	))
+	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
+	var health_inventory_loss_value: float = _health_inventory_value_model.health_loss_value(
+		outcome.forecast_expected_health_loss, health_inventory_value
+	)
+	scored_outcome.forecast_health_inventory_loss_value = health_inventory_loss_value
 	var field_utility_breakdown := {}
 	var objective_utility_breakdown := {}
 	var score := 0.0
@@ -153,7 +164,7 @@ func _assert_valid_scoring_schema(context: Dictionary) -> void:
 func _information_value_per_viewport(
 	observation: Dictionary,
 	removal_value_ledger: Dictionary,
-	health_value: Dictionary,
+	health_inventory_value: Dictionary,
 	remaining_ratio: float
 ) -> float:
 	var observed_value: float = (
@@ -164,17 +175,17 @@ func _information_value_per_viewport(
 	for consumable in observation.visible_world.consumables:
 		observed_value += (
 			_opportunity_value_model.consumable_recovery_value(observation, consumable)
-			* health_value.recovery_conversion_value
+			* health_inventory_value.recovery_conversion_unit_value
 		)
 		observation_count += 1
 	for tree in observation.visible_world.trees:
 		observed_value += _opportunity_value_model.tree_reward_value(
-			observation, tree, health_value
+			observation, tree, health_inventory_value
 		)
 		observation_count += 1
 	if not observation.enemy_tracks.empty():
 		observed_value += (
-			removal_value_ledger.mean_absolute_value
+			removal_value_ledger.mean_absolute_removal_value
 			* observation.enemy_tracks.size()
 		)
 		observation_count += observation.enemy_tracks.size()

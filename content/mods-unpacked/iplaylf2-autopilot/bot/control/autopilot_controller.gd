@@ -101,7 +101,7 @@ func _replan_all_players() -> void:
 		if not is_instance_valid(player):
 			continue
 		_movement_planners[player_index].set_frame_budget_context(frame_budget_context)
-		var observation: Dictionary = _observation_service.get_observation(player_index)
+		var observation: Dictionary = _observation_service.get_planning_observation(player_index)
 		var plan: Dictionary = _movement_planners[player_index].plan(observation)
 		_current_plans[player_index] = plan
 		_decision_telemetry.record_decision(

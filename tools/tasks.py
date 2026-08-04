@@ -41,6 +41,42 @@ def run(
     subprocess.run(command, cwd=REPOSITORY, env=environment, check=True)
 
 
+def run_godot_script(
+    godot: str,
+    project: Path,
+    script: Path,
+    archive: Path,
+    environment_overrides: dict[str, str],
+) -> None:
+    environment = os.environ.copy()
+    environment.update(environment_overrides)
+    result = subprocess.run(
+        (
+            godot,
+            "--path",
+            str(project.resolve()),
+            "--script",
+            str(script),
+            "--",
+            str(archive),
+        ),
+        cwd=REPOSITORY,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    print(result.stdout, end="")
+    result.check_returncode()
+    # Godot 3 can report a top-level script parse failure while exiting with zero.
+    # That means the requested validation never ran, so make this launcher own the
+    # process-level success contract instead of asking every test script to defend it.
+    if "SCRIPT ERROR: Parse Error:" in result.stdout:
+        relative_script = script.relative_to(REPOSITORY)
+        raise SystemExit(f"error: Godot could not parse {relative_script}")
+
+
 def validate_manifest(mod_directory: Path) -> None:
     manifest = mod_directory / "manifest.json"
     entrypoint = mod_directory / "mod_main.gd"
@@ -178,25 +214,19 @@ def validate_godot_models() -> None:
                 temporary_root / "user-data"
             )
         }
-        run(
+        run_godot_script(
             godot,
-            "--path",
-            str(project.resolve()),
-            "--script",
-            str(GODOT_VALIDATOR),
-            "--",
-            str(archive),
-            environment_overrides=user_data_environment,
+            project,
+            GODOT_VALIDATOR,
+            archive,
+            user_data_environment,
         )
-        run(
+        run_godot_script(
             godot,
-            "--path",
-            str(project.resolve()),
-            "--script",
-            str(AUTOPILOT_MODEL_CHECKS),
-            "--",
-            str(archive),
-            environment_overrides=user_data_environment,
+            project,
+            AUTOPILOT_MODEL_CHECKS,
+            archive,
+            user_data_environment,
         )
 
 

@@ -39,6 +39,7 @@ var _prepared_physics_frame := -1
 var _prepared_targets := []
 var _prepared_caps := {}
 var _prepared_outcome_fields := {}
+var _prepared_attack_models := {}
 
 
 func accumulate_outcome(
@@ -79,6 +80,7 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 	_prepared_physics_frame = physics_frame
 	_prepared_targets = []
 	_prepared_outcome_fields = {}
+	_prepared_attack_models = {}
 	var total_enemy_health := 0.0
 	var positive_removal_value := 0.0
 	var negative_removal_value := 0.0
@@ -110,7 +112,7 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 	var total_tree_harvest_value := 0.0
 	for tree in observation.visible_world.trees:
 		var harvest_value: float = _opportunity_value_model.tree_reward_value(
-			observation, tree, planning_context.state_factors.health_resource_value
+			observation, tree, planning_context.state_factors.health_inventory_value
 		)
 		_prepared_targets.push_back(
 			{
@@ -263,15 +265,31 @@ func _accumulate_outcome_at_path_sample(
 	result: Dictionary
 ) -> void:
 	var target_samples: Array = _sample_targets(observation, player_displacement, time)
+	var coverage_by_delivery := {}
+	for attack_model in _attack_models(observation, is_moving):
+		var delivery_key := _delivery_coverage_key(attack_model)
+		if not coverage_by_delivery.has(delivery_key):
+			coverage_by_delivery[delivery_key] = _summarize_target_coverage(
+				attack_model, target_samples, transition_width
+			)
+		_accumulate_weapon_outcome(
+			attack_model, coverage_by_delivery[delivery_key], duration_weight, result
+		)
+
+
+func _attack_models(observation: Dictionary, is_moving: bool) -> Array:
+	var movement_state := "moving" if is_moving else "standing"
+	if _prepared_attack_models.has(movement_state):
+		return _prepared_attack_models[movement_state]
+	var result := []
 	for observed_weapon in observation.player_state.weapons:
 		if is_moving and not observed_weapon.attack_model.timing.permitted_while_moving:
 			continue
-		var attack_model: Dictionary = _movement_state_projector.project_attack_model(
-			observed_weapon, observation, is_moving
+		result.push_back(
+			_movement_state_projector.project_attack_model(observed_weapon, observation, is_moving)
 		)
-		_accumulate_weapon_outcome(
-			attack_model, target_samples, duration_weight, transition_width, result
-		)
+	_prepared_attack_models[movement_state] = result
+	return result
 
 
 func _interpolate_outcomes(
@@ -316,15 +334,15 @@ func _sample_targets(observation: Dictionary, player_displacement: Vector2, time
 				"distance": relative_position.length(),
 			}
 		)
+	# Every automatic weapon applies the same nearest-target ordering at this path
+	# sample. Sort once here instead of allocating and sorting the same target list
+	# once per weapon delivery profile.
+	result.sort_custom(self, "_closer_target_sample")
 	return result
 
 
 func _accumulate_weapon_outcome(
-	attack_model: Dictionary,
-	target_samples: Array,
-	exposure_seconds: float,
-	transition_width: float,
-	outcome: Dictionary
+	attack_model: Dictionary, coverage: Dictionary, exposure_seconds: float, outcome: Dictionary
 ) -> void:
 	var attack_interval_seconds: float = max(
 		0.05, attack_model.timing.expected_attack_interval_seconds
@@ -332,9 +350,6 @@ func _accumulate_weapon_outcome(
 	var expected_attack_count: float = exposure_seconds / attack_interval_seconds
 	if expected_attack_count <= 0.0:
 		return
-	var coverage: Dictionary = _summarize_target_coverage(
-		attack_model, target_samples, transition_width
-	)
 	if coverage.target_availability <= 0.0:
 		return
 	var expected_hits_per_attack: float = _expected_hits_per_attack(attack_model, coverage)
@@ -408,7 +423,6 @@ func _summarize_target_coverage(
 				"selection_weight": 0.0,
 			}
 		)
-	covered_samples.sort_custom(self, "_closer_covered_sample")
 	var nearer_targets_unavailable_probability := 1.0
 	for covered in covered_samples:
 		# Vanilla chooses the nearest target. Smooth range coverage represents the
@@ -456,8 +470,27 @@ func _summarize_target_coverage(
 	}
 
 
-func _closer_covered_sample(left: Dictionary, right: Dictionary) -> bool:
-	return left.sample.distance < right.sample.distance
+func _closer_target_sample(left: Dictionary, right: Dictionary) -> bool:
+	return left.distance < right.distance
+
+
+func _delivery_coverage_key(attack_model: Dictionary) -> String:
+	# Coverage depends only on targeting range and direct-path geometry. Timing,
+	# damage, criticals, lifesteal, and hit rules consume the shared coverage but
+	# remain weapon-specific below.
+	var delivery: Dictionary = attack_model.delivery
+	var paths: Dictionary = delivery.paths
+	return (
+		"%s|%s|%s|%s|%s|%s"
+		% [
+			delivery.minimum_targeting_distance,
+			delivery.maximum_targeting_distance,
+			paths.count,
+			paths.angular_half_extent,
+			paths.corridor_half_width,
+			paths.maximum_travel_distance,
+		]
+	)
 
 
 func _expected_additional_direct_targets(

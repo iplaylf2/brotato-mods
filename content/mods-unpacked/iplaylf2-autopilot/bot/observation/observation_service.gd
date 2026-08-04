@@ -52,6 +52,18 @@ func _physics_process(delta: float) -> void:
 # grows throughout a battle, so eagerly cloning it every physics frame creates
 # work that no consumer reads.
 func get_observation(player_index: int) -> Dictionary:
+	return _materialize_observation(player_index, false)
+
+
+# The controller and planner are synchronous read-only consumers. They do not
+# need a second deep copy of stable mechanic profiles and visible-world values
+# that were already detached by the observation pass. The public entry point
+# above remains detached so caller mutation cannot alter observation state.
+func get_planning_observation(player_index: int) -> Dictionary:
+	return _materialize_observation(player_index, true)
+
+
+func _materialize_observation(player_index: int, planning_view: bool) -> Dictionary:
 	if player_index < 0 or player_index >= _latest_world_observations.size():
 		return {}
 	if (
@@ -64,13 +76,23 @@ func get_observation(player_index: int) -> Dictionary:
 	return {
 		"physics_frame": _latest_physics_frames[player_index],
 		"wave_state": _get_wave_state(),
-		"player_state": _latest_player_states[player_index].duplicate(true),
-		"party_state": _latest_party_states[player_index].duplicate(true),
+		"player_state": _latest_player_states[player_index].duplicate(not planning_view),
+		"party_state": _latest_party_states[player_index].duplicate(not planning_view),
 		"localization": world_memory.get_localization_state(),
-		"enemy_tracks": world_memory.get_enemy_tracks(),
-		"remembered_entities": world_memory.get_remembered_entities(),
-		"visibility": world_observation.visibility.duplicate(true),
-		"visible_world": world_observation.visible_world.duplicate(true),
+		"enemy_tracks":
+		(
+			world_memory.get_enemy_tracks()
+			if not planning_view
+			else world_memory.get_planning_enemy_tracks()
+		),
+		"remembered_entities":
+		(
+			world_memory.get_remembered_entities()
+			if not planning_view
+			else world_memory.get_planning_remembered_entities()
+		),
+		"visibility": world_observation.visibility.duplicate(not planning_view),
+		"visible_world": world_observation.visible_world.duplicate(not planning_view),
 	}
 
 

@@ -122,6 +122,14 @@ func _observation_cell_key(grid_x: int, grid_y: int) -> String:
 
 
 func get_enemy_tracks() -> Array:
+	return _materialize_enemy_tracks(false)
+
+
+func get_planning_enemy_tracks() -> Array:
+	return _materialize_enemy_tracks(true)
+
+
+func _materialize_enemy_tracks(planning_view: bool) -> Array:
 	var result := []
 	for track_id in _tracks:
 		var track: Dictionary = _tracks[track_id]
@@ -156,38 +164,47 @@ func get_enemy_tracks() -> Array:
 					* seconds_since_seen
 				)
 			)
-		result.push_back(
-			{
-				# This is a memory handle created by the bot, not a game content ID.
-				"track_id": track_id,
-				"visible": track.visible,
-				"relative_position": estimated_odometry_position - _odometry_position,
-				"last_observed_velocity": track.last_observed_velocity,
-				"last_observed_acceleration": track.last_observed_acceleration,
-				"estimated_velocity": estimated_velocity,
-				"estimated_acceleration": estimated_acceleration,
-				"motion_confidence":
-				track.motion_confidence * max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS),
-				"seconds_since_seen": seconds_since_seen,
-				"uncertainty_radius": uncertainty,
-				"recency_confidence": max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS),
-				"behavior_profile": track.behavior_profile.duplicate(true),
-				# Latest measurement; stale while the enemy is outside the visible world.
-				"last_measurement": track.last_measurement.duplicate(true),
-				# Inputs retained for this track: stable mechanics plus battle-local evidence.
-				"behavior_evidence": track.evidence.duplicate(true),
-			}
-		)
+		var observation := {
+			# This is a memory handle created by the bot, not a game content ID.
+			"track_id": track_id,
+			"visible": track.visible,
+			"relative_position": estimated_odometry_position - _odometry_position,
+			"last_observed_velocity": track.last_observed_velocity,
+			"last_observed_acceleration": track.last_observed_acceleration,
+			"estimated_velocity": estimated_velocity,
+			"estimated_acceleration": estimated_acceleration,
+			"motion_confidence":
+			track.motion_confidence * max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS),
+			"seconds_since_seen": seconds_since_seen,
+			"uncertainty_radius": uncertainty,
+			"recency_confidence": max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS),
+			"behavior_profile": track.behavior_profile.duplicate(not planning_view),
+			# Latest measurement; stale while the enemy is outside the visible world.
+			"last_measurement": track.last_measurement.duplicate(not planning_view),
+		}
+		if not planning_view:
+			# Inputs retained for the public diagnostic contract. Planning consumes the
+			# compiled behavior profile and must not carry this duplicate evidence graph.
+			observation.behavior_evidence = track.evidence.duplicate(true)
+		result.push_back(observation)
 	return result
 
 
 func get_remembered_entities() -> Array:
+	return _materialize_remembered_entities(false)
+
+
+func get_planning_remembered_entities() -> Array:
+	return _materialize_remembered_entities(true)
+
+
+func _materialize_remembered_entities(planning_view: bool) -> Array:
 	var result := []
 	for memory_record_id in _remembered_entities:
 		var memory_record: Dictionary = _remembered_entities[memory_record_id]
 		var seconds_since_seen: float = _elapsed_seconds - memory_record.last_seen_at_seconds
 		var confidence: float = memory_record.existence_confidence
-		var observation: Dictionary = memory_record.observation.duplicate(true)
+		var observation: Dictionary = memory_record.observation.duplicate(not planning_view)
 		observation.erase("_source")
 		observation.erase("_world_position")
 		observation.memory_record_id = memory_record.memory_record_id

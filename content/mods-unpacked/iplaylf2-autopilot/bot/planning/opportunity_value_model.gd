@@ -17,8 +17,8 @@ const PlayerRuleProjector := preload(
 const StatOpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
 )
-const WeaponAttackCapacityModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
+const TargetCompletionFeasibilityModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_feasibility_model.gd"
 )
 const ConsumableDropProbabilityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
@@ -26,7 +26,7 @@ const ConsumableDropProbabilityModel := preload(
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
-var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
+var _target_completion_feasibility_model: Reference = TargetCompletionFeasibilityModel.new()
 var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
 
 
@@ -42,7 +42,9 @@ func material_collection_value(observation: Dictionary) -> float:
 	return 1.0 + (1.0 - remaining_ratio)
 
 
-func tree_reward_value(observation: Dictionary, tree: Dictionary, health_value := {}) -> float:
+func tree_reward_value(
+	observation: Dictionary, tree: Dictionary, health_inventory_value := {}
+) -> float:
 	var rewards: Dictionary = tree.get("destructible_profile", {}).get("kill_rewards", {})
 	var kill_value := kill_reward_value(observation, rewards)
 	# Tree materials are still wave pickups, so their timing value must use the
@@ -54,38 +56,20 @@ func tree_reward_value(observation: Dictionary, tree: Dictionary, health_value :
 		max(0.0, rewards.get("base_materials", 0.0))
 		* (material_collection_value(observation) - 1.0)
 	)
-	if not health_value.empty():
+	if not health_inventory_value.empty():
 		kill_value += (
 			_consumable_drop_probability_model.any_consumable_drop_chance(observation, rewards)
-			* health_value.get("maximum_consumable_recovery", 0.0)
-			* health_value.get("recovery_conversion_value", 0.0)
+			* health_inventory_value.get("maximum_consumable_recovery", 0.0)
+			* health_inventory_value.get("recovery_conversion_unit_value", 0.0)
 		)
 	return (
 		max(0.0, kill_value - _living_tree_preservation_value(observation))
-		* tree_harvest_feasibility(observation, tree)
-	)
-
-
-func tree_harvest_feasibility(observation: Dictionary, tree: Dictionary) -> float:
-	var required_hits: float = max(
-		1.0, tree.get("destructible_profile", {}).get("destruction", {}).get("required_hits", 1.0)
-	)
-	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
-	return clamp(
-		(
-			_weapon_attack_capacity_model.expected_primary_hit_rate(
-				observation.player_state.weapons
-			)
-			* remaining_seconds
-			/ required_hits
-		),
-		0.0,
-		1.0
+		* _target_completion_feasibility_model.tree_destruction_feasibility(observation, tree)
 	)
 
 
 func build_enemy_removal_value_ledger(
-	observation: Dictionary, marginal_health_value: float
+	observation: Dictionary, marginal_health_unit_value: float
 ) -> Dictionary:
 	# This aggregate is intentionally built once per planning frame. Population,
 	# amplification and healing effects depend on the battlefield as a whole; doing
@@ -94,9 +78,9 @@ func build_enemy_removal_value_ledger(
 	var tracks: Array = observation.enemy_tracks
 	if tracks.empty():
 		return {
-			"removal_values": values,
-			"mean_value_per_health": 0.0,
-			"mean_absolute_value": 0.0,
+			"removal_value_by_track_id": values,
+			"mean_removal_value_per_enemy_health": 0.0,
+			"mean_absolute_removal_value": 0.0,
 			"living_enemy_preservation_value": 0.0,
 		}
 
@@ -109,12 +93,12 @@ func build_enemy_removal_value_ledger(
 		var direct_burden: float = (
 			_direct_enemy_pressure(observation, track)
 			* pressure_horizon
-			* marginal_health_value
+			* marginal_health_unit_value
 		)
 		var base_burden: float = (
 			kill_reward_value(observation, track.behavior_profile.get("kill_rewards", {}))
 			+ direct_burden
-			+ _visible_projectile_cleanup_value(observation, track, marginal_health_value)
+			+ _visible_projectile_cleanup_value(observation, track, marginal_health_unit_value)
 		)
 		base_burdens[track.track_id] = base_burden
 		mean_base_burden += base_burden
@@ -126,27 +110,27 @@ func build_enemy_removal_value_ledger(
 	)
 
 	var preservation_value := _living_enemy_preservation_value(observation)
-	var mean_value_per_health := 0.0
-	var mean_absolute_value := 0.0
+	var mean_removal_value_per_enemy_health := 0.0
+	var mean_absolute_removal_value := 0.0
 	for track in tracks:
 		var value: float = (
 			base_burdens[track.track_id]
 			+ _battlefield_effect_burden(
-				observation, track, mean_base_burden, mean_enemy_health, marginal_health_value
+				observation, track, mean_base_burden, mean_enemy_health, marginal_health_unit_value
 			)
 			+ material_assimilation_burden_by_track.get(track.track_id, 0.0)
 			- preservation_value
 		)
 		values[track.track_id] = value
-		mean_absolute_value += abs(value)
-		mean_value_per_health += (
+		mean_absolute_removal_value += abs(value)
+		mean_removal_value_per_enemy_health += (
 			value
 			/ max(1.0, track.behavior_profile.durability.maximum_health)
 		)
 	return {
-		"removal_values": values,
-		"mean_value_per_health": mean_value_per_health / tracks.size(),
-		"mean_absolute_value": mean_absolute_value / tracks.size(),
+		"removal_value_by_track_id": values,
+		"mean_removal_value_per_enemy_health": mean_removal_value_per_enemy_health / tracks.size(),
+		"mean_absolute_removal_value": mean_absolute_removal_value / tracks.size(),
 		"living_enemy_preservation_value": preservation_value,
 	}
 
@@ -231,16 +215,7 @@ func _growth_burden_per_material(assimilation: Dictionary, mean_enemy_burden: fl
 
 
 func enemy_removal_value(enemy_removal_value_ledger: Dictionary, track: Dictionary) -> float:
-	return enemy_removal_value_ledger.removal_values.get(track.track_id, 0.0)
-
-
-func enemy_kill_feasibility(observation: Dictionary, track: Dictionary) -> float:
-	var maximum_health: float = max(1.0, float(track.behavior_profile.durability.maximum_health))
-	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
-	var primary_damage_rate: float = _weapon_attack_capacity_model.expected_primary_damage_rate(
-		observation.player_state.weapons
-	)
-	return clamp(primary_damage_rate * remaining_seconds / maximum_health, 0.0, 1.0)
+	return enemy_removal_value_ledger.removal_value_by_track_id.get(track.track_id, 0.0)
 
 
 func consumable_recovery_value(observation: Dictionary, consumable: Dictionary) -> float:
@@ -260,11 +235,11 @@ func consumable_recovery_value(observation: Dictionary, consumable: Dictionary) 
 
 
 func consumable_pickup_value(
-	observation: Dictionary, consumable: Dictionary, health_value: Dictionary
+	observation: Dictionary, consumable: Dictionary, health_inventory_value: Dictionary
 ) -> float:
 	return (
 		consumable_recovery_value(observation, consumable)
-		* health_value.get("recovery_conversion_value", 0.0)
+		* health_inventory_value.get("recovery_conversion_unit_value", 0.0)
 	)
 
 
@@ -291,7 +266,7 @@ func kill_reward_value(observation: Dictionary, rewards: Dictionary) -> float:
 
 
 func _visible_projectile_cleanup_value(
-	observation: Dictionary, track: Dictionary, marginal_health_value: float
+	observation: Dictionary, track: Dictionary, marginal_health_unit_value: float
 ) -> float:
 	if not track.visible:
 		return 0.0
@@ -307,7 +282,7 @@ func _visible_projectile_cleanup_value(
 		else 2.0 - 1.0 / (1.0 - armor / 15.0)
 	)
 	var dodge_failure: float = 1.0 - observation.player_state.runtime_stats.dodge_chance
-	return raw_damage * armor_multiplier * dodge_failure * marginal_health_value
+	return raw_damage * armor_multiplier * dodge_failure * marginal_health_unit_value
 
 
 func _direct_enemy_pressure(observation: Dictionary, track: Dictionary) -> float:
@@ -327,7 +302,7 @@ func _battlefield_effect_burden(
 	track: Dictionary,
 	mean_enemy_burden: float,
 	mean_enemy_health: float,
-	marginal_health_value: float
+	marginal_health_unit_value: float
 ) -> float:
 	var effects: Dictionary = track.behavior_profile.get("battlefield_effects", {})
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
@@ -377,7 +352,7 @@ func _battlefield_effect_burden(
 	)
 	var player_healing_opportunity: float = (
 		min(missing_health, max(0.0, player_healing))
-		* marginal_health_value
+		* marginal_health_unit_value
 	)
 	return population_burden + amplification_burden + healing_burden - player_healing_opportunity
 

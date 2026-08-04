@@ -9,6 +9,7 @@ var _baseline_physics_seconds_ema := 0.0
 var _physics_duration_deviation_seconds_ema := 0.0
 var _has_frame_time_sample := false
 var _last_observed_idle_frame := -1
+var _last_observed_physics_frame := -1
 var _exclude_through_idle_frame := -1
 
 
@@ -20,12 +21,26 @@ func observe_physics_duration(delta_seconds: float) -> void:
 	if idle_frame == _last_observed_idle_frame:
 		return
 	_last_observed_idle_frame = idle_frame
+	var physics_frame := int(Engine.get_physics_frames())
+	var completed_physics_ticks := 1
+	if _last_observed_physics_frame >= 0:
+		completed_physics_ticks = physics_frame - _last_observed_physics_frame
+	_last_observed_physics_frame = physics_frame
+	if completed_physics_ticks <= 0:
+		return
 	# A plan executed before the next rendered frame is part of that frame's
 	# physics monitor. Excluding the corresponding monitor generation prevents the
 	# planner from being learned as immutable base-game cost.
 	if idle_frame <= _exclude_through_idle_frame:
 		return
-	var observed_seconds := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
+	# Godot reports the physics time accumulated by one rendered frame. A slow
+	# rendered frame can contain several catch-up physics ticks, while the planning
+	# deadline is a per-tick budget. Normalize both sides of that comparison to one
+	# physics tick instead of treating catch-up work as one oversized base tick.
+	var observed_seconds := (
+		Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
+		/ float(completed_physics_ticks)
+	)
 	if observed_seconds <= 0.0:
 		return
 	if not _has_frame_time_sample:
