@@ -4,6 +4,7 @@ extends Node
 # single background thread at a lower cadence than physics; the chosen movement
 # remains active until a completed plan replaces it.
 
+const MOD_ID := "iplaylf2-autopilot"
 const AutopilotMovementBehavior := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/control/autopilot_movement_behavior.gd"
 )
@@ -19,6 +20,9 @@ const DecisionTelemetry := preload(
 const PhysicsFrameBudgetMonitor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/control/physics_frame_budget_monitor.gd"
 )
+const PlanningWorker := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/control/planning_worker.gd"
+)
 var _observation_service: Node
 var _players: Array = []
 var _actuators: Array = []
@@ -28,8 +32,7 @@ var _current_plans: Array = []
 var _previous_movements: Array = []
 var _decision_telemetry: Reference = DecisionTelemetry.new()
 var _physics_frame_budget_monitor: Reference = PhysicsFrameBudgetMonitor.new()
-var _planning_thread: Thread = Thread.new()
-var _planning_in_flight := false
+var _planning_worker: Reference = PlanningWorker.new()
 var _seconds_until_replan := 0.0
 var _shut_down := false
 var _replan_interval_seconds := 0.0
@@ -38,6 +41,12 @@ var _replan_interval_seconds := 0.0
 func initialize(observation_service: Node, players: Array) -> void:
 	_replan_interval_seconds = MovementTimingModel.control_interval_seconds()
 	_observation_service = observation_service
+	if not _planning_worker.start():
+		ModLoaderLog.error(
+			"Could not start the planning worker; Autopilot will not take control.", MOD_ID
+		)
+		_shut_down = true
+		return
 	_players = players
 	for player in players:
 		var actuator := AutopilotMovementBehavior.new()
@@ -56,8 +65,11 @@ func _physics_process(delta: float) -> void:
 		return
 
 	_physics_frame_budget_monitor.observe_physics_duration(delta)
+	if _planning_worker.is_busy():
+		_collect_planning_results()
+		return
 	_seconds_until_replan -= delta
-	if _seconds_until_replan > 0.0 or _planning_in_flight:
+	if _seconds_until_replan > 0.0:
 		return
 	_seconds_until_replan = _replan_interval_seconds
 	_start_replan()
@@ -67,9 +79,7 @@ func shutdown() -> void:
 	if _shut_down:
 		return
 	_shut_down = true
-	if _planning_in_flight:
-		_planning_thread.wait_to_finish()
-		_planning_in_flight = false
+	_planning_worker.shutdown()
 	_decision_telemetry.close()
 	for player_index in _players.size():
 		var player: Node = _players[player_index]
@@ -117,42 +127,19 @@ func _start_replan() -> void:
 				"planner": _movement_planners[player_index],
 			}
 		)
-	var start_error := _planning_thread.start(self, "_plan_in_background", requests)
-	if start_error == OK:
-		_planning_in_flight = true
-		return
-	# Thread creation failure is exceptional; preserve control availability with
-	# one synchronous fallback instead of silently leaving the actuator stale.
-	_apply_plan_results(_compute_plan_results(requests))
-
-
-func _plan_in_background(requests: Array) -> Array:
-	var results := _compute_plan_results(requests)
-	call_deferred("_receive_background_plan_results", results)
-	return []
-
-
-func _compute_plan_results(requests: Array) -> Array:
-	var results := []
-	for request in requests:
-		results.push_back(
-			{
-				"player_index": request.player_index,
-				"observation": request.observation,
-				"plan": request.planner.plan(request.observation),
-			}
+	if not _planning_worker.submit(requests):
+		ModLoaderLog.error(
+			"The planning worker rejected a request; Autopilot is releasing movement control.",
+			MOD_ID
 		)
-	return results
+		shutdown()
 
 
-func _receive_background_plan_results(results: Array) -> void:
-	if not _planning_in_flight:
+func _collect_planning_results() -> void:
+	var completion: Dictionary = _planning_worker.poll()
+	if not completion.ready:
 		return
-	_planning_thread.wait_to_finish()
-	_planning_in_flight = false
-	if _shut_down:
-		return
-	_apply_plan_results(results)
+	_apply_plan_results(completion.results)
 
 
 func _apply_plan_results(results: Array) -> void:

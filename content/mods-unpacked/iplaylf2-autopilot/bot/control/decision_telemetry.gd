@@ -92,7 +92,9 @@ func record_decision(
 		}
 	)
 	_samples_since_flush += 1
-	if _samples_since_flush >= FLUSH_EVERY_SAMPLES:
+	# Flush each player's first recorded plan so an abnormal exit cannot leave an
+	# otherwise completed first decision buffered behind the regular batch policy.
+	if _sample_counts[player_index] == 1 or _samples_since_flush >= FLUSH_EVERY_SAMPLES:
 		_file.flush()
 		_samples_since_flush = 0
 	if _file.get_position() >= MAX_FILE_BYTES:
@@ -168,8 +170,6 @@ func _open_part(control_interval_seconds: float, continued: bool) -> bool:
 
 
 func _write_record(record: Dictionary) -> void:
-	if _file == null:
-		return
 	_file.store_line(JSON.print(_to_json_value(record)))
 
 
@@ -200,10 +200,10 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 	var projectile_attack: Dictionary = profile.get("projectile_attack", {})
 	var charge_attack: Dictionary = profile.get("charge_attack", {})
 	return {
-		"durability": profile.get("durability", {}).duplicate(true),
+		"durability": profile.get("durability", {}),
 		"contact_damage": profile.get("contact_damage", 0.0),
 		"contact_radius": profile.get("contact_radius", 0.0),
-		"kill_rewards": profile.get("kill_rewards", {}).duplicate(true),
+		"kill_rewards": profile.get("kill_rewards", {}),
 		"projectile_attack":
 		{
 			"kind": projectile_attack.get("kind", "unconfirmed"),
@@ -217,8 +217,8 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 			"active": charge_attack.get("active", false),
 			"confidence": charge_attack.get("confidence", 0.0),
 		},
-		"battlefield_effects": profile.get("battlefield_effects", {}).duplicate(true),
-		"removal_effects": profile.get("removal_effects", {}).duplicate(true),
+		"battlefield_effects": profile.get("battlefield_effects", {}),
+		"removal_effects": profile.get("removal_effects", {}),
 	}
 
 

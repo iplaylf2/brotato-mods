@@ -10,9 +10,9 @@
 | --- | --- | --- |
 | `mod_main.gd` | 安装主场景扩展，接入 Mod Loader 配置并发布启用状态 | `is_enabled()` 与 `enabled_changed`；不创建战斗期观察或规划对象 |
 | `extensions/main.gd` | 作为组合根响应玩家生成、启用切换和房间清理，按顺序创建或停止观察服务与控制器 | 主场景上的 `autopilot_observation_service` 与 `autopilot_controller` 只提供诊断入口；不承载观察或规划语义 |
-| `bot/control` | 截取不可变规划快照、在单一后台线程安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.initialize()`、`shutdown()` 和计划诊断入口；`AutopilotMovementBehavior` 是唯一控制输出 |
+| `bot/control` | 请求并提交与观察状态隔离的规划值快照、以信号量驱动的单一工作线程安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.initialize()`、`shutdown()` 和计划诊断入口；`AutopilotMovementBehavior` 是唯一控制输出，`PlanningWorker` 是控制包内部协作者 |
 | `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价及最大效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
-| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 截取不含场景节点的只读规划快照 |
+| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 截取不含场景节点并与观察状态隔离的规划值快照 |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
 
 依赖从组合根向领域边界单向展开：`mod_main.gd → extensions/main.gd`，主场景扩展再依赖 `control` 与
@@ -114,8 +114,9 @@
 ### 计算预算与遥测
 
 - `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
-  边界公开帧预算上下文；`bot/control/autopilot_controller.gd` 独占后台线程生命周期和结果交接，规划器
-  不访问场景节点或可变观察状态。
+  边界公开帧预算上下文；`bot/control/planning_worker.gd` 独占工作线程、信号量、互斥交接和回收，只执行
+  已提交规划器并返回值结果；`bot/control/autopilot_controller.gd` 独占调度、失败时释放控制与结果提交。
+  规划器不访问场景节点或可变观察状态。
 - `bot/planning/planning_compute_budget_policy.gd` 把帧预算上下文转换成统一最终截止与连续预算压力，并维护
   额外工作的耗时估计；`bot/planning/planning_search_fidelity_allocator.gd` 把预算压力映射为搜索保真度及
   额外工作额度，不拥有行为效用。
@@ -143,6 +144,7 @@
 | `Generator` | 按已给空间与画像构造候选集合，不拥有评价或选择 | `generate`、`make_*` |
 | `Selector` | 从已评分候选中选择结果，不拥有预测或评分 | `select` |
 | `Planner` | 协调候选生成、预测、评价与选择，产出完整决策 | `plan` |
+| `Worker` | 在受同步协议保护的后台执行已提交任务，不拥有任务语义或结果应用 | `start`、`submit`、`poll`、`shutdown` |
 | `Monitor` | 读取运行时监视值，维护平滑状态并公开上下文 | `observe_*`、`build_context` |
 | `Filter` | 按明确判据产生输入子集，并公开过滤诊断 | `filter` |
 | `Refiner` | 根据已评价候选提出更细的搜索候选，不拥有评价或停止策略 | `propose_*` |

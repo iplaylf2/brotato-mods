@@ -21,6 +21,9 @@ THIS_FILE = Path(__file__).relative_to(REPOSITORY)
 PKG_RESOURCES_WARNING = "ignore:pkg_resources is deprecated as an API:UserWarning"
 GODOT_VALIDATOR = REPOSITORY / "tools" / "validate_godot_scripts.gd"
 AUTOPILOT_MODEL_CHECKS = REPOSITORY / "tools" / "check_autopilot_model_contracts.gd"
+AUTOPILOT_PLANNING_WORKER_CHECKS = (
+    REPOSITORY / "tools" / "check_autopilot_planning_worker.gd"
+)
 EXPECTED_GODOT_VERSION = (3, 7, "dev")
 IMPORTED_RESOURCE_PATTERN = re.compile(r'res://(\.import/[^"\r\n]+)')
 
@@ -228,6 +231,13 @@ def validate_godot_models() -> None:
             archive,
             user_data_environment,
         )
+        run_godot_script(
+            godot,
+            project,
+            AUTOPILOT_PLANNING_WORKER_CHECKS,
+            archive,
+            user_data_environment,
+        )
 
 
 def lint_portable() -> None:
@@ -239,6 +249,7 @@ def lint_portable() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_PLANNING_WORKER_CHECKS),
         suppress_pkg_resources_warning=True,
     )
     run(
@@ -247,6 +258,7 @@ def lint_portable() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_PLANNING_WORKER_CHECKS),
         suppress_pkg_resources_warning=True,
     )
 
@@ -318,6 +330,7 @@ def format_sources() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_PLANNING_WORKER_CHECKS),
         suppress_pkg_resources_warning=True,
     )
 

@@ -23,8 +23,9 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 再由原版释放战斗节点。
 
 单文件达到 32 MiB 后，采样器续写同一会话的下一分片；正常关闭控制器时，最后一个分片记录会话汇总。
-采样器分批刷新文件；若进程异常结束，`session_end` 和尚未刷新的尾部样本都可能缺失。复盘工具应将其
-视为不完整会话，不能从最后一行推断控制恰在该时刻结束。采样频率、刷新频率和分片大小都属于存储政策，
+每位玩家的第一条 `decision_sample` 立即刷新，使已经记录的首次规划结果不依赖后续批量刷新；后续样本
+分批刷新。若进程异常结束，`session_end` 和尚未刷新的尾部样本仍可能缺失。复盘工具应将其视为
+不完整会话，不能从最后一行推断控制恰在该时刻结束。采样频率、刷新频率和分片大小都属于存储政策，
 不参与移动决策。
 
 每行由 `record_type` 区分：
@@ -87,7 +88,7 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 `planning_turnaround_usec`、`estimated_work_unit_duration_usec`、`budget_pressure` 与 `search_fidelity`。
 导航额外评价和移动角度细分均为零、方向数已到搜索保真度下限，且压力饱和后仍然超预算时，应再检查
 `phase_duration_usec`；这说明规划准备、价值导航和所有保留动作的完整预测已经超过由主线程余量派生的
-后台计算额度。规划本身不会阻塞物理线程，但长期超额会增加决策延迟并与游戏争用 CPU。
+后台计算额度。常规规划计算不在物理线程执行，但长期超额会增加决策延迟并与游戏争用 CPU。
 `decision.projectile_filter` 的纳入与延后投射物计数用于解释可达性过滤效果。
 `decision.local_enemy_interaction_domain` 用于解释敌人轨迹的局部空间粗筛：输入数包含完整的可见与
 短期记忆轨迹，相关数只包含动作窗内可威胁玩家的轨迹，以及可进入自动武器锁定区的可见轨迹。它减少的

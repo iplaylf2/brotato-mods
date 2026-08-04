@@ -55,12 +55,11 @@ func get_observation(player_index: int) -> Dictionary:
 	return _materialize_observation(player_index, false)
 
 
-# The controller and planner are synchronous read-only consumers. They do not
-# need a second deep copy of stable mechanic profiles and visible-world values
-# that were already detached by the observation pass. The public entry point
-# above remains detached so caller mutation cannot alter observation state.
+# Planning runs on a worker while this service continues updating observations
+# on the main thread. Materialize the compact view first, then detach its entire
+# Variant graph before transferring exclusive read ownership to the worker.
 func get_planning_observation(player_index: int) -> Dictionary:
-	return _materialize_observation(player_index, true)
+	return _materialize_observation(player_index, true).duplicate(true)
 
 
 func _materialize_observation(player_index: int, planning_view: bool) -> Dictionary:
