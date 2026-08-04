@@ -51,6 +51,11 @@ func build_profile(evidence: Dictionary) -> Dictionary:
 		"contact_radius": evidence.stable_mechanic_profile.contact_radius,
 		"kill_rewards": evidence.stable_mechanic_profile.kill_rewards.duplicate(true),
 		"battlefield_effects": evidence.stable_mechanic_profile.battlefield_effects.duplicate(true),
-		"removal_effects":
-		{"visible_projectile_damage": evidence.visible_removable_projectile_damage},
+		"removal_effects": _removal_effects(evidence),
 	}
+
+
+func _removal_effects(evidence: Dictionary) -> Dictionary:
+	var result: Dictionary = evidence.stable_mechanic_profile.removal_effects.duplicate(true)
+	result.visible_projectile_damage = evidence.visible_removable_projectile_damage
+	return result

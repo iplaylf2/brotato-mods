@@ -67,7 +67,11 @@ func _evaluate_route(
 		var gap: float = _route_interaction_gap(observation, entity, player_displacement)
 		var accessibility: float = _accessibility(gap, reach_distance)
 		if entity.kind == "tree" and entity.get("visible", false):
-			accessibility *= selection_likelihoods.get(entry.target_key, 0.0)
+			# Outside the current lock boundary the target field has no entry.  Route
+			# accessibility must still own the approach gradient, just as it does for
+			# enemies below.  Only apply nearest-target competition once the tree can
+			# actually participate in automatic selection.
+			accessibility *= selection_likelihoods.get(entry.target_key, 1.0)
 		var contribution: float = entry.value * accessibility
 		match entity.kind:
 			"material":

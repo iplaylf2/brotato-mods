@@ -66,20 +66,16 @@ func health_loss_value(expected_health_loss: float, inventory_value: Dictionary)
 	var loss := max(0.0, expected_health_loss)
 	if loss <= 0.0:
 		return 0.0
-	# The immediate buffer limits how much loss can be non-terminal. Replenishment
-	# lowers the continuation cost of that survivable part, while any buffer overrun
-	# retains the terminal price regardless of future supply.
+	# Collision loss is realized inside the local forecast, before the wave-scale
+	# replenishment inventory can be collected.  Future fruit remains valuable as
+	# continuation insurance and recovery opportunity, but cannot make the same
+	# immediate hit cheaper.  Pricing this loss against projected inventory would let a
+	# rolling planner repeatedly borrow against the same future supply.
 	var immediate_buffer: float = max(1.0, inventory_value.immediate_survival_buffer)
-	var projected_inventory: float = max(1.0, inventory_value.projected_health_inventory)
 	var survivable_loss := min(loss, max(0.0, immediate_buffer - 1.0))
-	var logarithmic_loss := min(survivable_loss, max(0.0, projected_inventory - 1.0))
 	var value := (
 		HEALTH_INVENTORY_VALUE_SCALE
-		* (
-			log(projected_inventory / max(1.0, projected_inventory - logarithmic_loss))
-			+ survivable_loss
-			- logarithmic_loss
-		)
+		* log(immediate_buffer / max(1.0, immediate_buffer - survivable_loss))
 	)
 	var terminal_loss := max(0.0, loss - survivable_loss)
 	return value + terminal_loss * inventory_value.terminal_health_loss_unit_value

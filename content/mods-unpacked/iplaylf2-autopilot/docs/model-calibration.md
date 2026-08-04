@@ -188,13 +188,15 @@ projected_health_inventory      = I  = max(1, B + S - D)
 marginal_health_unit_value           = K / I
 terminal_health_loss_unit_value      = K / B
 survivable_action_loss          = Ls = min(L, max(0, B - 1))
-survivable_loss_value                = integral[x=0..Ls] K / max(1, I - x) dx
+survivable_loss_value                = integral[x=0..Ls] K / max(1, B - x) dx
 terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_unit_value
 ```
 
 已观察消耗品按到达后仍可利用的波次比例和存在置信度计入 `S`；概率掉落按共享攻击容量约束后的目标完成
 概率与掉落概率计入；被动恢复和生命偷取按剩余可作用时间及各自速率计入。因而时间只改变具体补充与收益
 是否还能兑现，不构成独立风险偏好。
+`S` 只改变波次尺度的延续库存与补给机会；局部预测窗中的碰撞损失先于这些补给兑现，因此按即时生存缓冲
+`B` 积分。这样同一份未来果实不能在连续重规划中被反复借用来压低眼前每次受击的成本。
 拾取一单位地面补充时，即时恢复按 `terminal_health_loss_unit_value` 增值、同量地图储备按
 `marginal_health_unit_value` 结清，净值为两者之差；新破坏树木产生的补充尚未被库存计入，则直接按
 `marginal_health_unit_value` 增值。
@@ -228,7 +230,7 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
    应分别进入对应账本；已经落地的箱子会在波末自动收集，不得再以道具选择价值吸引移动。样本应覆盖树木
    与特殊敌人的实际兑现率、不同构筑下各类生命补充的兑现率、末段受伤频率和生命收益交换。本波剩余时间
    只界定生命补充与收益的可兑现性，不直接产生生命折价。清场前可兑现的补充进入预计生命库存并降低
-   非致命承伤的机会成本，但不得扩张当前即时生存缓冲。
+   波次尺度环境暴露与补给储备的边际价格，但不得扩张当前即时生存缓冲，也不折价动作窗内的碰撞损失。
    终止风险不应在效用账本之外形成另一套动作选择规则。
 5. 压力曲线、冲撞时间窗及扫掠走廊、目标位置响应、地图再观察价值和机会可达性衰减共同决定行为平滑度
    与取舍。校准必须比较候选排序、实际受伤、拾取、输出、新观察与再观察面积和方向反转，不能只看最终
@@ -274,13 +276,22 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
 还应比较材料与玩家、敌人的预计到达次序、后续实际材料消失及候选排序；没有可争夺材料时，该画像本身
 不应形成固定击杀优先级。
 
+### 敌人生成与移除后果
+
+存活期间生成敌人的来源应联合检查 `battlefield_effects.hostile_population_per_second`、
+`battlefield_effects.maximum_lifetime_hostile_population`、目标完成概率、敌人移除机会和实际新增敌人数。
+有限次机制的预计新增量不得超过生命周期生成上限；该上限不是当前剩余次数，复盘时不能把已经发生的
+生成从日志中反推为隐藏状态。死亡时生成敌人的来源则检查
+`removal_effects.spawned_hostile_population`：它应抵扣而不是增加当前移除价值。两类后果都只通过统一账本
+改变候选排序，不应在选择器或导航器中出现敌人身份优先级。
+
 ### 树木与武器
 
 树木复盘同时比较导航中的 `selected_value_breakdown.tree_opportunity`、
 `expected_tree_harvest_value_progress` 及当时的武器期望攻击率，
-不能把进入射程直接当作已经命中或摧毁。还应比较候选移动前后树木是否进入最近目标的软 Voronoi 区域；
-价值变化必须来自射程与目标竞争几何，不能来自树木身份或波末专用规则。确认候选读取的结果场受动作
-预测窗攻击容量和可见目标容量约束，
+不能把进入射程直接当作已经命中或摧毁。射程外应先检查接近树木是否形成连续正梯度；进入射程后，再比较
+候选移动前后树木是否进入最近目标的软 Voronoi 区域。价值变化必须来自接近距离、射程与目标竞争几何，
+不能来自树木身份或波末专用规则。确认候选读取的结果场受动作预测窗攻击容量和可见目标容量约束，
 没有超过可见目标的总耐久、总移除价值或总收获价值。树木价值应随箱子生成概率提高，且箱子结果仍应
 贡献治疗供给；箱子落地后，满血且没有拾取事件收益时不应继续产生正向导航机会，缺血时则应与同等
 治疗量的果实一致。同一候选动作可以同时兑现 `material_acquisition_value` 和武器结果，复盘时不得把
@@ -303,7 +314,8 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
 `reachable_observed_replenishment`、`expected_drop_replenishment`、`passive_replenishment`、
 `expected_lifesteal_replenishment`、`expected_passive_health_drain`、`immediate_survival_buffer`、
 `projected_health_inventory` 与 `marginal_health_unit_value`；确认时间本身不改变同一库存状态的生命价格，
-清场前可兑现补充会降低非致命承伤成本，而超过 `immediate_survival_buffer` 的部分仍按终止价值计价；
+动作窗内碰撞按 `immediate_survival_buffer` 计价，未来补充只改变波次尺度边际价格；超过即时缓冲的部分
+仍按终止价值计价。
 拾取恢复按 `terminal_health_loss_unit_value` 产生即时生命收益，同时
 `consumed_consumable_recovery_supply` 按 `replenishment_unit_value` 结清离开地图的储备，两者净额应等于
 `recovery_conversion_unit_value`。满血接触不应继续免费享受该储备带来的生命折价。地雷路径还应联合检查

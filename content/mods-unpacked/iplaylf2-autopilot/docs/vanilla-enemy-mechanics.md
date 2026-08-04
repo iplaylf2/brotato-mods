@@ -15,6 +15,7 @@ Autopilot 按以下入口理解敌人运动、攻击和弹道：
 - 敌人注册的全部 `ShootingAttackBehavior`，包括普通攻击、附加攻击和 Boss 各阶段攻击；
 - 敌人注册的 `ChargingAttackBehavior`，以及 `FollowTargetMovementBehavior` 和
   `StayInRangeFromPlayerMovementBehavior`；
+- 敌人注册的 `SpawningAttackBehavior`，以及死亡时直接生成敌人的稳定脚本后果；
 - 敌人用于吸附、拾取材料并按累计数量进化的作用区与阈值；
 - 敌人节点下常驻的 `EnemyProjectile`；
 - 主敌方投射物容器中的移动、静止和动画危险区；
@@ -29,6 +30,8 @@ Autopilot 按以下入口理解敌人运动、攻击和弹道：
 | 标准冲撞行为 | `charger`、`horned_charger`，以及复用 `ChargingAttackBehavior` 的阶段或扩展内容 |
 | 目标位置响应 | 复用 `FollowTargetMovementBehavior` 或 `StayInRangeFromPlayerMovementBehavior` 的敌人 |
 | 材料吸收成长 | `evil_mob`，以及同时公开材料吸附区、拾取区和进化阈值的扩展内容 |
+| 存活期间生成 | 复用 `SpawningAttackBehavior` 的蛋、`mom`、`monk` 及扩展内容 |
+| 死亡触发生成 | `spawner` 生成 3 个、`bloated_spawner` 生成 5 个子敌人 |
 | 敌人子节点常驻投射物 | 腐化树的单枚旋转投射物；`predator` 的九枚旋转投射物 |
 | 投射物形态 | 普通移动弹、正弦横摆弹、静止或动画斩击区、柱状区域、附着旋转投射物、环境弹幕 |
 | 接触几何 | 敌人与敌方投射物的 `Hitbox/Collision` 均提供标准圆形接触形状；外观尺寸不参与伤害碰撞 |
@@ -56,6 +59,10 @@ Autopilot 按以下入口理解敌人运动、攻击和弹道：
 并把玩家周边随机点的最大偏移作为走廊宽度；闪避方向由候选路径与该走廊的交会关系产生。具有材料吸附区、
 拾取区和进化阈值的敌人则形成 `material_assimilation` 画像。规划层按当前可见材料的竞速几何估计材料损失与
 敌人成长负担，不为 `evil_mob` 或任何敌人类别设置固定击杀优先级。
+
+存活期间生成按稳定生成率和剩余时间增加来源的移除价值；机制带有最大次数时，同时以生命周期生成上限封顶。
+`spawner` 与 `bloated_spawner` 并不在存活期间持续生产，而是在死亡时生成子敌人；该生成量作为移除后果
+抵扣当前击杀价值。两类机制因而从相反的实际战场后果进入同一账本，不共享“生成者优先级”。
 
 腐化树和 `predator` 的旋转投射物不在主敌方投射物容器中，因此观察器还会遍历可见敌人的子节点。
 环境弹幕没有可移除的敌人来源，只作为具体可见弹道参与规避，不会产生敌人移除机会。
@@ -94,7 +101,7 @@ Autopilot 按以下入口理解敌人运动、攻击和弹道：
 2. 跟随目标和与玩家保持距离的移动行为字段及其挂载位置；
 3. Boss 状态是否继续通过 `_all_attack_behaviors` 注册；
 4. 敌人场景中是否新增常驻 `EnemyProjectile` 子节点；
-5. 是否出现绕开上述入口、自行生成敌方投射物的敌人脚本；
+5. `SpawningAttackBehavior` 的生成率、次数上限，以及绕开该入口的死亡生成脚本是否变化；
 6. 投射物容器、运动字段、曲线弹道解析参数、攻击随机边界和死亡时清除投射物的规则是否发生变化；
 7. 敌人与敌方投射物是否继续通过标准 `Hitbox/Collision` 公开圆形接触形状；
 8. 冲撞目标类型、玩家周边随机点范围、材料吸附/拾取作用区和进化阈值是否变化；

@@ -125,6 +125,7 @@ func build_enemy_removal_value_ledger(
 			+ _battlefield_effect_burden(
 				observation, track, mean_base_burden, mean_enemy_health, marginal_health_unit_value
 			)
+			- _removal_population_cost(track, mean_base_burden)
 			+ material_assimilation_burden_by_track.get(track.track_id, 0.0)
 			- preservation_value
 		)
@@ -137,6 +138,16 @@ func build_enemy_removal_value_ledger(
 		"mean_absolute_removal_value": mean_absolute_removal_value / tracks.size(),
 		"living_enemy_preservation_value": preservation_value,
 	}
+
+
+func _removal_population_cost(track: Dictionary, mean_enemy_burden: float) -> float:
+	return (
+		max(
+			0.0,
+			track.behavior_profile.get("removal_effects", {}).get("spawned_hostile_population", 0.0)
+		)
+		* mean_enemy_burden
+	)
 
 
 func _material_assimilation_burden_by_track(
@@ -313,11 +324,16 @@ func _battlefield_effect_burden(
 ) -> float:
 	var effects: Dictionary = track.behavior_profile.get("battlefield_effects", {})
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
-	var population_burden: float = (
+	var forecast_hostile_population: float = (
 		effects.get("hostile_population_per_second", 0.0)
 		* remaining_seconds
-		* mean_enemy_burden
 	)
+	var maximum_lifetime_population = effects.get("maximum_lifetime_hostile_population", null)
+	if maximum_lifetime_population != null:
+		forecast_hostile_population = min(
+			forecast_hostile_population, max(0.0, float(maximum_lifetime_population))
+		)
+	var population_burden: float = forecast_hostile_population * mean_enemy_burden
 	var activation_count: float = (
 		effects.get("amplification_activations_per_second", 0.0)
 		* remaining_seconds

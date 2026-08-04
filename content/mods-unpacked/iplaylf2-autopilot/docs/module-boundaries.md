@@ -53,7 +53,7 @@
 - `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
   `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量；
   `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线。
-- `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 拥有稳定投射物攻击配置与敌人接触形状；
+- `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 拥有稳定攻击、接触形状、收益、战场影响与移除后果；
   `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 拥有稳定目标位置响应与冲撞配置。两类缓存都不得
   混入战斗期状态。
 
@@ -84,7 +84,8 @@
 - `bot/planning/health/collision_health_impact_model.gd` 合并位置域和速度空间证据，并按原版当前最短无敌帧
   间隔换算预期生命损失与直接终止风险；
   `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
-  `bot/planning/health/health_inventory_value_model.gd` 只负责即时生存缓冲、预计生命库存及其单位价值。
+  `bot/planning/health/health_inventory_value_model.gd` 负责即时生存缓冲、预计生命库存、单位价值，以及把
+  动作窗内的条件生命损失换算为即时缓冲成本。
 - `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 
 ### 机会、规则与动作结果
@@ -99,7 +100,8 @@
   期望结果场。
 - `bot/planning/target_completion_allocation_model.gd` 分配共享攻击容量，并建立敌人击杀与树木摧毁完成
   账本；`bot/planning/enemy_health_model.gd` 统一把敌人最后可见生命测量与稳定最大生命先验解析为剩余
-  生命；`bot/planning/opportunity_pricing_model.gd` 换算材料、消耗品、树木和敌人移除机会的边际价值；
+  生命；`bot/planning/opportunity_pricing_model.gd` 换算材料、消耗品、树木和敌人移除机会的边际价值，并
+  组合存活期间的战场负担与移除触发的战场后果；
   `bot/planning/consumable_drop_probability_model.gd` 把稳定掉落画像与当前幸运组合为消耗品及箱子概率；
   `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
 - `bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何；

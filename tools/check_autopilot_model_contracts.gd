@@ -348,12 +348,12 @@ func _check_spatial_target_control() -> void:
 	context.enemy_removal_value_ledger = {"removal_value_by_track_id": {1: 0.0}}
 	context.target_completion_ledger = _completion_ledger({1: 1.0}, {1: 1.0})
 	spatial = spatial_script.new()
-	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(450.0, 0.0), 1.0)
+	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(100.0, 0.0), 1.0)
 	_expect(
 		tree_delta.tree_opportunity > 0.0,
 		(
-			"entering a tree's nearest-target region must retain a navigation gradient "
-			+ "without assigning trees a fixed priority"
+			"a visible tree outside the lock boundary must retain an approach gradient; "
+			+ "target competition begins only after it can enter automatic selection"
 		)
 	)
 
@@ -514,11 +514,11 @@ func _check_health_inventory_loss() -> void:
 	var scarce_supply_value: Dictionary = abundant_supply_value.duplicate()
 	scarce_supply_value.projected_health_inventory = 4.0
 	_expect(
-		(
-			health_inventory_model.health_loss_value(2.0, abundant_supply_value)
-			< health_inventory_model.health_loss_value(2.0, scarce_supply_value)
+		is_equal_approx(
+			health_inventory_model.health_loss_value(2.0, abundant_supply_value),
+			health_inventory_model.health_loss_value(2.0, scarce_supply_value)
 		),
-		"time-feasible replacement supply must lower non-terminal health opportunity cost"
+		"wave-scale replacement supply must not discount local collision loss"
 	)
 	var abundant_catastrophic_loss: float = health_inventory_model.health_loss_value(
 		5.0, abundant_supply_value
@@ -534,11 +534,11 @@ func _check_health_inventory_loss() -> void:
 		"future replacement supply must not absorb current-buffer terminal loss"
 	)
 	_expect(
-		(
-			abundant_catastrophic_loss
-			< health_inventory_model.health_loss_value(5.0, scarce_supply_value)
+		is_equal_approx(
+			abundant_catastrophic_loss,
+			health_inventory_model.health_loss_value(5.0, scarce_supply_value)
 		),
-		"replacement liquidity may reduce only the survivable part of a risky action"
+		"replacement liquidity must remain a continuation value, not local hit capacity"
 	)
 
 

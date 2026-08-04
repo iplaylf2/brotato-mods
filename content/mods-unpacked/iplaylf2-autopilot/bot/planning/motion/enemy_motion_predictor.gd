@@ -68,18 +68,20 @@ func predict_position(
 		return _observed_position(track, time)
 	var track_id: int = track.get("track_id", -1)
 	if track_id >= 0:
-		var positions_by_time: Dictionary = _response_positions_by_track_and_time.get(track_id, {})
-		var positions_by_displacement: Dictionary = positions_by_time.get(time, {})
-		if positions_by_displacement.has(player_displacement):
+		# Vector3 is an exact value key for the three scalars that identify a
+		# response query.  A flat per-track cache avoids constructing and copying two
+		# nested dictionaries on every prediction in the hottest planning loop.
+		var query := Vector3(player_displacement.x, player_displacement.y, time)
+		var positions_by_query: Dictionary = _response_positions_by_track_and_time.get(track_id, {})
+		if positions_by_query.has(query):
 			_response_cache_hit_count += 1
-			return positions_by_displacement[player_displacement]
+			return positions_by_query[query]
 		_response_cache_miss_count += 1
 		var position: Vector2 = _predict_response_position(
 			track, player_displacement, time, movement_speed, target_response
 		)
-		positions_by_displacement[player_displacement] = position
-		positions_by_time[time] = positions_by_displacement
-		_response_positions_by_track_and_time[track_id] = positions_by_time
+		positions_by_query[query] = position
+		_response_positions_by_track_and_time[track_id] = positions_by_query
 		return position
 	return _predict_response_position(
 		track, player_displacement, time, movement_speed, target_response
@@ -217,12 +219,11 @@ func _integrate_midpoint_step(
 func _observed_position(track: Dictionary, time: float) -> Vector2:
 	var track_id: int = track.get("track_id", -1)
 	if track_id >= 0:
-		var positions_by_time: Dictionary = _observed_positions_by_track_and_time.get(track_id, {})
-		if positions_by_time.has(time):
-			return positions_by_time[time]
+		var query := Vector2(float(track_id), time)
+		if _observed_positions_by_track_and_time.has(query):
+			return _observed_positions_by_track_and_time[query]
 		var position: Vector2 = _predict_observed_position(track, time)
-		positions_by_time[time] = position
-		_observed_positions_by_track_and_time[track_id] = positions_by_time
+		_observed_positions_by_track_and_time[query] = position
 		return position
 	return _predict_observed_position(track, time)
 

@@ -6,6 +6,7 @@ extends Reference
 
 const MINIMUM_PROJECTILE_PRESSURE_INTENSITY := 0.5
 const MAX_PRESSURE_INTENSITY := 4.0
+const DEATH_SPAWN_COUNT_BY_ARCHETYPE := {"spawner": 3.0, "bloated_spawner": 5.0}
 const EnemyMotionMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd"
 )
@@ -28,6 +29,8 @@ func compile(enemy: Node) -> Dictionary:
 			"charge_attack": motion_mechanics.charge_attack,
 			"target_position_response": motion_mechanics.target_position_response,
 			"material_assimilation": _compile_material_assimilation(enemy),
+			"battlefield_effects": _compile_battlefield_effects(enemy),
+			"removal_effects": _compile_removal_effects(archetype),
 		}
 		if not archetype.empty():
 			_mechanics_by_archetype[archetype] = mechanics.duplicate(true)
@@ -41,7 +44,8 @@ func compile(enemy: Node) -> Dictionary:
 		"contact_damage": _get_contact_damage(enemy),
 		"contact_radius": _circle_collision_radius(enemy, "Hitbox/Collision"),
 		"kill_rewards": _compile_kill_rewards(enemy, archetype),
-		"battlefield_effects": _compile_battlefield_effects(enemy),
+		"battlefield_effects": mechanics.battlefield_effects,
+		"removal_effects": mechanics.removal_effects,
 	}
 
 
@@ -97,12 +101,21 @@ func _area_radius(area: Node) -> float:
 
 func _compile_battlefield_effects(enemy: Node) -> Dictionary:
 	var hostile_population_per_second := 0.0
+	var maximum_lifetime_hostile_population := 0.0
+	var hostile_population_is_bounded := true
 	if "_all_attack_behaviors" in enemy:
 		for behavior in enemy._all_attack_behaviors:
 			if not behavior is SpawningAttackBehavior:
 				continue
 			var interval_seconds := max(1.0, float(behavior.cooldown)) / 60.0
 			hostile_population_per_second += max(0, behavior.nb_to_spawn) / interval_seconds
+			if behavior.max_nb_of_spawns < 0:
+				hostile_population_is_bounded = false
+			else:
+				maximum_lifetime_hostile_population += (
+					max(0, behavior.nb_to_spawn)
+					* max(0, behavior.max_nb_of_spawns)
+				)
 	var amplification_activations_per_second := 0.0
 	var enemy_health_fraction_per_activation := 0.0
 	var enemy_damage_fraction_per_activation := 0.0
@@ -120,6 +133,8 @@ func _compile_battlefield_effects(enemy: Node) -> Dictionary:
 			enemy_speed_fraction_per_activation = max(0.0, float(enemy.speed_boost)) / 100.0
 	return {
 		"hostile_population_per_second": hostile_population_per_second,
+		"maximum_lifetime_hostile_population":
+		maximum_lifetime_hostile_population if hostile_population_is_bounded else null,
 		"amplification_activations_per_second": amplification_activations_per_second,
 		"enemy_health_fraction_per_activation": enemy_health_fraction_per_activation,
 		"enemy_damage_fraction_per_activation": enemy_damage_fraction_per_activation,
@@ -139,6 +154,14 @@ func _compile_battlefield_effects(enemy: Node) -> Dictionary:
 			if "player_heal_increase_each_wave" in enemy
 			else 0.0
 		),
+	}
+
+
+func _compile_removal_effects(archetype: String) -> Dictionary:
+	# These target-version enemies generate children only when removed; they do
+	# not expose the count through a shared runtime mechanic contract.
+	return {
+		"spawned_hostile_population": DEATH_SPAWN_COUNT_BY_ARCHETYPE.get(archetype, 0.0),
 	}
 
 
