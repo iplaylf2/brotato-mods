@@ -1,6 +1,7 @@
 extends SceneTree
 
 # Executable mechanics contracts run against the same mounted archive as the game.
+const PLANNING_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/planning/"
 var _failed := false
 
 
@@ -52,7 +53,7 @@ func _check_swept_enemy_contact() -> void:
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 	)
 	var influence: Reference = influence_script.new()
-	var impact_script: Script = _load_collision_health_impact_script()
+	var impact_script: Script = load(PLANNING_PATH + "health/collision_health_impact_model.gd")
 	var impact: Reference = impact_script.new()
 	var observation := {
 		"physics_frame": 2,
@@ -116,7 +117,7 @@ func _check_swept_enemy_contact() -> void:
 
 
 func _check_navigation_horizon_consistency() -> void:
-	var predictor_script: Script = _load_movement_outcome_script()
+	var predictor_script: Script = load(PLANNING_PATH + "movement_outcome_predictor.gd")
 	var predictor: Reference = predictor_script.new()
 	var observation := _planning_observation([])
 	var action := {
@@ -218,7 +219,7 @@ func _check_navigation_opportunity_retention() -> void:
 
 
 func _check_pickup_interaction_geometry() -> void:
-	var spatial_script: Script = _load_spatial_opportunity_script()
+	var spatial_script: Script = load(PLANNING_PATH + "spatial_opportunity_value_model.gd")
 	var spatial: Reference = spatial_script.new()
 	var material := {
 		"kind": "material",
@@ -265,7 +266,7 @@ func _check_pickup_interaction_geometry() -> void:
 
 
 func _check_spatial_target_control() -> void:
-	var spatial_script: Script = _load_spatial_opportunity_script()
+	var spatial_script: Script = load(PLANNING_PATH + "spatial_opportunity_value_model.gd")
 	var observation := {
 		"physics_frame": 4,
 		"wave_state": {"number": 5, "seconds_remaining": 20.0, "duration_seconds": 40.0},
@@ -419,20 +420,13 @@ func _check_weapon_outcome_contracts() -> void:
 		"forecast_seconds": 0.5,
 		"samples": [{"time": 0.5, "displacement": Vector2.ZERO, "movement": Vector2.ZERO}],
 	}
+	var context := {
+		"control_interval_seconds": 0.1,
+		"enemy_removal_value_ledger": {"removal_value_by_track_id": {1: 10.0, 2: 100.0}},
+		"state_factors": {"health_inventory_value": {}},
+	}
 	var outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
-	field.accumulate_outcome(
-		observation,
-		action,
-		outcome,
-		{
-			"control_interval_seconds": 0.1,
-			"enemy_removal_value_ledger":
-			{
-				"removal_value_by_track_id": {1: 10.0, 2: 100.0},
-			},
-			"state_factors": {"health_inventory_value": {}},
-		}
-	)
+	field.accumulate_outcome(observation, action, outcome, context)
 	_expect(
 		is_equal_approx(outcome.expected_weapon_damage, 5.0),
 		"weapon benefit and forecast collision cost must use the same action horizon"
@@ -444,16 +438,7 @@ func _check_weapon_outcome_contracts() -> void:
 	observation.physics_frame = 4
 	observation.player_state.weapons.push_back({"slot": 1, "attack_model": _weapon_attack_model()})
 	var shared_delivery_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
-	field.accumulate_outcome(
-		observation,
-		action,
-		shared_delivery_outcome,
-		{
-			"control_interval_seconds": 0.1,
-			"enemy_removal_value_ledger": {"removal_value_by_track_id": {1: 10.0, 2: 100.0}},
-			"state_factors": {"health_inventory_value": {}},
-		}
-	)
+	field.accumulate_outcome(observation, action, shared_delivery_outcome, context)
 	_expect(
 		is_equal_approx(
 			shared_delivery_outcome.expected_weapon_damage, 2.0 * outcome.expected_weapon_damage
@@ -465,16 +450,7 @@ func _check_weapon_outcome_contracts() -> void:
 	low_value_track.relative_position = Vector2(200.0, 0.0)
 	high_value_track.relative_position = Vector2(100.0, 0.0)
 	var high_value_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
-	field.accumulate_outcome(
-		observation,
-		action,
-		high_value_outcome,
-		{
-			"control_interval_seconds": 0.1,
-			"enemy_removal_value_ledger": {"removal_value_by_track_id": {1: 10.0, 2: 100.0}},
-			"state_factors": {"health_inventory_value": {}},
-		}
-	)
+	field.accumulate_outcome(observation, action, high_value_outcome, context)
 	_expect(
 		(
 			high_value_outcome.expected_enemy_removal_value_progress
@@ -487,24 +463,49 @@ func _check_weapon_outcome_contracts() -> void:
 	high_value_track.last_measurement.visual_radius = 100.0
 	observation.enemy_tracks = [high_value_track]
 	var outside_center_range_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
-	field.accumulate_outcome(
-		observation,
-		action,
-		outside_center_range_outcome,
-		{
-			"control_interval_seconds": 0.1,
-			"enemy_removal_value_ledger": {"removal_value_by_track_id": {2: 100.0}},
-			"state_factors": {"health_inventory_value": {}},
-		}
-	)
+	context.enemy_removal_value_ledger.removal_value_by_track_id = {2: 100.0}
+	field.accumulate_outcome(observation, action, outside_center_range_outcome, context)
 	_expect(
 		is_equal_approx(outside_center_range_outcome.expected_weapon_damage, 0.0),
 		"target visual size must not extend the center-distance automatic targeting range"
 	)
+	observation.physics_frame = 7
+	observation.wave_state = {"number": 1, "seconds_remaining": 10.0, "duration_seconds": 10.0}
+	observation.player_state.effective_stats.luck = 0.0
+	low_value_track.relative_position = Vector2(1.0, 0.0)
+	observation.enemy_tracks = [low_value_track]
+	var tree := {"relative_position": Vector2(58.0, 76.0), "visual_radius": 10.0}
+	tree.destructible_profile = {
+		"destruction": {"required_hits": 1.0}, "kill_rewards": {"base_materials": 6.0}
+	}
+	observation.visible_world.trees = [tree]
+	var tree_action := action.duplicate(true)
+	tree_action.movement = Vector2(0.6, 0.8)
+	tree_action.forecast_seconds = 0.6
+	tree_action.samples = [{"time": 0.6, "displacement": Vector2(30.0, 40.0)}]
+	var tree_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	var away_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	context.enemy_removal_value_ledger.removal_value_by_track_id = {1: 1.0}
+	context.state_factors.health_inventory_value = {
+		"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0
+	}
+	field.accumulate_outcome(observation, tree_action, tree_outcome, context)
+	tree_action.movement *= -1.0
+	tree_action.samples[0].displacement *= -1.0
+	field.accumulate_outcome(observation, tree_action, away_outcome, context)
+	_expect(
+		(
+			tree_outcome.expected_tree_harvest_value_progress
+			> away_outcome.expected_tree_harvest_value_progress
+		),
+		"this off-axis target geometry must value the toward-tree path above the away path"
+	)
 
 
 func _check_health_inventory_loss() -> void:
-	var health_inventory_script: Script = _load_health_inventory_script()
+	var health_inventory_script: Script = load(
+		PLANNING_PATH + "health/health_inventory_value_model.gd"
+	)
 	var health_inventory_model: Reference = health_inventory_script.new()
 	var abundant_supply_value := {
 		"immediate_survival_buffer": 4.0,
@@ -605,7 +606,7 @@ func _check_recovery_liquidity_pricing() -> void:
 
 
 func _check_additive_collision_damage() -> void:
-	var impact_script: Script = _load_collision_health_impact_script()
+	var impact_script: Script = load(PLANNING_PATH + "health/collision_health_impact_model.gd")
 	var impact: Reference = impact_script.new()
 	var observation := _planning_observation([])
 	observation.player_state.health = {"current": 9.0, "maximum": 20.0, "ratio": 0.45}
@@ -727,7 +728,7 @@ func _check_target_completion_allocation() -> void:
 
 
 func _check_immediate_hit_reserve_reachability() -> void:
-	var inventory_script: Script = _load_health_inventory_script()
+	var inventory_script: Script = load(PLANNING_PATH + "health/health_inventory_value_model.gd")
 	var inventory: Reference = inventory_script.new()
 	var nearby_memory := _enemy_track(Vector2(20.0, 0.0), Vector2.ZERO, false)
 	nearby_memory.visible = false
@@ -877,34 +878,6 @@ func _influence_weights() -> Dictionary:
 		"allied_pressure_relief": 1.0,
 		"projectile_interception_relief": 1.0,
 	}
-
-
-func _load_health_inventory_script() -> Script:
-	var script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_inventory_value_model.gd"
-	)
-	return script
-
-
-func _load_collision_health_impact_script() -> Script:
-	var script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/collision_health_impact_model.gd"
-	)
-	return script
-
-
-func _load_spatial_opportunity_script() -> Script:
-	var script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/spatial_opportunity_value_model.gd"
-	)
-	return script
-
-
-func _load_movement_outcome_script() -> Script:
-	var script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_outcome_predictor.gd"
-	)
-	return script
 
 
 func _weapon_attack_model() -> Dictionary:

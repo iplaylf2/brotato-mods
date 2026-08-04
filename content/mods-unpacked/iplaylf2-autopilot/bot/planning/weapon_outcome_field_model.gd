@@ -1,8 +1,8 @@
 extends Reference
 
-# Produces action-conditioned expected weapon outcomes by sampling a smooth,
-# movement-relative target field. It does not roll out individual shots,
-# projectiles, contacts, redirects, or triggered event chains.
+# Produces action-conditioned expected weapon outcomes along each retained
+# movement path. It does not roll out individual shots, projectiles, contacts,
+# redirects, or triggered event chains.
 
 const WeaponAttackCapacityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
@@ -22,10 +22,6 @@ const EnemyHealthModel := preload(
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
-const PlayerKinematicsModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
-)
-
 const OUTCOME_FIELDS := [
 	"expected_attack_hits",
 	"expected_weapon_damage",
@@ -42,11 +38,9 @@ var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
 var _enemy_health_model: Reference = EnemyHealthModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
-var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _prepared_physics_frame := -1
 var _prepared_targets := []
 var _prepared_caps := {}
-var _prepared_outcome_fields := {}
 var _prepared_attack_models := {}
 
 
@@ -64,7 +58,12 @@ func accumulate_outcome(
 	var displacement: Vector2 = action.samples.back().displacement
 	var is_moving: bool = action.movement != Vector2.ZERO
 	var transition_seconds: float = min(forecast_seconds, planning_context.control_interval_seconds)
-	var weapon_outcome: Dictionary = _sample_outcome_field(
+	# Nearest-target ownership changes on narrow Voronoi boundaries. A shared 3x3
+	# interpolation grid blurred those boundaries and made an off-axis action that
+	# exposes a tree look identical to one that leaves a nearer enemy selected.
+	# Evaluate the retained action path directly. The search allocator bounds the
+	# number of complete action forecasts before this semantic model runs.
+	var weapon_outcome: Dictionary = _estimate_outcome_along_path(
 		observation, displacement, forecast_seconds, transition_seconds, is_moving
 	)
 	for key in OUTCOME_FIELDS:
@@ -91,7 +90,6 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 		return
 	_prepared_physics_frame = physics_frame
 	_prepared_targets = []
-	_prepared_outcome_fields = {}
 	_prepared_attack_models = {}
 	var total_enemy_health := 0.0
 	var positive_removal_value := 0.0
@@ -152,81 +150,6 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 		"visible_enemy_count": visible_enemy_count,
 		"total_tree_harvest_value": total_tree_harvest_value,
 	}
-
-
-func _sample_outcome_field(
-	observation: Dictionary,
-	displacement: Vector2,
-	forecast_seconds: float,
-	transition_seconds: float,
-	is_moving: bool
-) -> Dictionary:
-	var movement_state := "moving" if is_moving else "standing"
-	if not _prepared_outcome_fields.has(movement_state):
-		_prepared_outcome_fields[movement_state] = _build_outcome_field(
-			observation, displacement, forecast_seconds, transition_seconds, is_moving
-		)
-	var outcome_field: Dictionary = _prepared_outcome_fields[movement_state]
-	if not is_moving:
-		return outcome_field.samples[0]
-	var radius: float = outcome_field.radius
-	var normalized_offset: Vector2 = (displacement - outcome_field.center) / radius
-	var x_coordinate: float = clamp(normalized_offset.x, -1.0, 1.0) + 1.0
-	var y_coordinate: float = clamp(normalized_offset.y, -1.0, 1.0) + 1.0
-	var x0 := int(floor(x_coordinate))
-	var y0 := int(floor(y_coordinate))
-	var x1 := min(2, x0 + 1)
-	var y1 := min(2, y0 + 1)
-	var x_fraction: float = x_coordinate - x0
-	var y_fraction: float = y_coordinate - y0
-	return _interpolate_outcomes(
-		outcome_field.samples[y0 * 3 + x0],
-		outcome_field.samples[y0 * 3 + x1],
-		outcome_field.samples[y1 * 3 + x0],
-		outcome_field.samples[y1 * 3 + x1],
-		x_fraction,
-		y_fraction
-	)
-
-
-func _build_outcome_field(
-	observation: Dictionary,
-	candidate_displacement: Vector2,
-	forecast_seconds: float,
-	transition_seconds: float,
-	is_moving: bool
-) -> Dictionary:
-	var center: Vector2 = _player_kinematics_model.predict_displacement(
-		observation, Vector2.ZERO, forecast_seconds
-	)
-	if not is_moving:
-		return {
-			"center": center,
-			"radius": 1.0,
-			"samples":
-			[
-				_estimate_outcome_along_path(
-					observation, center, forecast_seconds, transition_seconds, false
-				)
-			],
-		}
-	var radius: float = max(
-		observation.player_state.collision_radius,
-		max(
-			observation.player_state.runtime_stats.move_speed * forecast_seconds,
-			(candidate_displacement - center).length()
-		)
-	)
-	var samples := []
-	for y_index in 3:
-		for x_index in 3:
-			var offset := Vector2(x_index - 1, y_index - 1) * radius
-			samples.push_back(
-				_estimate_outcome_along_path(
-					observation, center + offset, forecast_seconds, transition_seconds, true
-				)
-			)
-	return {"center": center, "radius": radius, "samples": samples}
 
 
 func _estimate_outcome_along_path(
@@ -303,22 +226,6 @@ func _attack_models(observation: Dictionary, is_moving: bool) -> Array:
 			_movement_state_projector.project_attack_model(observed_weapon, observation, is_moving)
 		)
 	_prepared_attack_models[movement_state] = result
-	return result
-
-
-func _interpolate_outcomes(
-	lower_left: Dictionary,
-	lower_right: Dictionary,
-	upper_left: Dictionary,
-	upper_right: Dictionary,
-	x_fraction: float,
-	y_fraction: float
-) -> Dictionary:
-	var result := {}
-	for key in OUTCOME_FIELDS:
-		var lower: float = lerp(lower_left[key], lower_right[key], x_fraction)
-		var upper: float = lerp(upper_left[key], upper_right[key], x_fraction)
-		result[key] = lerp(lower, upper, y_fraction)
 	return result
 
 

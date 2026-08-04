@@ -115,13 +115,13 @@
 
 ### 计算预算与遥测
 
-- `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
+- `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视与物理回调峰值估计，向规划
   边界公开帧预算上下文；`bot/control/planning_worker.gd` 独占工作线程、信号量、互斥交接和回收，并在该
   线程创建、配置、执行和释放规划器；`bot/control/autopilot_controller.gd` 只提交值快照与预算上下文，
   独占调度、失败时释放控制与结果提交。规划器不访问场景节点或可变观察状态。
 - `bot/planning/planning_compute_budget_policy.gd` 把帧预算上下文转换成统一最终截止与连续预算压力，并维护
-  额外工作的耗时估计；`bot/planning/planning_search_fidelity_allocator.gd` 把预算压力映射为搜索保真度及
-  额外工作额度，不拥有行为效用。
+  额外工作的耗时估计；`bot/planning/planning_search_fidelity_allocator.gd` 把预算压力映射为局部动作
+  广度和额外工作额度。两者都不拥有导航机会或行为效用。
 - `bot/planning/projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止
   策略仍归调用方。

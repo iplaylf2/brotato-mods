@@ -6,7 +6,6 @@ extends Reference
 
 const PLANNING_DURATION_EMA_SAMPLE_WEIGHT := 0.25
 const WORK_UNIT_DURATION_EMA_SAMPLE_WEIGHT := 0.25
-const BASELINE_DEVIATION_RESERVE := 2.0
 const DEFAULT_WORK_UNIT_DURATION_USEC := 150.0
 const DEADLINE_GUARD_MULTIPLIER := 1.5
 const WORK_NAVIGATION_EVALUATION := "navigation_evaluation"
@@ -51,10 +50,8 @@ func allocate(planning_started_usec: int) -> Dictionary:
 		),
 		"physics_frame_capacity_usec":
 		_frame_budget_context.get("physics_frame_capacity_usec", 0.0),
-		"baseline_physics_duration_usec_ema":
-		_frame_budget_context.get("baseline_physics_duration_usec_ema", 0.0),
-		"physics_duration_deviation_usec_ema":
-		_frame_budget_context.get("physics_duration_deviation_usec_ema", 0.0),
+		"physics_process_peak_usec_ema":
+		_frame_budget_context.get("physics_process_peak_usec_ema", 0.0),
 		"has_frame_time_sample": _frame_budget_context.get("has_frame_time_sample", false),
 		"scheduled_planner_count": _frame_budget_context.get("scheduled_planner_count", 1),
 		"estimated_work_unit_duration_usec": _work_unit_duration_usec_ema.duplicate(true),
@@ -119,17 +116,8 @@ func _planning_duration_budget_usec() -> float:
 	if not _frame_budget_context.get("has_frame_time_sample", false):
 		return 0.0
 	var frame_capacity: float = _frame_budget_context.get("physics_frame_capacity_usec", 0.0)
-	var baseline_duration: float = _frame_budget_context.get(
-		"baseline_physics_duration_usec_ema", 0.0
-	)
-	var baseline_deviation: float = _frame_budget_context.get(
-		"physics_duration_deviation_usec_ema", 0.0
+	var physics_process_peak: float = _frame_budget_context.get(
+		"physics_process_peak_usec_ema", 0.0
 	)
 	var scheduled_planner_count: int = int(_frame_budget_context.scheduled_planner_count)
-	return (
-		max(
-			0.0,
-			frame_capacity - baseline_duration - BASELINE_DEVIATION_RESERVE * baseline_deviation
-		)
-		/ scheduled_planner_count
-	)
+	return max(0.0, frame_capacity - physics_process_peak) / scheduled_planner_count
