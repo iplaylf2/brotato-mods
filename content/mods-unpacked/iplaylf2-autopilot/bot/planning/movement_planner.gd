@@ -80,11 +80,12 @@ func plan(observation: Dictionary) -> Dictionary:
 	var projectile_filter: Dictionary = _projectile_filter.filter(observation)
 	var planning_observation: Dictionary = projectile_filter.filtered_observation
 	var context: Dictionary = _utility_model.build_context(planning_observation)
+	var movement_geometry: Dictionary = _movement_geometry.derive(planning_observation)
 	var timing: Dictionary = MovementTimingModel.derive(planning_observation)
 	context.control_interval_seconds = timing.control_interval_seconds
 	var compute_budget: Dictionary = _compute_budget_policy.allocate(planning_started_usec)
 	var search_fidelity: Dictionary = _search_fidelity_allocator.allocate(
-		compute_budget, int(context.geometry.direction_count)
+		compute_budget, int(movement_geometry.direction_count)
 	)
 	phase_duration_usec.observation_preparation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()

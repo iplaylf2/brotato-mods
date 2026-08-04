@@ -50,26 +50,38 @@ def run_godot_script(
     script: Path,
     archive: Path,
     environment_overrides: dict[str, str],
+    timeout_seconds: float | None = None,
 ) -> None:
     environment = os.environ.copy()
     environment.update(environment_overrides)
-    result = subprocess.run(
-        (
-            godot,
-            "--path",
-            str(project.resolve()),
-            "--script",
-            str(script),
-            "--",
-            str(archive),
-        ),
-        cwd=REPOSITORY,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            (
+                godot,
+                "--path",
+                str(project.resolve()),
+                "--script",
+                str(script),
+                "--",
+                str(archive),
+            ),
+            cwd=REPOSITORY,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as error:
+        captured_output = error.stdout or ""
+        if isinstance(captured_output, bytes):
+            captured_output = captured_output.decode(errors="replace")
+        print(captured_output, end="")
+        relative_script = script.relative_to(REPOSITORY)
+        raise SystemExit(
+            f"error: {relative_script} exceeded its {timeout_seconds:g}-second contract"
+        ) from error
     print(result.stdout, end="")
     result.check_returncode()
     # Godot 3 can report a top-level script parse failure while exiting with zero.
@@ -237,6 +249,7 @@ def validate_godot_models() -> None:
             AUTOPILOT_PLANNING_WORKER_CHECKS,
             archive,
             user_data_environment,
+            timeout_seconds=10.0,
         )
 
 

@@ -8,9 +8,6 @@ const MOD_ID := "iplaylf2-autopilot"
 const AutopilotMovementBehavior := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/control/autopilot_movement_behavior.gd"
 )
-const MovementPlanner := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planner.gd"
-)
 const MovementTimingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
 )
@@ -27,7 +24,6 @@ var _observation_service: Node
 var _players: Array = []
 var _actuators: Array = []
 var _original_movement_behaviors: Array = []
-var _movement_planners: Array = []
 var _current_plans: Array = []
 var _previous_movements: Array = []
 var _decision_telemetry: Reference = DecisionTelemetry.new()
@@ -41,7 +37,7 @@ var _replan_interval_seconds := 0.0
 func initialize(observation_service: Node, players: Array) -> void:
 	_replan_interval_seconds = MovementTimingModel.control_interval_seconds()
 	_observation_service = observation_service
-	if not _planning_worker.start():
+	if not _planning_worker.start(players.size()):
 		ModLoaderLog.error(
 			"Could not start the planning worker; Autopilot will not take control.", MOD_ID
 		)
@@ -53,7 +49,6 @@ func initialize(observation_service: Node, players: Array) -> void:
 		add_child(actuator)
 		_actuators.push_back(actuator)
 		_original_movement_behaviors.push_back(player._current_movement_behavior)
-		_movement_planners.push_back(MovementPlanner.new())
 		_current_plans.push_back({})
 		_previous_movements.push_back(Vector2.ZERO)
 		player._current_movement_behavior = actuator
@@ -118,13 +113,12 @@ func _start_replan() -> void:
 		var player: Node = _players[player_index]
 		if not is_instance_valid(player) or player.dead:
 			continue
-		_movement_planners[player_index].set_frame_budget_context(frame_budget_context)
 		var observation: Dictionary = _observation_service.get_planning_observation(player_index)
 		requests.push_back(
 			{
 				"player_index": player_index,
 				"observation": observation,
-				"planner": _movement_planners[player_index],
+				"frame_budget_context": frame_budget_context,
 			}
 		)
 	if not _planning_worker.submit(requests):

@@ -75,12 +75,13 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 #### 搜索预算
 
 `decision.compute_budget` 同时记录本轮截止、单项耗时估计和实测规划耗时。复盘时先检查
-`has_frame_time_sample`；该值为 `false` 表示仍处于冷启动：规划器只执行基线工作，
-`planning_duration_budget_usec = 0`，且预算利用率为 `null`。
-`budget_pressure` 是此前规划耗时 EMA 相对本轮余量的连续压力；`search_fidelity` 再记录移动与导航搜索
-保真度及其离散候选额度。它们只解释搜索计算分配，不代表碰撞采样精度、动作结果优劣或
-目标价值。导航基线除均匀方向外，至多再保留一个不与格点重合的最高机会价值上界方向；该方向属于
-`baseline_position_evaluation_count`，不属于截止准入控制的额外评价。
+`has_frame_time_sample`；该值为 `false` 表示尚无有效物理帧耗时样本：本轮没有计算截止，受截止控制的
+额外工作不会启动，`planning_duration_budget_usec = 0`，且预算利用率为 `null`。此时
+`budget_pressure = 0`，不会把未知余量误判为过载。存在帧样本但实测余量为零时，压力为 `1`；余量为正
+但尚无规划耗时估计时，压力同样为 `0`；余量为正且已有估计时，压力由此前规划耗时 EMA 相对本轮余量
+的比例平方得到。`search_fidelity` 记录移动与导航搜索保真度及其离散候选额度。它们只解释搜索计算分配，
+不代表碰撞采样精度、动作结果优劣或目标价值。导航基线除均匀方向外，至多再保留一个不与格点重合的
+最高机会价值上界方向；该方向属于 `baseline_position_evaluation_count`，不属于截止准入控制的额外评价。
 
 `planning_duration_budget_utilization` 使用本轮实测耗时除以本轮预算。大于 `1` 表示本轮超出预算；单次
 超出可能来自基线工作、工作量突变、单项耗时低估、系统调度或性能监视延迟。连续超出时，应比较

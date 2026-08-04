@@ -1,8 +1,13 @@
 extends Reference
 
 # Owns the Godot 3 on-demand worker lifecycle and the synchronized transfer of
-# planning requests and pure-value results. Callers retain scheduling and result
-# application; planners retain all decision semantics.
+# planning requests and pure-value results. The mutable planner graph is created,
+# configured, executed, and released on this thread; callers retain scheduling
+# and result application.
+
+const MovementPlanner := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planner.gd"
+)
 
 var _thread: Thread
 var _mutex: Mutex = Mutex.new()
@@ -12,12 +17,15 @@ var _completed_results := []
 var _results_ready := false
 var _in_flight := false
 var _stop_requested := false
+var _player_count := 0
+var _planners := []
 
 
-func start() -> bool:
+func start(player_count: int) -> bool:
 	if _thread != null:
 		return true
 	_stop_requested = false
+	_player_count = player_count
 	_thread = Thread.new()
 	if _thread.start(self, "_run") == OK:
 		return true
@@ -76,6 +84,9 @@ func shutdown() -> void:
 
 
 func _run(_unused) -> void:
+	_planners.resize(_player_count)
+	for player_index in _player_count:
+		_planners[player_index] = MovementPlanner.new()
 	while true:
 		_semaphore.wait()
 		_mutex.lock()
@@ -84,6 +95,7 @@ func _run(_unused) -> void:
 		_pending_requests = []
 		_mutex.unlock()
 		if should_stop:
+			_planners.clear()
 			return
 		var results := _compute(requests)
 		_mutex.lock()
@@ -95,11 +107,14 @@ func _run(_unused) -> void:
 func _compute(requests: Array) -> Array:
 	var results := []
 	for request in requests:
+		var player_index: int = request.player_index
+		var planner: Reference = _planners[player_index]
+		planner.set_frame_budget_context(request.frame_budget_context)
 		results.push_back(
 			{
-				"player_index": request.player_index,
+				"player_index": player_index,
 				"observation": request.observation,
-				"plan": request.planner.plan(request.observation),
+				"plan": planner.plan(request.observation),
 			}
 		)
 	return results
