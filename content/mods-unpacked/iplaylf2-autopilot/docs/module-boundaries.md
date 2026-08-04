@@ -35,8 +35,8 @@
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
 - `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”和“当前生命、即时威胁与清场前补充 →
   生命库存及单位价值”两段协议，结果供导航风险和动作效用共同消费。
-- `engagement` 拥有“敌人完成状态转移 → 奖励变化、存活负担解除与死亡后果”、“本波共享主路径容量 →
-  目标完成份额”，以及“候选终点的预计敌群几何与武器额外容量 → 武器聚群结果”的协议。
+- `engagement` 拥有敌人完成价值账本、本波共享主路径容量分配、动作条件武器结果预测与容量守恒，以及
+  候选终点的武器聚群结果四项协议。
 
 根目录只保留组合多个稳定子协议的规划协作者；`engagement` 子目录不拥有候选生成、行为模式或敌人身份
 优先级。
@@ -99,7 +99,8 @@
   `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
 - `bot/planning/weapons/weapon_attack_capacity_model.gd` 定义与目标无关的期望主路径攻击率、单次命中伤害和
   生命偷取率；`bot/planning/engagement/weapon_outcome_forecast_model.gd` 把这些容量与动作路径上的可见
-  目标投影为局部完成份额，并保持奖励变化、存活负担解除和死亡后果三个结果通道。
+  目标投影为按目标类别归属的局部命中与伤害容量；
+  `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样的有限目标容量守恒。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 在敌人与树木之间分配本波共享主路径容量；
   `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
   `bot/planning/engagement/weapon_cluster_outcome_model.gd` 只计算贯穿、弹射和范围机制可利用的额外目标

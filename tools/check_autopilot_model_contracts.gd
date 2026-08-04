@@ -1,6 +1,5 @@
 extends SceneTree
 
-# Executable mechanics contracts run against the same mounted archive as the game.
 const PLANNING_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/planning/"
 var _failed := false
 var _fixtures: Reference
@@ -484,6 +483,13 @@ func _check_weapon_outcome_contracts() -> void:
 			shared_delivery_outcome.expected_weapon_damage, 2.0 * outcome.expected_weapon_damage
 		),
 		"weapons sharing target geometry must retain their independent attack capacity"
+	)
+	_expect(
+		is_equal_approx(
+			shared_delivery_outcome.expected_enemy_completion_equivalents,
+			shared_delivery_outcome.expected_enemy_hits
+		),
+		"enemy completion mass must not exceed the finite enemy contacts that can realize it"
 	)
 	observation.player_state.weapons.pop_back()
 	observation.physics_frame = 5

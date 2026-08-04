@@ -1,7 +1,8 @@
 extends Reference
 
-# Forecasts action-conditioned weapon outcomes along each retained
-# movement path. It does not roll out individual shots, projectiles, contacts,
+# Forecasts action-conditioned weapon outcomes along each retained movement path.
+# This model owns target coverage, nearest-target selection, and hit attribution by
+# target kind. It does not roll out individual attacks, projectiles, contacts,
 # redirects, or triggered event chains.
 
 const WeaponAttackCapacityModel := preload(
@@ -22,8 +23,15 @@ const EnemyHealthModel := preload(
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
+const WeaponOutcomeConservationModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "weapon_outcome_conservation_model.gd"
+	)
+)
 const OUTCOME_FIELDS := [
 	"expected_attack_hits",
+	"expected_enemy_hits",
 	"expected_weapon_damage",
 	"expected_enemy_completion_equivalents",
 	"expected_enemy_reward_delta_value",
@@ -41,9 +49,10 @@ var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _enemy_completion_value_model: Reference = EnemyCompletionValueModel.new()
 var _enemy_health_model: Reference = EnemyHealthModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
+var _weapon_outcome_conservation_model: Reference = WeaponOutcomeConservationModel.new()
 var _prepared_physics_frame := -1
 var _prepared_targets := []
-var _prepared_caps := {}
+var _prepared_target_capacity := {}
 var _prepared_attack_models := {}
 
 
@@ -84,7 +93,7 @@ func accumulate_outcome(
 	var lifesteal_recovery: float = min(missing_health, weapon_outcome.expected_lifesteal_recovery)
 	outcome.expected_recovery += lifesteal_recovery
 	outcome.expected_recovery_events += lifesteal_recovery
-	_cap_outcome(outcome)
+	_constrain_outcome(outcome)
 
 
 func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> void:
@@ -94,13 +103,8 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 	_prepared_physics_frame = physics_frame
 	_prepared_targets = []
 	_prepared_attack_models = {}
-	var total_enemy_health := 0.0
-	var positive_reward_delta_value := 0.0
-	var negative_reward_delta_value := 0.0
-	var positive_burden_relief_value := 0.0
-	var negative_burden_relief_value := 0.0
-	var total_death_consequence_value := 0.0
-	var visible_enemy_count := 0.0
+	var enemy_health_capacity := 0.0
+	var enemy_count_capacity := 0.0
 	var completion_value_ledger: Dictionary = planning_context.enemy_completion_value_ledger
 	for track in observation.enemy_tracks:
 		if not track.visible:
@@ -126,14 +130,9 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 				"net_completion_value": completion_value.net_completion_value,
 			}
 		)
-		visible_enemy_count += 1.0
-		total_enemy_health += remaining_health
-		positive_reward_delta_value += max(0.0, completion_value.reward_delta_value)
-		negative_reward_delta_value += min(0.0, completion_value.reward_delta_value)
-		positive_burden_relief_value += max(0.0, completion_value.burden_relief_value)
-		negative_burden_relief_value += min(0.0, completion_value.burden_relief_value)
-		total_death_consequence_value += completion_value.death_consequence_value
-	var total_tree_harvest_value := 0.0
+		enemy_count_capacity += 1.0
+		enemy_health_capacity += remaining_health
+	var tree_harvest_value_capacity := 0.0
 	for tree in observation.visible_world.trees:
 		var harvest_value: float = _opportunity_pricing_model.tree_destruction_value(
 			observation, tree, planning_context.state_factors.health_inventory_value
@@ -154,16 +153,11 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 				"harvest_value": harvest_value,
 			}
 		)
-		total_tree_harvest_value += harvest_value
-	_prepared_caps = {
-		"total_enemy_health": total_enemy_health,
-		"positive_reward_delta_value": positive_reward_delta_value,
-		"negative_reward_delta_value": negative_reward_delta_value,
-		"positive_burden_relief_value": positive_burden_relief_value,
-		"negative_burden_relief_value": negative_burden_relief_value,
-		"total_death_consequence_value": total_death_consequence_value,
-		"visible_enemy_count": visible_enemy_count,
-		"total_tree_harvest_value": total_tree_harvest_value,
+		tree_harvest_value_capacity += harvest_value
+	_prepared_target_capacity = {
+		"enemy_health": enemy_health_capacity,
+		"enemy_count": enemy_count_capacity,
+		"tree_harvest_value": tree_harvest_value_capacity,
 	}
 
 
@@ -288,7 +282,8 @@ func _accumulate_weapon_outcome(
 		return
 	if coverage.target_availability <= 0.0:
 		return
-	var expected_hits_per_attack: float = _expected_hits_per_attack(attack_model, coverage)
+	var target_hits: Dictionary = _expected_target_hits(attack_model, coverage)
+	var expected_hits_per_attack: float = target_hits.total
 	var expected_damage_per_attack: float = _expected_damage_per_attack(attack_model, coverage)
 	var expected_hits: float = (
 		expected_attack_count
@@ -300,39 +295,16 @@ func _accumulate_weapon_outcome(
 		* expected_damage_per_attack
 		* coverage.target_availability
 	)
-	var enemy_hits: float = expected_hits * coverage.enemy_selection_share
-	var enemy_damage: float = expected_damage * coverage.enemy_selection_share
+	var enemy_hits: float = expected_attack_count * target_hits.enemy * coverage.target_availability
+	var tree_hits: float = expected_attack_count * target_hits.tree * coverage.target_availability
+	var enemy_damage: float = expected_damage * enemy_hits / max(0.0001, expected_hits)
 	outcome.expected_attack_hits += expected_hits
+	outcome.expected_enemy_hits += enemy_hits
 	outcome.expected_weapon_damage += enemy_damage
-	var completion_equivalents: float = min(
-		coverage.covered_enemy_mass, enemy_damage / max(1.0, coverage.mean_enemy_remaining_health)
+	_weapon_outcome_conservation_model.accumulate_enemy_completion(
+		outcome, coverage, enemy_hits, enemy_damage, attack_model.impact.critical_chance
 	)
-	outcome.expected_enemy_completion_equivalents += completion_equivalents
-	outcome.expected_enemy_reward_delta_value += (
-		completion_equivalents
-		* coverage.mean_enemy_reward_delta_value
-	)
-	outcome.expected_enemy_burden_relief_value += (
-		completion_equivalents
-		* coverage.mean_enemy_burden_relief_value
-	)
-	outcome.expected_enemy_death_consequence_value += (
-		completion_equivalents
-		* coverage.mean_enemy_death_consequence_value
-	)
-	outcome.expected_kill_weight += completion_equivalents
-	outcome.expected_critical_kill_weight += (
-		min(
-			coverage.covered_enemy_mass,
-			enemy_damage / max(1.0, coverage.mean_enemy_remaining_health)
-		)
-		* clamp(attack_model.impact.critical_chance, 0.0, 1.0)
-	)
-	outcome.expected_tree_completion_value += (
-		expected_hits
-		* coverage.tree_selection_share
-		* coverage.mean_tree_harvest_value_per_hit
-	)
+	outcome.expected_tree_completion_value += (tree_hits * coverage.mean_tree_harvest_value_per_hit)
 	outcome.expected_lifesteal_recovery += (
 		enemy_hits
 		* clamp(attack_model.impact.lifesteal, 0.0, 1.0)
@@ -350,6 +322,7 @@ func _summarize_target_coverage(
 	var enemy_selection_weight := 0.0
 	var tree_selection_weight := 0.0
 	var covered_enemy_mass := 0.0
+	var covered_tree_mass := 0.0
 	var covered_target_mass := 0.0
 	var weighted_enemy_reward_delta_value := 0.0
 	var weighted_enemy_burden_relief_value := 0.0
@@ -397,8 +370,9 @@ func _summarize_target_coverage(
 			weighted_enemy_remaining_health += selection_weight * target.remaining_health
 		else:
 			tree_selection_weight += selection_weight
+			covered_tree_mass += covered.coverage
 			weighted_tree_harvest_value_per_hit += (
-				selection_weight
+				covered.coverage
 				* target.harvest_value
 				/ target.required_hits
 			)
@@ -408,10 +382,11 @@ func _summarize_target_coverage(
 		"target_availability": total_selection_weight,
 		"covered_target_mass": covered_target_mass,
 		"covered_enemy_mass": covered_enemy_mass,
-		"expected_additional_direct_targets":
-		_expected_additional_direct_targets(
+		"additional_direct_target_mass":
+		_additional_direct_target_mass(
 			attack_model, covered_samples, total_selection_weight, transition_width
 		),
+		"covered_tree_mass": covered_tree_mass,
 		"enemy_selection_share": enemy_selection_share,
 		"tree_selection_share": tree_selection_share,
 		"mean_enemy_reward_delta_value":
@@ -425,7 +400,7 @@ func _summarize_target_coverage(
 		"mean_enemy_remaining_health":
 		weighted_enemy_remaining_health / max(0.0001, enemy_selection_weight),
 		"mean_tree_harvest_value_per_hit":
-		weighted_tree_harvest_value_per_hit / max(0.0001, tree_selection_weight),
+		weighted_tree_harvest_value_per_hit / max(0.0001, covered_tree_mass),
 	}
 
 
@@ -452,26 +427,25 @@ func _delivery_coverage_key(attack_model: Dictionary) -> String:
 	)
 
 
-func _expected_additional_direct_targets(
+func _additional_direct_target_mass(
 	attack_model: Dictionary,
 	covered_samples: Array,
 	total_selection_weight: float,
 	transition_width: float
-) -> float:
+) -> Dictionary:
 	if covered_samples.size() <= 1 or total_selection_weight <= 0.0:
-		return 0.0
-	var expected_mass := 0.0
+		return {"enemy": 0.0, "tree": 0.0, "total": 0.0}
+	var result := {"enemy": 0.0, "tree": 0.0, "total": 0.0}
 	for primary_index in covered_samples.size():
 		var primary: Dictionary = covered_samples[primary_index]
 		var aim_position: Vector2 = primary.sample.relative_position
 		if aim_position.length_squared() <= 0.0:
 			continue
-		var aligned_mass := 0.0
 		for secondary_index in covered_samples.size():
 			if secondary_index == primary_index:
 				continue
 			var secondary: Dictionary = covered_samples[secondary_index]
-			aligned_mass += (
+			var contact_mass: float = (
 				secondary.coverage
 				* _direct_path_intersection(
 					attack_model,
@@ -481,8 +455,11 @@ func _expected_additional_direct_targets(
 					transition_width
 				)
 			)
-		expected_mass += (primary.selection_weight / total_selection_weight * aligned_mass)
-	return expected_mass
+			contact_mass *= primary.selection_weight / total_selection_weight
+			var kind: String = secondary.sample.target.kind
+			result[kind] += contact_mass
+			result.total += contact_mass
+	return result
 
 
 func _direct_path_intersection(
@@ -529,19 +506,42 @@ func _range_coverage(
 	return min(lower_coverage, upper_coverage)
 
 
-func _expected_hits_per_attack(attack_model: Dictionary, coverage: Dictionary) -> float:
+func _expected_target_hits(attack_model: Dictionary, coverage: Dictionary) -> Dictionary:
 	var paths: Dictionary = attack_model.delivery.paths
 	var primary_hits: float = (
 		max(1.0, float(paths.count))
 		* clamp(paths.primary_probability_floor, 0.05, 1.0)
 	)
-	var additional_covered_targets: float = coverage.expected_additional_direct_targets
-	var direct_stages: float = min(
-		max(0.0, float(paths.hit_capacity) - 1.0), additional_covered_targets
-	)
+	var direct_mass: Dictionary = coverage.additional_direct_target_mass
+	var direct_capacity: float = min(max(0.0, float(paths.hit_capacity) - 1.0), direct_mass.total)
+	var direct_scale: float = direct_capacity / max(0.0001, direct_mass.total)
 	var redirectable_targets: float = max(0.0, coverage.covered_target_mass - 1.0)
 	var redirect_stages: float = min(_expected_redirect_count(attack_model), redirectable_targets)
-	return primary_hits * (1.0 + direct_stages + redirect_stages)
+	var enemy_redirect_share: float = (
+		coverage.covered_enemy_mass
+		/ max(0.0001, coverage.covered_target_mass)
+	)
+	var tree_redirect_share: float = (
+		coverage.covered_tree_mass
+		/ max(0.0001, coverage.covered_target_mass)
+	)
+	var enemy_hits: float = (
+		primary_hits
+		* (
+			coverage.enemy_selection_share
+			+ direct_mass.enemy * direct_scale
+			+ redirect_stages * enemy_redirect_share
+		)
+	)
+	var tree_hits: float = (
+		primary_hits
+		* (
+			coverage.tree_selection_share
+			+ direct_mass.tree * direct_scale
+			+ redirect_stages * tree_redirect_share
+		)
+	)
+	return {"enemy": enemy_hits, "tree": tree_hits, "total": enemy_hits + tree_hits}
 
 
 func _expected_damage_per_attack(attack_model: Dictionary, coverage: Dictionary) -> float:
@@ -552,7 +552,7 @@ func _expected_damage_per_attack(attack_model: Dictionary, coverage: Dictionary)
 	)
 	var impact_damage: float = _weapon_attack_capacity_model.expected_damage_per_hit(attack_model)
 	var primary_damage: float = impact_damage * primary_hits
-	var additional_covered_targets: float = coverage.expected_additional_direct_targets
+	var additional_covered_targets: float = coverage.additional_direct_target_mass.total
 	var direct_stages: float = min(
 		max(0.0, float(paths.hit_capacity) - 1.0), additional_covered_targets
 	)
@@ -644,37 +644,5 @@ func _unconditional_rule_addition(rules: Array, event: String, target: String) -
 	return result
 
 
-func _cap_outcome(outcome: Dictionary) -> void:
-	# This boundary owes a feasible result: several weapons and path samples may
-	# describe the same target, but no channel may consume that visible target more
-	# than once. These are conservation bounds, not recovery for missing inputs.
-	outcome.expected_weapon_damage = min(
-		outcome.expected_weapon_damage, _prepared_caps.total_enemy_health
-	)
-	outcome.expected_enemy_completion_equivalents = clamp(
-		outcome.expected_enemy_completion_equivalents, 0.0, _prepared_caps.visible_enemy_count
-	)
-	outcome.expected_enemy_reward_delta_value = clamp(
-		outcome.expected_enemy_reward_delta_value,
-		_prepared_caps.negative_reward_delta_value,
-		_prepared_caps.positive_reward_delta_value
-	)
-	outcome.expected_enemy_burden_relief_value = clamp(
-		outcome.expected_enemy_burden_relief_value,
-		_prepared_caps.negative_burden_relief_value,
-		_prepared_caps.positive_burden_relief_value
-	)
-	outcome.expected_enemy_death_consequence_value = clamp(
-		outcome.expected_enemy_death_consequence_value,
-		0.0,
-		_prepared_caps.total_death_consequence_value
-	)
-	outcome.expected_kill_weight = min(
-		outcome.expected_kill_weight, _prepared_caps.visible_enemy_count
-	)
-	outcome.expected_critical_kill_weight = min(
-		outcome.expected_critical_kill_weight, outcome.expected_kill_weight
-	)
-	outcome.expected_tree_completion_value = clamp(
-		outcome.expected_tree_completion_value, 0.0, _prepared_caps.total_tree_harvest_value
-	)
+func _constrain_outcome(outcome: Dictionary) -> void:
+	_weapon_outcome_conservation_model.constrain(outcome, _prepared_target_capacity)

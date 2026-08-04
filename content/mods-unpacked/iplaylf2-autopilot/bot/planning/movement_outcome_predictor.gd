@@ -78,6 +78,7 @@ func predict_base(
 		"moving_seconds": 0.0,
 		"navigation_terminal_value_gain": 0.0,
 		"expected_attack_hits": 0.0,
+		"expected_enemy_hits": 0.0,
 		"expected_rule_damage": 0.0,
 		"expected_recovery": 0.0,
 		"expected_recovery_events": 0.0,
