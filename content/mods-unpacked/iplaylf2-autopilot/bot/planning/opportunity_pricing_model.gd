@@ -1,8 +1,8 @@
 extends Reference
 
 # Prices observed materials, consumables, destructibles, and enemy removal in
-# material-equivalent marginal value using only current public state. Geometry
-# and event realization remain in their owning predictors.
+# material-equivalent marginal value using only current public state. Route
+# accessibility and event realization remain in their owning predictors.
 
 # Generating an item box creates a wave-end item choice that did not previously
 # exist. Price that creation by the minimum recyclable item value. Once a box is
@@ -14,15 +14,15 @@ const BASE_ITEM_INFLATION_PER_WAVE := 0.1
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
-const StatOpportunityValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
+const StatOpportunityPricingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_pricing_model.gd"
 )
 const ConsumableDropProbabilityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
-var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
+var _stat_opportunity_pricing_model: Reference = StatOpportunityPricingModel.new()
 var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
 
 
@@ -57,12 +57,13 @@ func tree_destruction_value(
 		max(0.0, rewards.get("base_materials", 0.0))
 		* (material_unit_collection_value(observation) - 1.0)
 	)
-	if not health_inventory_value.empty():
-		kill_value += (
-			_consumable_drop_probability_model.any_consumable_drop_chance(observation, rewards)
-			* health_inventory_value.get("maximum_consumable_recovery", 0.0)
-			* health_inventory_value.get("recovery_conversion_unit_value", 0.0)
-		)
+	kill_value += (
+		_consumable_drop_probability_model.any_consumable_drop_chance(observation, rewards)
+		* health_inventory_value.maximum_consumable_recovery
+		# Destroying the tree creates replenishment supply; it does not merely
+		# convert supply already on the floor into liquid health.
+		* health_inventory_value.replenishment_unit_value
+	)
 	return max(0.0, kill_value - _living_tree_preservation_value(observation))
 
 
@@ -260,7 +261,7 @@ func kill_reward_value(observation: Dictionary, rewards: Dictionary) -> float:
 		_consumable_drop_probability_model.item_box_drop_chance(observation, rewards)
 		* _generated_item_box_value(observation)
 	)
-	value += _stat_opportunity_value_model.value(
+	value += _stat_opportunity_pricing_model.value(
 		observation, rewards.get("player_stat_changes", [])
 	)
 	return value

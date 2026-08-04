@@ -8,8 +8,8 @@ const PlayerRuleProjector := preload(
 const HealthInventoryValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_inventory_value_model.gd"
 )
-const OpportunityValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
+const OpportunityPricingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
 const TargetCompletionAllocationModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
@@ -17,7 +17,7 @@ const TargetCompletionAllocationModel := preload(
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _health_inventory_value_model: Reference = HealthInventoryValueModel.new()
-var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
 var _scoring_schema_validated := false
 
@@ -42,7 +42,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 		damage_is_terminal_rule
 		and observation.player_state.runtime_stats.hit_protection <= 0
 	)
-	var removal_value_ledger: Dictionary = _opportunity_value_model.build_enemy_removal_value_ledger(
+	var removal_value_ledger: Dictionary = _opportunity_pricing_model.build_enemy_removal_value_ledger(
 		observation, marginal_health_unit_value
 	)
 	var information_value_per_viewport := _information_value_per_viewport(
@@ -63,8 +63,12 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"movement_damage_exposure_reduction": marginal_health_unit_value,
 			},
 			"recovery":
+			# Recovery first becomes liquid health. A consumable pickup also spends
+			# replenishment supply below, so the two entries together equal the
+			# liquidity-conversion value. Pricing recovery at that net value here
 			{
-				"expected_recovery": health_inventory_value.recovery_conversion_unit_value,
+				# would charge the consumed supply twice.
+				"expected_recovery": health_inventory_value.terminal_health_loss_unit_value,
 				# Replacement supply lowers the shadow price of taking damage. Charging
 				# that same price when a pickup is consumed puts insurance and consumption
 				# on one ledger instead of letting the same reserve be valued twice.
@@ -175,16 +179,18 @@ func _information_value_per_viewport(
 ) -> float:
 	var observed_value := 0.0
 	for material in observation.visible_world.materials:
-		observed_value += _opportunity_value_model.material_collection_value(observation, material)
+		observed_value += _opportunity_pricing_model.material_collection_value(
+			observation, material
+		)
 	var observation_count: int = observation.visible_world.materials.size()
 	for consumable in observation.visible_world.consumables:
 		observed_value += (
-			_opportunity_value_model.consumable_recovery_value(observation, consumable)
+			_opportunity_pricing_model.consumable_recovery_value(observation, consumable)
 			* health_inventory_value.recovery_conversion_unit_value
 		)
 		observation_count += 1
 	for tree in observation.visible_world.trees:
-		observed_value += _opportunity_value_model.tree_destruction_value(
+		observed_value += _opportunity_pricing_model.tree_destruction_value(
 			observation, tree, health_inventory_value
 		)
 		observation_count += 1

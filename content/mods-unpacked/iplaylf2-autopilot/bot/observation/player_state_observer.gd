@@ -79,6 +79,9 @@ func _get_runtime_stats(player: Node) -> Dictionary:
 		"armor": player.current_stats.armor,
 		"dodge_chance": player.current_stats.dodge,
 		"hit_protection": player.life_bar_effects().get("hit_protection", 0),
+		# Zero damage selects vanilla's current minimum iframe duration, including
+		# endless-mode scaling, without duplicating that rule in planning.
+		"minimum_invincibility_seconds": player.get_iframes(0.0),
 	}
 
 

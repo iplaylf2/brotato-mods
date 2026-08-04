@@ -30,6 +30,11 @@ var _map_information_value_model: Reference = MapInformationValueModel.new()
 var _spatial_opportunity_value_model: Reference = SpatialOpportunityValueModel.new()
 
 
+func set_enemy_motion_predictor(predictor: Reference) -> void:
+	_battlefield_influence_model.set_enemy_motion_predictor(predictor)
+	_spatial_opportunity_value_model.set_enemy_motion_predictor(predictor)
+
+
 func plan(
 	observation: Dictionary,
 	context: Dictionary,

@@ -10,8 +10,8 @@ const WeaponAttackCapacityModel := preload(
 const PlayerMovementStateProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
 )
-const OpportunityValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
+const OpportunityPricingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
@@ -32,7 +32,7 @@ const OUTCOME_FIELDS := [
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
-var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _prepared_physics_frame := -1
@@ -40,6 +40,10 @@ var _prepared_targets := []
 var _prepared_caps := {}
 var _prepared_outcome_fields := {}
 var _prepared_attack_models := {}
+
+
+func set_enemy_motion_predictor(predictor: Reference) -> void:
+	_enemy_motion_predictor = predictor
 
 
 func accumulate_outcome(
@@ -92,7 +96,7 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 		var maximum_health: float = max(
 			1.0, float(track.behavior_profile.durability.maximum_health)
 		)
-		var removal_value: float = _opportunity_value_model.enemy_removal_value(
+		var removal_value: float = _opportunity_pricing_model.enemy_removal_value(
 			removal_value_ledger, track
 		)
 		_prepared_targets.push_back(
@@ -111,7 +115,7 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 		negative_removal_value += min(0.0, removal_value)
 	var total_tree_harvest_value := 0.0
 	for tree in observation.visible_world.trees:
-		var harvest_value: float = _opportunity_value_model.tree_destruction_value(
+		var harvest_value: float = _opportunity_pricing_model.tree_destruction_value(
 			observation, tree, planning_context.state_factors.health_inventory_value
 		)
 		_prepared_targets.push_back(

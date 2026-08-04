@@ -22,6 +22,8 @@ func _init() -> void:
 	_check_local_enemy_interaction_projection()
 	_check_target_completion_allocation()
 	_check_health_inventory_loss()
+	_check_recovery_liquidity_pricing()
+	_check_additive_collision_damage()
 	_check_immediate_hit_reserve_reachability()
 	quit(1 if _failed else 0)
 
@@ -99,7 +101,7 @@ func _check_swept_enemy_contact() -> void:
 		"enemy contact must be detected between safe-looking sample endpoints"
 	)
 	_expect(
-		is_equal_approx(outcome.maximum_path_collision_damage, 3.0),
+		is_equal_approx(outcome.maximum_path_collision_raw_damage, 3.0),
 		"swept enemy contact must retain the colliding body's damage"
 	)
 
@@ -176,7 +178,7 @@ func _check_spatial_target_control() -> void:
 		"enemy_tracks":
 		[
 			_enemy_track(Vector2(-100.0, 0.0), Vector2.ZERO, false),
-			_enemy_track(Vector2(200.0, 0.0), Vector2.ZERO, false),
+			_enemy_track(Vector2(500.0, 0.0), Vector2.ZERO, false),
 		],
 		"localization": {"map_bounds": _unknown_bounds()},
 	}
@@ -185,7 +187,11 @@ func _check_spatial_target_control() -> void:
 	observation.enemy_tracks[1].behavior_profile.durability = {"maximum_health": 10.0}
 	var context := {
 		"enemy_removal_value_ledger": {"removal_value_by_track_id": {1: 1.0, 2: 100.0}},
-		"state_factors": {"health_inventory_value": {}},
+		"state_factors":
+		{
+			"health_inventory_value":
+			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0}
+		},
 		"target_completion_ledger": _completion_ledger({1: 1.0, 2: 1.0}),
 	}
 	var spatial: Reference = spatial_script.new()
@@ -194,7 +200,17 @@ func _check_spatial_target_control() -> void:
 	)
 	_expect(
 		enemy_delta.enemy_opportunity > 0.0,
-		"closing on a positive-removal-value enemy must retain a navigation gradient"
+		"creating a positive-removal-value enemy attack window must retain a navigation gradient"
+	)
+	observation.physics_frame += 1
+	observation.enemy_tracks = [observation.enemy_tracks[0]]
+	spatial = spatial_script.new()
+	var in_range_delta: Dictionary = spatial.value_delta(
+		observation, context, Vector2(-50.0, 0.0), 0.5
+	)
+	_expect(
+		is_equal_approx(in_range_delta.enemy_opportunity, 0.0),
+		"strategic navigation must not reward moving closer to enemies already in weapon range"
 	)
 
 	observation.physics_frame = 5
@@ -203,7 +219,7 @@ func _check_spatial_target_control() -> void:
 		{
 			"memory_record_id": 1,
 			"kind": "tree",
-			"relative_position": Vector2(200.0, 0.0),
+			"relative_position": Vector2(500.0, 0.0),
 			"existence_confidence": 1.0,
 			"destructible_profile":
 			{
@@ -410,6 +426,104 @@ func _check_health_inventory_loss() -> void:
 	)
 
 
+func _check_recovery_liquidity_pricing() -> void:
+	var utility_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_utility_model.gd"
+	)
+	var utility: Reference = utility_script.new()
+	var observation := _planning_observation([])
+	observation.player_state.health = {"current": 4.0, "maximum": 20.0, "ratio": 0.2}
+	observation.player_state.resources = {"materials": 0.0}
+	var fruit := {
+		"kind": "consumable",
+		"relative_position": Vector2(10.0, 0.0),
+		"visual_radius": 10.0,
+		"existence_confidence": 1.0,
+		"pickup_profile": {"base_recovery": 3.0, "traits": ["fruit"]},
+	}
+	observation.remembered_entities = [fruit]
+	observation.visible_world.consumables = [fruit]
+	var context: Dictionary = utility.build_context(observation)
+	var pickup_utility: Dictionary = utility.evaluate(
+		{
+			"forecast_expected_health_loss": 0.0,
+			"expected_recovery": 3.0,
+			"consumed_consumable_recovery_supply": 3.0,
+		},
+		context
+	)
+	_expect(
+		pickup_utility.objective_utility_breakdown.recovery > 0.0,
+		"turning observed consumable supply into liquid health must have positive low-health value"
+	)
+	var tree := {
+		"destructible_profile":
+		{
+			"kill_rewards":
+			{
+				"base_materials": 0.0,
+				"base_consumable_drop_chance": 1.0,
+				"item_box_conditional_chance": 0.0,
+				"guaranteed_consumable": true,
+			}
+		}
+	}
+	var opportunity_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
+	)
+	var opportunity: Reference = opportunity_script.new()
+	var no_drop_tree: Dictionary = tree.duplicate(true)
+	no_drop_tree.destructible_profile.kill_rewards.base_consumable_drop_chance = 0.0
+	no_drop_tree.destructible_profile.kill_rewards.guaranteed_consumable = false
+	_expect(
+		(
+			opportunity.tree_destruction_value(
+				observation, tree, context.state_factors.health_inventory_value
+			)
+			> opportunity.tree_destruction_value(
+				observation, no_drop_tree, context.state_factors.health_inventory_value
+			)
+		),
+		"a tree that creates reachable healing supply must retain inventory value"
+	)
+
+
+func _check_additive_collision_damage() -> void:
+	var impact_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/collision_health_impact_model.gd"
+	)
+	var impact: Reference = impact_script.new()
+	var observation := _planning_observation([])
+	observation.player_state.health = {"current": 9.0, "maximum": 20.0, "ratio": 0.45}
+	var action := {"movement": Vector2.ZERO, "forecast_seconds": 0.4}
+	var single: Dictionary = impact.evaluate(
+		observation, action, _collision_evidence(0.5, 0.5, 3.0, 6.0), false
+	)
+	var swarm: Dictionary = impact.evaluate(
+		observation, action, _collision_evidence(0.9, 2.0, 12.0, 6.0), false
+	)
+	_expect(
+		swarm.expected_health_loss > single.expected_health_loss * 2.0,
+		"independent collision opportunities must retain additive expected damage"
+	)
+	_expect(
+		is_equal_approx(swarm.terminal_collision_risk, 0.0),
+		"sublethal hit accumulation must remain health loss instead of a second terminal penalty"
+	)
+	observation.physics_frame += 1
+	observation.player_state.runtime_stats.hit_protection = 1
+	var partially_protected: Dictionary = impact.evaluate(
+		observation, action, _collision_evidence(0.9, 2.0, 12.0, 6.0), false
+	)
+	_expect(
+		(
+			partially_protected.expected_health_loss > 0.0
+			and partially_protected.expected_health_loss < swarm.expected_health_loss
+		),
+		"one hit-protection charge must consume one opportunity instead of erasing the forecast"
+	)
+
+
 func _check_local_enemy_interaction_projection() -> void:
 	var projector_script: Script = load(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/local_enemy_interaction_projector.gd"
@@ -566,6 +680,7 @@ func _planning_observation(enemy_tracks: Array) -> Dictionary:
 				"armor": 0.0,
 				"dodge_chance": 0.0,
 				"hit_protection": 0,
+				"minimum_invincibility_seconds": 0.2,
 			},
 			"effective_stats": {"luck": 0.0},
 			"movement": {"knockback_velocity": Vector2.ZERO},
@@ -595,6 +710,23 @@ func _empty_weapon_outcome(field_names: Array) -> Dictionary:
 	outcome.expected_recovery = 0.0
 	outcome.expected_recovery_events = 0.0
 	return outcome
+
+
+func _collision_evidence(
+	risk: float,
+	contact_evidence_sum: float,
+	raw_damage_evidence_sum: float,
+	maximum_raw_damage: float
+) -> Dictionary:
+	return {
+		"path_collision_risk": 0.0,
+		"integrated_path_collision_risk": 0.0,
+		"maximum_path_raw_damage": 0.0,
+		"velocity_collision_risk": risk,
+		"velocity_contact_evidence_sum": contact_evidence_sum,
+		"velocity_raw_damage_evidence_sum": raw_damage_evidence_sum,
+		"maximum_velocity_raw_damage": maximum_raw_damage,
+	}
 
 
 func _load_health_inventory_script() -> Script:

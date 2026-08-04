@@ -33,6 +33,10 @@ var _shared_enemy_positions := []
 var _shared_projectile_positions := []
 
 
+func set_enemy_motion_predictor(predictor: Reference) -> void:
+	_enemy_motion_predictor = predictor
+
+
 func predict(
 	observation: Dictionary,
 	action_forecast: Dictionary,
@@ -657,8 +661,8 @@ func _accumulate_result(
 		result.peak_path_collision_risk, exposure.path_collision_risk
 	)
 	result.integrated_hostile_collision_risk += exposure.path_collision_risk * step_seconds
-	result.maximum_path_collision_damage = max(
-		result.maximum_path_collision_damage, channels.contact_damage
+	result.maximum_path_collision_raw_damage = max(
+		result.maximum_path_collision_raw_damage, channels.contact_damage
 	)
 
 
@@ -672,8 +676,8 @@ func _accumulate_committed_collision(
 		exposure.path_collision_risk
 		* step_seconds
 	)
-	result.committed_maximum_path_collision_damage = max(
-		result.committed_maximum_path_collision_damage, channels.contact_damage
+	result.committed_maximum_path_collision_raw_damage = max(
+		result.committed_maximum_path_collision_raw_damage, channels.contact_damage
 	)
 
 
@@ -775,10 +779,10 @@ func _empty_result() -> Dictionary:
 		"peak_environmental_pressure": 0.0,
 		"peak_path_collision_risk": 0.0,
 		"integrated_hostile_collision_risk": 0.0,
-		"maximum_path_collision_damage": 0.0,
+		"maximum_path_collision_raw_damage": 0.0,
 		"committed_peak_path_collision_risk": 0.0,
 		"committed_integrated_hostile_collision_risk": 0.0,
-		"committed_maximum_path_collision_damage": 0.0,
+		"committed_maximum_path_collision_raw_damage": 0.0,
 		"initial_environmental_pressure": 0.0,
 		"terminal_environmental_pressure": 0.0,
 		"mean_environmental_pressure_derivative": 0.0,

@@ -14,15 +14,33 @@ const MINIMUM_INTEGRATION_STEP_SECONDS := 0.0125
 const INTEGRATION_POSITION_ERROR_TOLERANCE := 1.0
 
 var _observed_motion_predictor: Reference = ObservedMotionPredictor.new()
-var _baseline_cache_physics_frame := -1
+var _cache_physics_frame := -1
 var _observed_positions_by_track_and_time := {}
+var _response_positions_by_track_and_time := {}
+var _response_cache_hit_count := 0
+var _response_cache_miss_count := 0
 
 
 func begin_physics_frame(physics_frame: int) -> void:
-	if physics_frame >= 0 and physics_frame == _baseline_cache_physics_frame:
+	if physics_frame >= 0 and physics_frame == _cache_physics_frame:
 		return
-	_baseline_cache_physics_frame = physics_frame
+	_cache_physics_frame = physics_frame
 	_observed_positions_by_track_and_time.clear()
+	_response_positions_by_track_and_time.clear()
+	_response_cache_hit_count = 0
+	_response_cache_miss_count = 0
+
+
+func cache_diagnostics() -> Dictionary:
+	return {
+		"response_hit_count": _response_cache_hit_count,
+		"response_miss_count": _response_cache_miss_count,
+		"response_reuse_ratio":
+		(
+			float(_response_cache_hit_count)
+			/ max(1.0, float(_response_cache_hit_count + _response_cache_miss_count))
+		),
+	}
 
 
 func predict_position(
@@ -48,6 +66,33 @@ func predict_position(
 	var movement_speed: float = max(baseline_movement_speed, track.estimated_velocity.length())
 	if movement_speed <= 0.0:
 		return _observed_position(track, time)
+	var track_id: int = track.get("track_id", -1)
+	if track_id >= 0:
+		var positions_by_time: Dictionary = _response_positions_by_track_and_time.get(track_id, {})
+		var positions_by_displacement: Dictionary = positions_by_time.get(time, {})
+		if positions_by_displacement.has(player_displacement):
+			_response_cache_hit_count += 1
+			return positions_by_displacement[player_displacement]
+		_response_cache_miss_count += 1
+		var position: Vector2 = _predict_response_position(
+			track, player_displacement, time, movement_speed, target_response
+		)
+		positions_by_displacement[player_displacement] = position
+		positions_by_time[time] = positions_by_displacement
+		_response_positions_by_track_and_time[track_id] = positions_by_time
+		return position
+	return _predict_response_position(
+		track, player_displacement, time, movement_speed, target_response
+	)
+
+
+func _predict_response_position(
+	track: Dictionary,
+	player_displacement: Vector2,
+	time: float,
+	movement_speed: float,
+	target_response: Dictionary
+) -> Vector2:
 	var mechanic_position := _integrate_target_response(
 		track.relative_position, player_displacement, time, movement_speed, target_response
 	)

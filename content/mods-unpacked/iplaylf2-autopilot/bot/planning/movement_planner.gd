@@ -39,6 +39,9 @@ const MovementGeometryModel := preload(
 const LocalEnemyInteractionProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/local_enemy_interaction_projector.gd"
 )
+const EnemyMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
+)
 var _action_generator: Reference = MovementActionGenerator.new()
 var _compute_budget_policy: Reference = PlanningComputeBudgetPolicy.new()
 var _search_fidelity_allocator: Reference = PlanningSearchFidelityAllocator.new()
@@ -50,6 +53,15 @@ var _action_selector: Reference = MovementActionSelector.new()
 var _navigation_intent_planner: Reference = NavigationIntentPlanner.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _local_enemy_interaction_projector: Reference = LocalEnemyInteractionProjector.new()
+var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
+
+
+func _init() -> void:
+	# Candidate models ask many of the same (track, time, player position)
+	# questions. One frame-scoped predictor owns those projections so semantic
+	# models share computation without owning independent mutable caches.
+	_navigation_intent_planner.set_enemy_motion_predictor(_enemy_motion_predictor)
+	_outcome_predictor.set_enemy_motion_predictor(_enemy_motion_predictor)
 
 
 func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
@@ -188,6 +200,7 @@ func _model_diagnostics(
 			"local_prediction_radius": navigation_intent.local_prediction_radius,
 			"navigation_sampling_radius": navigation_intent.sampling_radius,
 			"control_distance": navigation_intent.control_distance,
+			"enemy_position_response_cache": _enemy_motion_predictor.cache_diagnostics(),
 		},
 	}
 

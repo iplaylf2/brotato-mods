@@ -11,8 +11,8 @@ const WeaponOutcomeFieldModel := preload(
 const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 )
-const VelocityObstacleRiskModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/velocity_obstacle_risk_model.gd"
+const VelocityObstacleCollisionModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/velocity_obstacle_collision_model.gd"
 )
 const PlayerRuleOutcomePredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_outcome_predictor.gd"
@@ -26,22 +26,29 @@ const PlayerRuleProjector := preload(
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
-const OpportunityValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
+const OpportunityPricingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
 const CollisionHealthImpactModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/collision_health_impact_model.gd"
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/collision_health_impact_model.gd"
 )
 
 var _weapon_outcome_field_model: Reference = WeaponOutcomeFieldModel.new()
 var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
-var _velocity_obstacle_risk_model: Reference = VelocityObstacleRiskModel.new()
+var _velocity_obstacle_collision_model: Reference = VelocityObstacleCollisionModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
-var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
+
+
+func set_enemy_motion_predictor(predictor: Reference) -> void:
+	_weapon_outcome_field_model.set_enemy_motion_predictor(predictor)
+	_battlefield_influence_model.set_enemy_motion_predictor(predictor)
+	_velocity_obstacle_collision_model.set_enemy_motion_predictor(predictor)
+	_player_rule_outcome_predictor.set_enemy_motion_predictor(predictor)
 
 
 func predict(
@@ -93,7 +100,7 @@ func predict_base(
 	)
 	outcome.merge(battlefield_outcome, true)
 	outcome.merge(
-		_velocity_obstacle_risk_model.evaluate(
+		_velocity_obstacle_collision_model.evaluate(
 			observation, action, planning_context.control_interval_seconds
 		),
 		true
@@ -106,43 +113,26 @@ func predict_base(
 	outcome.hostile_collision_risk = max(
 		outcome.peak_path_collision_risk, outcome.hostile_velocity_obstacle_risk
 	)
-	var committed_collision_risk: float = max(
-		outcome.committed_peak_path_collision_risk, outcome.committed_hostile_velocity_obstacle_risk
-	)
-	var committed_hit_damage: float = max(
-		outcome.committed_maximum_path_collision_damage,
-		outcome.committed_maximum_velocity_obstacle_damage
-	)
 	outcome.merge(
 		_collision_health_impact_model.evaluate(
 			observation,
 			committed_action,
-			committed_collision_risk,
-			outcome.committed_integrated_hostile_collision_risk,
-			committed_hit_damage,
+			_committed_collision_evidence(outcome),
 			planning_context.state_factors.positive_damage_is_terminal_rule
 		),
 		true
 	)
-	var forecast_collision_risk: float = max(
-		outcome.peak_path_collision_risk, outcome.forecast_hostile_velocity_obstacle_risk
-	)
-	var forecast_hit_damage: float = max(
-		outcome.maximum_path_collision_damage, outcome.forecast_maximum_velocity_obstacle_damage
-	)
 	var forecast_impact: Dictionary = _collision_health_impact_model.evaluate(
 		observation,
 		action,
-		forecast_collision_risk,
-		outcome.integrated_hostile_collision_risk,
-		forecast_hit_damage,
+		_forecast_collision_evidence(outcome),
 		planning_context.state_factors.positive_damage_is_terminal_rule
 	)
 	outcome.forecast_expected_health_loss = forecast_impact.expected_health_loss
 	outcome.forecast_terminal_collision_risk = forecast_impact.terminal_collision_risk
 	outcome.forecast_expected_collision_hit_count = forecast_impact.expected_collision_hit_count
-	var forecast_adjusted_hit_damage: float = forecast_impact.maximum_armor_adjusted_hit_damage
-	outcome.forecast_maximum_armor_adjusted_hit_damage = forecast_adjusted_hit_damage
+	var forecast_maximum_adjusted_hit_damage: float = forecast_impact.maximum_armor_adjusted_hit_damage
+	outcome.forecast_maximum_armor_adjusted_hit_damage = forecast_maximum_adjusted_hit_damage
 	outcome.movement_damage_exposure_reduction = (
 		_movement_damage_exposure_reduction(observation, action)
 		* outcome.collision_risk
@@ -151,6 +141,34 @@ func predict_base(
 		observation, committed_action, planning_context
 	)
 	return outcome
+
+
+func _committed_collision_evidence(outcome: Dictionary) -> Dictionary:
+	return {
+		"path_collision_risk": outcome.committed_peak_path_collision_risk,
+		"integrated_path_collision_risk": outcome.committed_integrated_hostile_collision_risk,
+		"maximum_path_raw_damage": outcome.committed_maximum_path_collision_raw_damage,
+		"velocity_collision_risk": outcome.committed_hostile_velocity_obstacle_risk,
+		"velocity_contact_evidence_sum":
+		outcome.committed_hostile_velocity_obstacle_contact_evidence_sum,
+		"velocity_raw_damage_evidence_sum":
+		outcome.committed_hostile_velocity_obstacle_raw_damage_evidence_sum,
+		"maximum_velocity_raw_damage": outcome.committed_maximum_velocity_obstacle_raw_damage,
+	}
+
+
+func _forecast_collision_evidence(outcome: Dictionary) -> Dictionary:
+	return {
+		"path_collision_risk": outcome.peak_path_collision_risk,
+		"integrated_path_collision_risk": outcome.integrated_hostile_collision_risk,
+		"maximum_path_raw_damage": outcome.maximum_path_collision_raw_damage,
+		"velocity_collision_risk": outcome.forecast_hostile_velocity_obstacle_risk,
+		"velocity_contact_evidence_sum":
+		outcome.forecast_hostile_velocity_obstacle_contact_evidence_sum,
+		"velocity_raw_damage_evidence_sum":
+		outcome.forecast_hostile_velocity_obstacle_raw_damage_evidence_sum,
+		"maximum_velocity_raw_damage": outcome.forecast_maximum_velocity_obstacle_raw_damage,
+	}
 
 
 func complete_prediction(
@@ -190,7 +208,7 @@ func _material_acquisition_value(observation: Dictionary, samples: Array) -> flo
 				closest_distance, (entity.relative_position - sample.displacement).length()
 			)
 		if closest_distance <= observation.player_state.pickup.collection_radius:
-			value += _opportunity_value_model.material_collection_value(observation, entity)
+			value += _opportunity_pricing_model.material_collection_value(observation, entity)
 	return value
 
 

@@ -5,8 +5,8 @@ extends Reference
 # candidate and the stationary baseline, so only player-caused access changes
 # receive action value.
 
-const OpportunityValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
+const OpportunityPricingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
 const TargetCompletionAllocationModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
@@ -18,16 +18,20 @@ const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
 
-var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _prepared_physics_frame := -1
 var _prepared_geometry := {}
-var _prepared_maximum_weapon_range := 0.0
+var _prepared_maximum_targeting_distance := 0.0
 var _prepared_entities := []
 var _prepared_enemies := []
 var _prepared_candidate_entries := []
+
+
+func set_enemy_motion_predictor(predictor: Reference) -> void:
+	_enemy_motion_predictor = predictor
 
 
 func _evaluate_route(
@@ -118,7 +122,9 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		return
 	_prepared_physics_frame = physics_frame
 	_prepared_geometry = _movement_geometry.derive(observation)
-	_prepared_maximum_weapon_range = _maximum_weapon_range(observation.player_state.weapons)
+	_prepared_maximum_targeting_distance = _maximum_targeting_distance(
+		observation.player_state.weapons
+	)
 	_prepared_entities = []
 	_prepared_enemies = []
 	_prepared_candidate_entries = []
@@ -144,7 +150,9 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		)
 	for track in observation.enemy_tracks:
 		var value: float = (
-			_opportunity_value_model.enemy_removal_value(context.enemy_removal_value_ledger, track)
+			_opportunity_pricing_model.enemy_removal_value(
+				context.enemy_removal_value_ledger, track
+			)
 			* _target_completion_allocation_model.enemy_completion_likelihood(
 				completion_ledger, track
 			)
@@ -153,7 +161,9 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		_prepared_enemies.push_back(enemy_entry)
 		if value <= 0.0:
 			continue
-		var gap: float = max(0.0, track.relative_position.length() - _prepared_maximum_weapon_range)
+		var gap: float = max(
+			0.0, track.relative_position.length() - _prepared_maximum_targeting_distance
+		)
 		_prepared_candidate_entries.push_back(
 			{
 				"position": track.relative_position,
@@ -194,12 +204,14 @@ func _enemy_route_accessibility(
 func _enemy_accessibility(
 	predicted_position: Vector2, player_displacement: Vector2, reach_distance: float
 ) -> float:
-	# Eligibility alone gives no navigation gradient once several targets are in
-	# range. Center distance is a generic proxy for the player's ability to shape
-	# future automatic-target access; exact nearest-target allocation remains in the
-	# weapon outcome field. Removal value can therefore create pursuit without an
-	# enemy-category priority rule.
-	var gap: float = (predicted_position - player_displacement).length()
+	# Strategic movement earns value only by creating an attack window sooner.
+	# Once a target is in range, center-distance and nearest-target competition are
+	# local weapon-field responsibilities. Keeping a radial attraction inside the
+	# range made the planner chase followers that would approach on their own.
+	var gap: float = max(
+		0.0,
+		(predicted_position - player_displacement).length() - _prepared_maximum_targeting_distance
+	)
 	return _accessibility(gap, reach_distance)
 
 
@@ -211,14 +223,14 @@ func _entity_value(
 ) -> float:
 	match entity.kind:
 		"material":
-			return _opportunity_value_model.material_collection_value(observation, entity)
+			return _opportunity_pricing_model.material_collection_value(observation, entity)
 		"consumable":
-			return _opportunity_value_model.consumable_pickup_value(
+			return _opportunity_pricing_model.consumable_pickup_value(
 				observation, entity, health_inventory_value
 			)
 		"tree":
 			return (
-				_opportunity_value_model.tree_destruction_value(
+				_opportunity_pricing_model.tree_destruction_value(
 					observation, entity, health_inventory_value
 				)
 				* _target_completion_allocation_model.tree_completion_likelihood(
@@ -233,9 +245,7 @@ func _entity_interaction_gap(
 ) -> float:
 	var interaction_radius: float = _entity_interaction_radius(observation)
 	if entity.kind == "tree":
-		# Eligibility alone must not flatten the navigation opportunity. Exact target
-		# competition remains in the local weapon outcome field.
-		interaction_radius = 0.0
+		interaction_radius = _prepared_maximum_targeting_distance
 	return max(0.0, (entity.relative_position - player_displacement).length() - interaction_radius)
 
 
@@ -270,7 +280,7 @@ func _accessibility(gap: float, reach_distance: float) -> float:
 	return exp(-max(0.0, gap) / max(1.0, reach_distance))
 
 
-func _maximum_weapon_range(weapons: Array) -> float:
+func _maximum_targeting_distance(weapons: Array) -> float:
 	var result := 0.0
 	for weapon in weapons:
 		result = max(result, weapon.attack_model.delivery.maximum_targeting_distance)
