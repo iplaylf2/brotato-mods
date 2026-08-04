@@ -10,9 +10,16 @@ const WeaponAttackCapacityModel := preload(
 const EnemyHealthModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/enemy_health_model.gd"
 )
+const NeutralDestructionWorkModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "neutral_destruction_work_model.gd"
+	)
+)
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _enemy_health_model: Reference = EnemyHealthModel.new()
+var _neutral_destruction_work_model: Reference = NeutralDestructionWorkModel.new()
 
 
 func forecast(observation: Dictionary) -> Dictionary:
@@ -51,20 +58,30 @@ func forecast(observation: Dictionary) -> Dictionary:
 	for tree in observation.remembered_entities:
 		if tree.kind != "tree":
 			continue
-		var required_hits: float = tree.destructible_profile.destruction.required_hits
+		var remaining_hits: float = _neutral_destruction_work_model.remaining_hits(tree)
+		if remaining_hits <= 0.0:
+			continue
 		entries.push_back(
 			{
 				"kind": "tree",
 				"id": tree.memory_record_id,
-				"required_hits": required_hits,
+				"required_hits": remaining_hits,
 				"independent_completion_fraction":
-				clamp(primary_hit_capacity / required_hits, 0.0, 1.0) * tree.existence_confidence,
+				clamp(primary_hit_capacity / remaining_hits, 0.0, 1.0) * tree.existence_confidence,
 			}
 		)
 	var allocation: Dictionary = _allocate_competing_capacity(entries, primary_hit_capacity)
 	for track in observation.enemy_tracks:
 		if not allocation.enemy_completion_fraction_by_track_id.has(track.track_id):
 			allocation.enemy_completion_fraction_by_track_id[track.track_id] = 0.0
+	for tree in observation.remembered_entities:
+		if (
+			tree.kind == "tree"
+			and not allocation.tree_completion_fraction_by_memory_record_id.has(
+				tree.memory_record_id
+			)
+		):
+			allocation.tree_completion_fraction_by_memory_record_id[tree.memory_record_id] = 0.0
 	return {
 		"enemy_completion_fraction_by_track_id": allocation.enemy_completion_fraction_by_track_id,
 		"tree_completion_fraction_by_memory_record_id":

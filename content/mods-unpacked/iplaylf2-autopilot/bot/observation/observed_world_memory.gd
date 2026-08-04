@@ -52,7 +52,9 @@ func update(
 	_update_observation_coverage(visibility.viewport_size, visibility.viewport_offset_from_player)
 	_update_enemy_tracks(visible_enemies)
 	_entity_existence_estimator.update(delta_seconds, position_delta, visible_allied_agents)
-	_update_remembered_entities(delta_seconds, visible_entities, party_state, player_pickup)
+	_update_remembered_entities(
+		delta_seconds, visible_entities, party_state, player_pickup, visibility
+	)
 
 
 func get_localization_state() -> Dictionary:
@@ -294,24 +296,12 @@ func _update_remembered_entities(
 	delta_seconds: float,
 	visible_entities: Array,
 	party_state: Dictionary,
-	player_pickup: Dictionary
+	player_pickup: Dictionary,
+	visibility: Dictionary
 ) -> void:
 	for memory_record_id in _remembered_entities:
 		var memory_record: Dictionary = _remembered_entities[memory_record_id]
 		memory_record.visible = false
-		var existence_estimate: Dictionary = _entity_existence_estimator.estimate(
-			memory_record, party_state, player_pickup
-		)
-		var disappearance_hazard: float = existence_estimate.disappearance_hazard_per_second
-		memory_record.absence_confirmed = existence_estimate.absence_confirmed
-		memory_record.disappearance_hazard_per_second = disappearance_hazard
-		memory_record.existence_confidence = (
-			0.0
-			if existence_estimate.absence_confirmed
-			else (memory_record.existence_confidence * exp(-disappearance_hazard * delta_seconds))
-		)
-		# Dictionary values have copy-on-write semantics. Store the mutated record
-		# back explicitly so visibility and disappearance evidence survive this loop.
 		_remembered_entities[memory_record_id] = memory_record
 	for observation in visible_entities:
 		var source: Object = observation._source
@@ -345,6 +335,26 @@ func _update_remembered_entities(
 			memory_record.disappearance_hazard_per_second = 0.0
 			memory_record.absence_confirmed = false
 			_remembered_entities[memory_record_id] = memory_record
+	# Evaluate negative evidence only after current visible observations have been
+	# reconciled. This prevents an entity that is present this frame from briefly
+	# confirming its own absence, while a pooled source moved to a new entity leaves
+	# the old record available for legitimate visibility confirmation.
+	for memory_record_id in _remembered_entities:
+		var memory_record: Dictionary = _remembered_entities[memory_record_id]
+		if memory_record.visible:
+			continue
+		var existence_estimate: Dictionary = _entity_existence_estimator.estimate(
+			memory_record, party_state, player_pickup, visibility
+		)
+		var disappearance_hazard: float = existence_estimate.disappearance_hazard_per_second
+		memory_record.absence_confirmed = existence_estimate.absence_confirmed
+		memory_record.disappearance_hazard_per_second = disappearance_hazard
+		memory_record.existence_confidence = (
+			0.0
+			if existence_estimate.absence_confirmed
+			else (memory_record.existence_confidence * exp(-disappearance_hazard * delta_seconds))
+		)
+		_remembered_entities[memory_record_id] = memory_record
 
 
 func _source_reused_for_new_entity(memory_record_id: int, observation: Dictionary) -> bool:

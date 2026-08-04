@@ -317,8 +317,22 @@ func _observe_trees(origin: Vector2, visible_rect: Rect2) -> Array:
 		observation._source = tree
 		observation._world_position = tree.global_position
 		observation.destructible_profile = _neutral_destruction_compiler.compile(tree)
+		observation.destruction_progress = _observe_destruction_progress(
+			tree, observation.destructible_profile
+		)
 		observations.push_back(observation)
 	return observations
+
+
+func _observe_destruction_progress(tree: Node, destructible_profile: Dictionary) -> Dictionary:
+	var required_hits: float = destructible_profile.destruction.required_hits
+	var completed_hits := 0.0
+	if "current_number_of_hits" in tree:
+		completed_hits = clamp(float(tree.current_number_of_hits), 0.0, required_hits)
+	return {
+		"completed_hits": completed_hits,
+		"remaining_hits": max(0.0, required_hits - completed_hits),
+	}
 
 
 func _observe_children(

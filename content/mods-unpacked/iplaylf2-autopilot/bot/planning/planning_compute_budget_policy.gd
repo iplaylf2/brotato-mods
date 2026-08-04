@@ -1,8 +1,8 @@
 extends Reference
 
 # Converts measured physics-frame headroom into a deadline and a continuous
-# budget-pressure signal. It owns time admission only; search breadth belongs
-# to PlanningSearchFidelityAllocator and collision sampling remains geometric.
+# budget-pressure signal. It owns time admission only; optional search work
+# belongs to PlanningSearchWorkAllocator and collision sampling remains geometric.
 
 const PLANNING_DURATION_EMA_SAMPLE_WEIGHT := 0.25
 const WORK_UNIT_DURATION_EMA_SAMPLE_WEIGHT := 0.25
@@ -34,7 +34,7 @@ func allocate(planning_started_usec: int) -> Dictionary:
 	)
 	var budget_pressure := _budget_pressure(planning_budget_usec)
 	return {
-		"budget_model": "measured_frame_headroom",
+		"budget_model": "control_window_frame_headroom",
 		"budget_pressure": budget_pressure,
 		"has_deadline": has_deadline,
 		"planning_started_usec": planning_started_usec,
@@ -52,6 +52,9 @@ func allocate(planning_started_usec: int) -> Dictionary:
 		_frame_budget_context.get("physics_frame_capacity_usec", 0.0),
 		"physics_process_peak_usec_ema":
 		_frame_budget_context.get("physics_process_peak_usec_ema", 0.0),
+		"planning_window_usec": _frame_budget_context.get("planning_window_usec", 0.0),
+		"planning_window_physics_frames":
+		_frame_budget_context.get("planning_window_physics_frames", 1),
 		"has_frame_time_sample": _frame_budget_context.get("has_frame_time_sample", false),
 		"scheduled_planner_count": _frame_budget_context.get("scheduled_planner_count", 1),
 		"estimated_work_unit_duration_usec": _work_unit_duration_usec_ema.duplicate(true),
@@ -120,4 +123,7 @@ func _planning_duration_budget_usec() -> float:
 		"physics_process_peak_usec_ema", 0.0
 	)
 	var scheduled_planner_count: int = int(_frame_budget_context.scheduled_planner_count)
-	return max(0.0, frame_capacity - physics_process_peak) / scheduled_planner_count
+	var window_frames: int = int(_frame_budget_context.get("planning_window_physics_frames", 1))
+	var planning_window: float = _frame_budget_context.get("planning_window_usec", frame_capacity)
+	var aggregate_headroom := max(0.0, frame_capacity - physics_process_peak) * window_frames
+	return min(planning_window, aggregate_headroom) / scheduled_planner_count

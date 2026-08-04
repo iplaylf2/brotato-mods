@@ -34,11 +34,16 @@ func observe_physics_duration(delta_seconds: float) -> void:
 	)
 
 
-func build_context(scheduled_planner_count: int) -> Dictionary:
+func build_context(scheduled_planner_count: int, planning_window_seconds: float) -> Dictionary:
 	var physics_fps := max(1.0, float(Engine.iterations_per_second))
+	var planning_window_physics_frames := max(
+		1, int(round(max(0.0, planning_window_seconds) * physics_fps))
+	)
 	return {
 		"physics_frame_capacity_usec": 1000000.0 / physics_fps,
 		"physics_process_peak_usec_ema": _physics_process_peak_seconds_ema * 1000000.0,
+		"planning_window_usec": max(0.0, planning_window_seconds) * 1000000.0,
+		"planning_window_physics_frames": planning_window_physics_frames,
 		"scheduled_planner_count": max(1, scheduled_planner_count),
 		"has_frame_time_sample": _has_frame_time_sample,
 	}

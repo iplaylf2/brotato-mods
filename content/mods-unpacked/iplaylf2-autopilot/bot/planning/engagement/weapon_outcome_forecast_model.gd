@@ -29,6 +29,12 @@ const WeaponOutcomeConservationModel := preload(
 		+ "weapon_outcome_conservation_model.gd"
 	)
 )
+const NeutralDestructionWorkModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "neutral_destruction_work_model.gd"
+	)
+)
 const OUTCOME_FIELDS := [
 	"expected_attack_hits",
 	"expected_enemy_hits",
@@ -50,6 +56,7 @@ var _enemy_completion_value_model: Reference = EnemyCompletionValueModel.new()
 var _enemy_health_model: Reference = EnemyHealthModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _weapon_outcome_conservation_model: Reference = WeaponOutcomeConservationModel.new()
+var _neutral_destruction_work_model: Reference = NeutralDestructionWorkModel.new()
 var _prepared_physics_frame := -1
 var _prepared_targets := []
 var _prepared_target_capacity := {}
@@ -134,6 +141,9 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 		enemy_health_capacity += remaining_health
 	var tree_harvest_value_capacity := 0.0
 	for tree in observation.visible_world.trees:
+		var remaining_hits: float = _neutral_destruction_work_model.remaining_hits(tree)
+		if remaining_hits <= 0.0:
+			continue
 		var harvest_value: float = _opportunity_pricing_model.tree_destruction_value(
 			observation, tree, planning_context.state_factors.health_inventory_value
 		)
@@ -143,13 +153,7 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 				"tree": tree,
 				"radius": tree.get("visual_radius", 0.0),
 				"confidence": 1.0,
-				"required_hits":
-				max(
-					1.0,
-					tree.get("destructible_profile", {}).get("destruction", {}).get(
-						"required_hits", 1.0
-					)
-				),
+				"remaining_hits": remaining_hits,
 				"harvest_value": harvest_value,
 			}
 		)
@@ -374,7 +378,7 @@ func _summarize_target_coverage(
 			weighted_tree_harvest_value_per_hit += (
 				covered.coverage
 				* target.harvest_value
-				/ target.required_hits
+				/ target.remaining_hits
 			)
 	var enemy_selection_share: float = enemy_selection_weight / max(0.0001, total_selection_weight)
 	var tree_selection_share: float = tree_selection_weight / max(0.0001, total_selection_weight)

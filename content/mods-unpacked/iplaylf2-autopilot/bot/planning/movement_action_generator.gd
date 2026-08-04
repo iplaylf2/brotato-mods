@@ -24,13 +24,11 @@ var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 
 
-func generate(
-	observation: Dictionary, navigation_intent: Dictionary, search_fidelity: Dictionary
-) -> Array:
+func generate(observation: Dictionary, navigation_intent: Dictionary) -> Array:
 	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var forecast_seconds := _forecast_window(observation, timing)
 	var sample_count := _forecast_sample_count(observation, forecast_seconds, timing)
-	var direction_count: int = search_fidelity.movement_direction_count
+	var direction_count: int = _movement_geometry.derive(observation).direction_count
 	var directions := _candidate_directions(direction_count, navigation_intent)
 	var actions := [
 		_make_action(observation, "no_movement_input", Vector2.ZERO, forecast_seconds, sample_count)
@@ -96,9 +94,8 @@ func _make_action(
 
 func _candidate_directions(direction_count: int, navigation_intent: Dictionary) -> Array:
 	var result := []
-	# The fidelity policy derives the uniform lattice continuously from compute
-	# pressure and physical influence time. Every retained heading receives the
-	# unchanged swept-collision sampling contract.
+	# Physical influence time and collision geometry derive the uniform lattice.
+	# Every heading receives the unchanged swept-collision sampling contract.
 	for direction_index in direction_count:
 		result.push_back(
 			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))

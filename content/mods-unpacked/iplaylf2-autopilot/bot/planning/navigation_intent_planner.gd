@@ -39,7 +39,7 @@ func plan(
 	observation: Dictionary,
 	context: Dictionary,
 	compute_budget: Dictionary,
-	search_fidelity: Dictionary,
+	search_work_allocation: Dictionary,
 	compute_budget_policy: Reference
 ) -> Dictionary:
 	var scale: Dictionary = _spatial_scale(observation)
@@ -49,8 +49,8 @@ func plan(
 	var sampling_radius: float = min(
 		map_extent.radius, scale.command_speed * navigation_horizon_seconds
 	)
-	var baseline_direction_count: int = search_fidelity.navigation_direction_count
-	var extra_evaluation_limit: int = search_fidelity.navigation_extra_evaluation_limit
+	var baseline_direction_count: int = search_work_allocation.navigation_baseline_direction_count
+	var extra_evaluation_limit: int = search_work_allocation.navigation_extra_evaluation_limit
 	var opportunity_directions: Array = _spatial_opportunity_value_model.candidate_directions(
 		observation, context
 	)

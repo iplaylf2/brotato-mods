@@ -9,8 +9,8 @@ const MovementActionGenerator := preload(
 const PlanningComputeBudgetPolicy := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_compute_budget_policy.gd"
 )
-const PlanningSearchFidelityAllocator := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_search_fidelity_allocator.gd"
+const PlanningSearchWorkAllocator := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_search_work_allocator.gd"
 )
 const ProjectileReachabilityFilter := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/projectile_reachability_filter.gd"
@@ -44,7 +44,7 @@ const EnemyMotionPredictor := preload(
 )
 var _action_generator: Reference = MovementActionGenerator.new()
 var _compute_budget_policy: Reference = PlanningComputeBudgetPolicy.new()
-var _search_fidelity_allocator: Reference = PlanningSearchFidelityAllocator.new()
+var _search_work_allocator: Reference = PlanningSearchWorkAllocator.new()
 var _projectile_filter: Reference = ProjectileReachabilityFilter.new()
 var _direction_refiner: Reference = AdaptiveDirectionRefiner.new()
 var _outcome_predictor: Reference = MovementOutcomePredictor.new()
@@ -84,20 +84,22 @@ func plan(observation: Dictionary) -> Dictionary:
 	var timing: Dictionary = MovementTimingModel.derive(planning_observation)
 	context.control_interval_seconds = timing.control_interval_seconds
 	var compute_budget: Dictionary = _compute_budget_policy.allocate(planning_started_usec)
-	var search_fidelity: Dictionary = _search_fidelity_allocator.allocate(
+	var search_work_allocation: Dictionary = _search_work_allocator.allocate(
 		compute_budget, int(movement_geometry.direction_count)
 	)
 	phase_duration_usec.observation_preparation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
 	var navigation_intent: Dictionary = _navigation_intent_planner.plan(
-		planning_observation, context, compute_budget, search_fidelity, _compute_budget_policy
+		planning_observation,
+		context,
+		compute_budget,
+		search_work_allocation,
+		_compute_budget_policy
 	)
 	context.navigation_directional_value_samples = navigation_intent.directional_value_samples
 	phase_duration_usec.navigation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
-	var actions: Array = _action_generator.generate(
-		planning_observation, navigation_intent, search_fidelity
-	)
+	var actions: Array = _action_generator.generate(planning_observation, navigation_intent)
 	var local_domain: Dictionary = _local_enemy_interaction_projector.project(
 		planning_observation, actions[0].forecast_seconds
 	)
@@ -111,7 +113,7 @@ func plan(observation: Dictionary) -> Dictionary:
 	var direction_scores: Array = scored_actions.duplicate()
 	var refined_action_count := 0
 	while (
-		refined_action_count < search_fidelity.movement_refinement_limit
+		refined_action_count < search_work_allocation.movement_refinement_limit
 		and _compute_budget_policy.can_start_budgeted_work(
 			compute_budget, _compute_budget_policy.WORK_MOVEMENT_REFINEMENT
 		)
@@ -160,7 +162,7 @@ func plan(observation: Dictionary) -> Dictionary:
 	plan.wave_completion_forecast.erase("enemy_completion_fraction_by_track_id")
 	plan.wave_completion_forecast.erase("tree_completion_fraction_by_memory_record_id")
 	plan.compute_budget = compute_budget.duplicate(true)
-	plan.search_fidelity = search_fidelity.duplicate(true)
+	plan.search_work_allocation = search_work_allocation.duplicate(true)
 	plan.projectile_filter = projectile_filter.duplicate(false)
 	plan.projectile_filter.erase("filtered_observation")
 	plan.local_enemy_interaction_domain = local_domain.duplicate(false)

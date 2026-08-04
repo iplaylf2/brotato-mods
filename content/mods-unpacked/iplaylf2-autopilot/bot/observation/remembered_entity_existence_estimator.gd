@@ -1,8 +1,8 @@
 extends Reference
 
-# Estimates whether a remembered world entity still exists from legal pickup
-# evidence. It owns teammate reachability memory; it does not store entities or
-# inspect hidden scene state.
+# Estimates whether a remembered world entity still exists from legal pickup or
+# visibility evidence. It owns teammate reachability memory; it does not store
+# entities or inspect hidden scene state.
 
 const NEARBY_PICKUP_HAZARD_PER_SECOND := 1.5
 const OBSERVED_MOTION_SECONDS := 1.0
@@ -29,9 +29,18 @@ func update(delta_seconds: float, position_delta: Vector2, visible_allies: Array
 
 
 func estimate(
-	memory_record: Dictionary, party_state: Dictionary, player_pickup: Dictionary
+	memory_record: Dictionary,
+	party_state: Dictionary,
+	player_pickup: Dictionary,
+	visibility: Dictionary
 ) -> Dictionary:
 	var kind: String = memory_record.observation.kind
+	if kind == "tree":
+		return (
+			_confirmed_absence()
+			if _tree_last_position_is_covered(memory_record, visibility)
+			else _unchanged_estimate()
+		)
 	if kind != "material" and kind != "consumable":
 		return _unchanged_estimate()
 	var entity_position: Vector2 = memory_record.odometry_position - _odometry_position
@@ -75,6 +84,23 @@ func estimate(
 		"absence_confirmed": false,
 		"disappearance_hazard_per_second": hazard_rate,
 	}
+
+
+func _tree_last_position_is_covered(memory_record: Dictionary, visibility: Dictionary) -> bool:
+	# Fog lights do not form one rectangular legal sensor domain. In ordinary
+	# waves the same camera rectangle used by VisibleWorldObserver is sufficient
+	# negative evidence for a stationary tree at its last measured position.
+	if visibility.get("fog_active", false):
+		return false
+	var viewport_size: Vector2 = visibility.get("viewport_size", Vector2.ZERO)
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return false
+	var viewport_offset: Vector2 = visibility.get(
+		"viewport_offset_from_player", -viewport_size * 0.5
+	)
+	var entity_position: Vector2 = memory_record.odometry_position - _odometry_position
+	var visual_radius: float = max(0.0, memory_record.observation.get("visual_radius", 0.0))
+	return Rect2(viewport_offset, viewport_size).grow(visual_radius).has_point(entity_position)
 
 
 func _unchanged_estimate() -> Dictionary:

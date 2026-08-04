@@ -29,13 +29,16 @@ var _previous_movements: Array = []
 var _decision_telemetry: Reference = DecisionTelemetry.new()
 var _physics_frame_budget_monitor: Reference = PhysicsFrameBudgetMonitor.new()
 var _planning_worker: Reference = PlanningWorker.new()
-var _seconds_until_replan := 0.0
 var _shut_down := false
 var _replan_interval_seconds := 0.0
+var _replan_physics_ticks := 1
+var _next_replan_physics_frame := 0
 
 
 func initialize(observation_service: Node, players: Array) -> void:
 	_replan_interval_seconds = MovementTimingModel.control_interval_seconds()
+	_replan_physics_ticks = MovementTimingModel.REPLAN_PHYSICS_TICKS
+	_next_replan_physics_frame = int(Engine.get_physics_frames())
 	_observation_service = observation_service
 	if not _planning_worker.start(players.size()):
 		ModLoaderLog.error(
@@ -62,11 +65,14 @@ func _physics_process(delta: float) -> void:
 	_physics_frame_budget_monitor.observe_physics_duration(delta)
 	if _planning_worker.is_busy():
 		_collect_planning_results()
+		if _planning_worker.is_busy():
+			return
+	var physics_frame := int(Engine.get_physics_frames())
+	if physics_frame < _next_replan_physics_frame:
 		return
-	_seconds_until_replan -= delta
-	if _seconds_until_replan > 0.0:
-		return
-	_seconds_until_replan = _replan_interval_seconds
+	# Start-to-start cadence follows the same physics-tick contract used by the
+	# planner. Worker time consumes this window instead of being added after it.
+	_next_replan_physics_frame = physics_frame + _replan_physics_ticks
 	_start_replan()
 
 
@@ -106,7 +112,7 @@ func _start_replan() -> void:
 	if scheduled_planner_count <= 0:
 		return
 	var frame_budget_context: Dictionary = _physics_frame_budget_monitor.build_context(
-		scheduled_planner_count
+		scheduled_planner_count, _replan_interval_seconds
 	)
 	var requests := []
 	for player_index in _players.size():

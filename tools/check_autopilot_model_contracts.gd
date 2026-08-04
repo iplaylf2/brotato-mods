@@ -207,7 +207,7 @@ func _check_navigation_opportunity_retention() -> void:
 		observation,
 		context,
 		compute_budget,
-		{"navigation_direction_count": 4, "navigation_extra_evaluation_limit": 0},
+		{"navigation_baseline_direction_count": 4, "navigation_extra_evaluation_limit": 0},
 		compute_policy_script.new()
 	)
 	_expect(
@@ -228,11 +228,11 @@ func _check_navigation_opportunity_retention() -> void:
 		observation,
 		context,
 		compute_budget,
-		{"navigation_direction_count": 4, "navigation_extra_evaluation_limit": 0},
+		{"navigation_baseline_direction_count": 4, "navigation_extra_evaluation_limit": 0},
 		compute_policy_script.new()
 	)
 	var actions: Array = load(PLANNING_PATH + "movement_action_generator.gd").new().generate(
-		observation, result, {"movement_direction_count": 4}
+		observation, result
 	)
 	var retained_opportunity_action := false
 	for action in actions:
