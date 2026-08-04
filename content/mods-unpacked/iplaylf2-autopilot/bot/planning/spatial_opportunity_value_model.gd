@@ -17,15 +17,10 @@ const MovementGeometryModel := preload(
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
-const AutomaticTargetSelectionFieldModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/automatic_target_selection_field_model.gd"
-)
-
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
-var _target_selection_field: Reference = AutomaticTargetSelectionFieldModel.new()
 var _prepared_physics_frame := -1
 var _prepared_geometry := {}
 var _prepared_maximum_targeting_distance := 0.0
@@ -36,7 +31,6 @@ var _prepared_candidate_entries := []
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_enemy_motion_predictor = predictor
-	_target_selection_field.set_enemy_motion_predictor(predictor)
 
 
 func _evaluate_route(
@@ -55,23 +49,10 @@ func _evaluate_route(
 		"total": 0.0,
 	}
 	var reach_distance: float = _prepared_geometry.opportunity_reach_distance
-	var selection_likelihoods: Dictionary = _target_selection_field.selection_likelihood_by_target(
-		observation,
-		player_displacement,
-		forecast_seconds,
-		_prepared_maximum_targeting_distance,
-		_prepared_geometry.control_distance
-	)
 	for entry in _prepared_entities:
 		var entity: Dictionary = entry.entity
 		var gap: float = _route_interaction_gap(observation, entity, player_displacement)
 		var accessibility: float = _accessibility(gap, reach_distance)
-		if entity.kind == "tree" and entity.get("visible", false):
-			# Outside the current lock boundary the target field has no entry.  Route
-			# accessibility must still own the approach gradient, just as it does for
-			# enemies below.  Only apply nearest-target competition once the tree can
-			# actually participate in automatic selection.
-			accessibility *= selection_likelihoods.get(entry.target_key, 1.0)
 		var contribution: float = entry.value * accessibility
 		match entity.kind:
 			"material":
@@ -82,16 +63,11 @@ func _evaluate_route(
 				result.tree_opportunity += contribution
 	for entry in _prepared_enemies:
 		var track: Dictionary = entry.track
-		# Outside the current lock range, the route accessibility below owns the
-		# approach gradient. Once the target enters lock range, nearest-target
-		# competition determines whether automatic weapons can select that target.
-		var selection_likelihood: float = selection_likelihoods.get(entry.target_key, 1.0)
 		result.enemy_opportunity += (
 			entry.value
 			* _enemy_route_accessibility(
 				track, player_displacement, forecast_seconds, reach_distance
 			)
-			* selection_likelihood
 		)
 	result.total = (
 		result.material_opportunity
@@ -175,7 +151,6 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		var entity_entry := {
 			"entity": entity,
 			"value": value,
-			"target_key": "tree:%s" % entity.memory_record_id if entity.kind == "tree" else "",
 		}
 		_prepared_entities.push_back(entity_entry)
 		var gap: float = _entity_interaction_gap(observation, entity, Vector2.ZERO)
@@ -197,7 +172,6 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		var enemy_entry := {
 			"track": track,
 			"value": value,
-			"target_key": "enemy:%s" % track.track_id,
 		}
 		_prepared_enemies.push_back(enemy_entry)
 		if value <= 0.0:

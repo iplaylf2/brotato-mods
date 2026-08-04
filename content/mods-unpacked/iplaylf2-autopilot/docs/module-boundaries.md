@@ -90,11 +90,11 @@
 
 ### 机会、规则与动作结果
 
-- `bot/planning/navigation_intent_planner.gd` 为尚未兑现的空间机会、地图信息和导航时域环境暴露形成导航
-  偏好；`bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆机会沿候选路径的价值，以及动态
-  敌人的同时间反事实价值差；`bot/planning/automatic_target_selection_field_model.gd` 把原版最近目标规则
-  投影为敌人与树木共用的连续空间选择场；`bot/planning/map_information_value_model.gd` 计算新观察与
-  再观察价值，不编码探索方向、巡逻路线或地图中心。
+- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆机会沿候选路径的价值、动态敌人的同时间
+  反事实价值差和按统一价值上界聚合的机会候选方向；它只拥有武器射程外的攻击窗口，不重复解释射程内的
+  自动选靶。`bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，比较
+  导航终点，并公开胜出导航方向与可达机会价值上界最高的方向。
+  `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
 - `bot/planning/weapons/weapon_attack_capacity_model.gd` 定义与目标无关的期望主路径攻击率、单次命中伤害和
   生命偷取率；`bot/planning/weapon_outcome_field_model.gd` 把这些容量与可见目标投影为下一决策状态的局部
   期望结果场。
@@ -109,7 +109,8 @@
   `bot/planning/player_rule_projector.gd` 将规则归约为正交状态。这些模块都不能读取场景节点。
 - `bot/planning/movement_outcome_predictor.gd` 组合动作结果；`bot/planning/movement_utility_model.gd` 将结果换算
   为效用。预测和评分是两个边界，选择器不拥有二者。
-- `bot/planning/movement_action_generator.gd` 从可执行输入空间构造基线与细分候选；
+- `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
+  方向和可达机会价值上界最高的方向，并按规划器提出的细分方向构造新候选；
   `bot/planning/movement_action_selector.gd` 只选择总效用最高的已评分候选；`MovementPlanner` 协调生成、
   预测、评分、细分与选择，不把新行为政策藏进选择器。
 

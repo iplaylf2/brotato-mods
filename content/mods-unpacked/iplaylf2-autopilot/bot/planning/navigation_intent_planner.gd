@@ -176,8 +176,17 @@ func plan(
 		if best.position != Vector2.ZERO and terminal_value_gain > 0.0
 		else Vector2.ZERO
 	)
+	var opportunity_movement_preference: Vector2 = (
+		opportunity_directions[0].direction
+		if not opportunity_directions.empty()
+		else Vector2.ZERO
+	)
 	return {
 		"movement_preference": movement_preference,
+		# Preserve one unified value-derived heading for exact local scoring even
+		# when strategic access is already saturated. This is a search candidate,
+		# not a navigation reward or a target-category policy.
+		"opportunity_movement_preference": opportunity_movement_preference,
 		# The action evaluator interpolates these samples so every retained heading
 		# receives the opportunity and exposure value at its own direction.
 		"directional_value_samples": directional_value_samples,

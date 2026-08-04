@@ -183,10 +183,6 @@ func _check_navigation_opportunity_retention() -> void:
 	var observation := _planning_observation([])
 	observation.remembered_entities = [tree]
 	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
-	observation.visibility = {
-		"viewport_size": Vector2.ZERO,
-		"viewport_offset_from_player": Vector2.ZERO,
-	}
 	var context := {
 		"environmental_pressure_weights": _influence_weights(),
 		"state_factors":
@@ -211,10 +207,35 @@ func _check_navigation_opportunity_retention() -> void:
 	)
 	_expect(
 		result.movement_preference.dot(diagonal) > 0.99,
-		(
-			"an off-lattice value-derived opportunity must remain distinguishable "
-			+ "when search fidelity reaches its floor"
-		)
+		"an off-lattice opportunity must remain distinguishable at the search floor"
+	)
+
+	var near_enemy := _enemy_track(Vector2(45.0, 0.0), Vector2.ZERO, false)
+	var valuable_enemy := _enemy_track(diagonal * 100.0, Vector2.ZERO, false)
+	valuable_enemy.track_id = 2
+	observation = _planning_observation([near_enemy, valuable_enemy])
+	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
+	observation.player_state.movement.input_vector = Vector2.ZERO
+	context.enemy_removal_value_ledger = {"removal_value_by_track_id": {1: 1.0, 2: 100.0}}
+	context.target_completion_ledger = _completion_ledger({1: 1.0, 2: 1.0})
+	result = planner_script.new().plan(
+		observation,
+		context,
+		compute_budget,
+		{"navigation_direction_count": 4, "navigation_extra_evaluation_limit": 0},
+		compute_policy_script.new()
+	)
+	var actions: Array = load(PLANNING_PATH + "movement_action_generator.gd").new().generate(
+		observation, result, {"movement_direction_count": 4}
+	)
+	var retained_opportunity_action := false
+	for action in actions:
+		if action.movement.dot(diagonal) > 0.99:
+			retained_opportunity_action = true
+			break
+	_expect(
+		retained_opportunity_action,
+		"an in-range opportunity must reach local scoring without duplicate strategic value"
 	)
 
 
@@ -315,17 +336,20 @@ func _check_spatial_target_control() -> void:
 		"creating a positive-removal-value enemy attack window must retain a navigation gradient"
 	)
 	observation.physics_frame += 1
-	observation.enemy_tracks = [observation.enemy_tracks[0]]
+	observation.enemy_tracks[1].relative_position = Vector2(100.0, 0.0)
 	spatial = spatial_script.new()
 	var in_range_delta: Dictionary = spatial.value_delta(
-		observation, context, Vector2(-50.0, 0.0), 0.5
+		observation, context, Vector2(50.0, 0.0), 0.5
 	)
 	_expect(
 		is_equal_approx(in_range_delta.enemy_opportunity, 0.0),
-		"strategic navigation must not reward moving closer to enemies already in weapon range"
+		(
+			"strategic access must not price an in-range nearest-target switch; "
+			+ "the action-conditioned weapon field owns that consequence"
+		)
 	)
 
-	observation.physics_frame = 5
+	observation.physics_frame += 1
 	observation.enemy_tracks = [_enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)]
 	observation.remembered_entities = [
 		{
@@ -354,7 +378,7 @@ func _check_spatial_target_control() -> void:
 		tree_delta.tree_opportunity > 0.0,
 		(
 			"a visible tree outside the lock boundary must retain an approach gradient; "
-			+ "target competition begins only after it can enter automatic selection"
+			+ "local weapon outcomes own target competition after lock becomes possible"
 		)
 	)
 
@@ -812,6 +836,7 @@ func _planning_observation(enemy_tracks: Array) -> Dictionary:
 		},
 		"enemy_tracks": enemy_tracks,
 		"remembered_entities": [],
+		"visibility": {"viewport_size": Vector2.ZERO, "viewport_offset_from_player": Vector2.ZERO},
 		"visible_world":
 		{
 			"materials": [],
