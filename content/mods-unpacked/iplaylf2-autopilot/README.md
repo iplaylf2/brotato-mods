@@ -1,7 +1,7 @@
 # Autopilot
 
 Autopilot 是一个实验性 Brotato mod。它在玩家权限边界内评估环境暴露、碰撞风险、资源和交战机会，
-再通过滚动规划选择战斗移动方向。它唯一控制的是 `MovementBehavior.get_movement()` 返回的移动向量；
+再通过滚动规划选择战斗移动方向。唯一的控制输出是 `MovementBehavior.get_movement()` 返回的移动向量；
 瞄准、攻击、速度、碰撞、击退、动画和移动机制仍由原版系统负责。
 
 ## 目标环境与验证状态
@@ -82,10 +82,11 @@ var plan: Dictionary = main.autopilot_controller.get_current_plan(player_index)
 
 ## 维护入口
 
-README 只提供使用概览；维护细节按主题由以下文档负责：
+README 只提供使用概览。维护时按任务进入对应文档：
 
 - [玩家权限边界](docs/fair-play.md) 定义允许读取的信息和唯一控制面；
-- [架构文档](docs/architecture.md) 定义运行链路、公共观察、机制语义、规划结果和模块责任；
+- [架构文档](docs/architecture.md) 定义运行链路、公共观察、机制语义和规划结果；
+- [模块边界与责任](docs/module-boundaries.md) 定义目录归属、依赖方向、公共入口和组件角色；
 - [决策采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
 - [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人运动、攻击与投射物入口；
 - [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。

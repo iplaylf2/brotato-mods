@@ -15,6 +15,7 @@ func _init() -> void:
 		return
 	_check_target_response()
 	_check_swept_enemy_contact()
+	_check_directional_navigation_value()
 	_check_pickup_interaction_geometry()
 	_check_visible_material_quantity_estimate()
 	_check_spatial_target_control()
@@ -53,6 +54,8 @@ func _check_swept_enemy_contact() -> void:
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 	)
 	var influence: Reference = influence_script.new()
+	var impact_script: Script = _load_collision_health_impact_script()
+	var impact: Reference = impact_script.new()
 	var observation := {
 		"physics_frame": 2,
 		"wave_state": {"seconds_remaining": 10.0},
@@ -64,11 +67,14 @@ func _check_swept_enemy_contact() -> void:
 				"move_speed": 100.0,
 				"armor": 0.0,
 				"dodge_chance": 0.0,
+				"hit_protection": 0,
+				"minimum_invincibility_seconds": 0.2,
 			},
+			"health": {"current": 10.0, "maximum": 10.0, "ratio": 1.0},
 			"effect_rules": [],
 			"movement": {"knockback_velocity": Vector2.ZERO},
 		},
-		"enemy_tracks": [_enemy_track(Vector2(100.0, 0.0), Vector2(-1000.0, 0.0), false)],
+		"enemy_tracks": [_enemy_track(Vector2(100.0, 15.0), Vector2(-1000.0, 0.0), false)],
 		"remembered_entities": [],
 		"visible_world":
 		{
@@ -84,25 +90,66 @@ func _check_swept_enemy_contact() -> void:
 		"forecast_seconds": 0.2,
 		"samples": [{"time": 0.2, "displacement": Vector2.ZERO, "movement": Vector2.ZERO}],
 	}
-	var weights := {
-		"enemy_proximity": 1.0,
-		"enemy_contact": 1.0,
-		"projectile_contact": 1.0,
-		"spawn_warning": 1.0,
-		"ranged_attack": 1.0,
-		"map_edge": 1.0,
-		"allied_body_proximity": 1.0,
-		"allied_pressure_relief": 1.0,
-		"projectile_interception_relief": 1.0,
-	}
+	var weights := _influence_weights()
 	var outcome: Dictionary = influence.predict(observation, action, weights, 0.1)
 	_expect(
-		is_equal_approx(outcome.peak_path_collision_risk, 1.0),
+		is_equal_approx(outcome.peak_path_collision_risk, 0.5),
 		"enemy contact must be detected between safe-looking sample endpoints"
 	)
 	_expect(
 		is_equal_approx(outcome.maximum_path_collision_raw_damage, 3.0),
 		"swept enemy contact must retain the colliding body's damage"
+	)
+	var single_impact: Dictionary = impact.evaluate(
+		observation, action, _path_collision_evidence(outcome), false
+	)
+	var second_track: Dictionary = observation.enemy_tracks[0].duplicate(true)
+	second_track.track_id = 2
+	observation.enemy_tracks.push_back(second_track)
+	observation.physics_frame += 1
+	var swarm_outcome: Dictionary = influence.predict(observation, action, weights, 0.1)
+	var swarm_impact: Dictionary = impact.evaluate(
+		observation, action, _path_collision_evidence(swarm_outcome), false
+	)
+	_expect(
+		swarm_impact.expected_health_loss > single_impact.expected_health_loss,
+		"independent swept contacts must increase expected health loss after iframes are applied"
+	)
+
+
+func _check_directional_navigation_value() -> void:
+	var predictor_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_outcome_predictor.gd"
+	)
+	var predictor: Reference = predictor_script.new()
+	var observation := _planning_observation([])
+	var action := {
+		"movement": Vector2.LEFT,
+		"forecast_seconds": 0.1,
+		"samples": [{"time": 0.1, "displacement": Vector2(-10.0, 0.0)}],
+	}
+	var context := {
+		"control_interval_seconds": 0.1,
+		"environmental_pressure_weights": _influence_weights(),
+		"state_factors": {"positive_damage_is_terminal_rule": false},
+		"navigation_directional_value_samples":
+		[
+			{
+				"direction": Vector2.RIGHT,
+				"terminal_distance": 100.0,
+				"terminal_value_delta": 4.0,
+			},
+			{
+				"direction": Vector2.LEFT,
+				"terminal_distance": 100.0,
+				"terminal_value_delta": 1.0,
+			},
+		]
+	}
+	var outcome: Dictionary = predictor.predict_base(observation, action, context)
+	_expect(
+		is_equal_approx(outcome.navigation_terminal_value_gain, 0.1),
+		"an action aligned with a sampled direction must realize its proportional field value"
 	)
 
 
@@ -489,9 +536,7 @@ func _check_recovery_liquidity_pricing() -> void:
 
 
 func _check_additive_collision_damage() -> void:
-	var impact_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/collision_health_impact_model.gd"
-	)
+	var impact_script: Script = _load_collision_health_impact_script()
 	var impact: Reference = impact_script.new()
 	var observation := _planning_observation([])
 	observation.player_state.health = {"current": 9.0, "maximum": 20.0, "ratio": 0.45}
@@ -720,7 +765,8 @@ func _collision_evidence(
 ) -> Dictionary:
 	return {
 		"path_collision_risk": 0.0,
-		"integrated_path_collision_risk": 0.0,
+		"path_contact_evidence_seconds": 0.0,
+		"path_raw_damage_evidence_seconds": 0.0,
 		"maximum_path_raw_damage": 0.0,
 		"velocity_collision_risk": risk,
 		"velocity_contact_evidence_sum": contact_evidence_sum,
@@ -729,9 +775,43 @@ func _collision_evidence(
 	}
 
 
+func _path_collision_evidence(outcome: Dictionary) -> Dictionary:
+	return {
+		"path_collision_risk": outcome.peak_path_collision_risk,
+		"path_contact_evidence_seconds": outcome.path_contact_evidence_seconds,
+		"path_raw_damage_evidence_seconds": outcome.path_raw_damage_evidence_seconds,
+		"maximum_path_raw_damage": outcome.maximum_path_collision_raw_damage,
+		"velocity_collision_risk": 0.0,
+		"velocity_contact_evidence_sum": 0.0,
+		"velocity_raw_damage_evidence_sum": 0.0,
+		"maximum_velocity_raw_damage": 0.0,
+	}
+
+
+func _influence_weights() -> Dictionary:
+	return {
+		"enemy_proximity": 1.0,
+		"enemy_contact": 1.0,
+		"projectile_contact": 1.0,
+		"spawn_warning": 1.0,
+		"ranged_attack": 1.0,
+		"map_edge": 1.0,
+		"allied_body_proximity": 1.0,
+		"allied_pressure_relief": 1.0,
+		"projectile_interception_relief": 1.0,
+	}
+
+
 func _load_health_inventory_script() -> Script:
 	var script: Script = load(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_inventory_value_model.gd"
+	)
+	return script
+
+
+func _load_collision_health_impact_script() -> Script:
+	var script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/collision_health_impact_model.gd"
 	)
 	return script
 

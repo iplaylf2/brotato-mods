@@ -210,6 +210,12 @@ func _sample_enemy_pressure(
 		var contact := clamp(-physical_clearance / geometry.player_radius, 0.0, 1.0)
 		channels.contact = max(channels.contact, contact * track.recency_confidence)
 		if contact > 0.0:
+			var contact_evidence: float = contact * track.recency_confidence
+			channels.path_contact_evidence += contact_evidence
+			channels.path_raw_damage_evidence += (
+				contact_evidence
+				* track.behavior_profile.contact_damage
+			)
 			channels.contact_damage = max(
 				channels.contact_damage, track.behavior_profile.contact_damage
 			)
@@ -481,12 +487,14 @@ func _sample_projectile_pressure(
 		)
 		var projectile_pressure: float = proximity * proximity
 		channels.projectile += projectile_pressure
-		channels.projectile_contact = max(
-			channels.projectile_contact, clamp(-clearance / geometry.player_radius, 0.0, 1.0)
-		)
-		if clearance < 0.0:
+		var contact_evidence: float = clamp(-clearance / geometry.player_radius, 0.0, 1.0)
+		channels.projectile_contact = max(channels.projectile_contact, contact_evidence)
+		var intercepted: bool = interception_sample >= 0 and sample_index >= interception_sample
+		if contact_evidence > 0.0 and not intercepted:
+			channels.path_contact_evidence += contact_evidence
+			channels.path_raw_damage_evidence += contact_evidence * projectile.contact_damage
 			channels.contact_damage = max(channels.contact_damage, projectile.contact_damage)
-		if interception_sample >= 0 and sample_index >= interception_sample:
+		if intercepted:
 			channels.projectile_interception += projectile_pressure
 			channels.projectile_contact_interception = max(
 				channels.projectile_contact_interception, channels.projectile_contact
@@ -661,6 +669,8 @@ func _accumulate_result(
 		result.peak_path_collision_risk, exposure.path_collision_risk
 	)
 	result.integrated_hostile_collision_risk += exposure.path_collision_risk * step_seconds
+	result.path_contact_evidence_seconds += channels.path_contact_evidence * step_seconds
+	result.path_raw_damage_evidence_seconds += (channels.path_raw_damage_evidence * step_seconds)
 	result.maximum_path_collision_raw_damage = max(
 		result.maximum_path_collision_raw_damage, channels.contact_damage
 	)
@@ -674,6 +684,14 @@ func _accumulate_committed_collision(
 	)
 	result.committed_integrated_hostile_collision_risk += (
 		exposure.path_collision_risk
+		* step_seconds
+	)
+	result.committed_path_contact_evidence_seconds += (
+		channels.path_contact_evidence
+		* step_seconds
+	)
+	result.committed_path_raw_damage_evidence_seconds += (
+		channels.path_raw_damage_evidence
 		* step_seconds
 	)
 	result.committed_maximum_path_collision_raw_damage = max(
@@ -779,9 +797,13 @@ func _empty_result() -> Dictionary:
 		"peak_environmental_pressure": 0.0,
 		"peak_path_collision_risk": 0.0,
 		"integrated_hostile_collision_risk": 0.0,
+		"path_contact_evidence_seconds": 0.0,
+		"path_raw_damage_evidence_seconds": 0.0,
 		"maximum_path_collision_raw_damage": 0.0,
 		"committed_peak_path_collision_risk": 0.0,
 		"committed_integrated_hostile_collision_risk": 0.0,
+		"committed_path_contact_evidence_seconds": 0.0,
+		"committed_path_raw_damage_evidence_seconds": 0.0,
 		"committed_maximum_path_collision_raw_damage": 0.0,
 		"initial_environmental_pressure": 0.0,
 		"terminal_environmental_pressure": 0.0,
@@ -806,4 +828,6 @@ func _empty_channels() -> Dictionary:
 		"healing_support": 0.0,
 		"projectile_interception": 0.0,
 		"contact_damage": 0.0,
+		"path_contact_evidence": 0.0,
+		"path_raw_damage_evidence": 0.0,
 	}

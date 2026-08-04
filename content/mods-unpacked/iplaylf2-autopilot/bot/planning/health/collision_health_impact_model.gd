@@ -23,16 +23,19 @@ func evaluate(
 	var invincibility_seconds: float = runtime_stats.minimum_invincibility_seconds
 	var path_contact_opportunity_count_estimate: float = max(
 		clamp(evidence.path_collision_risk, 0.0, 1.0),
-		evidence.integrated_path_collision_risk / invincibility_seconds
+		evidence.path_contact_evidence_seconds / invincibility_seconds
 	)
 	# Swept position and analytic velocity evidence can describe the same
 	# contact, so retain the stronger account instead of adding them twice.
 	var contact_opportunity_count_estimate: float = max(
 		path_contact_opportunity_count_estimate, evidence.velocity_contact_evidence_sum
 	)
+	var path_raw_damage_evidence_sum: float = max(
+		clamp(evidence.path_collision_risk, 0.0, 1.0) * evidence.maximum_path_raw_damage,
+		evidence.path_raw_damage_evidence_seconds / invincibility_seconds
+	)
 	var raw_damage_evidence_sum: float = max(
-		path_contact_opportunity_count_estimate * evidence.maximum_path_raw_damage,
-		evidence.velocity_raw_damage_evidence_sum
+		path_raw_damage_evidence_sum, evidence.velocity_raw_damage_evidence_sum
 	)
 	var maximum_hit_count := max(1.0, action.forecast_seconds / invincibility_seconds)
 	var expected_hit_count := clamp(contact_opportunity_count_estimate, 0.0, maximum_hit_count)

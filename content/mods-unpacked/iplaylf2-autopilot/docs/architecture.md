@@ -1,8 +1,8 @@
 # Autopilot 架构
 
-本文面向 Autopilot 维护者，定义运行链路、公共观察、机制语义、滚动规划和模块责任。安装与启用说明见
+本文面向 Autopilot 维护者，定义运行链路、公共观察、机制语义和滚动规划。安装与启用说明见
 [README](../README.md)；允许使用的信息和控制能力由 [玩家权限边界](fair-play.md) 规定，本文不重复
-权限条款。
+权限条款；目录归属、依赖方向和公共入口见 [模块边界与责任](module-boundaries.md)。
 
 按维护任务选择阅读入口：
 
@@ -15,7 +15,7 @@
 | 调整生命补充预测或库存价值 | [动态效用](#动态效用) | [生命库存定价](model-calibration.md#生命库存定价)、[复盘方法](model-calibration.md#复盘方法) |
 | 调整武器输出估计 | [期望武器结果场](#期望武器结果场) | [武器结果场的性能边界](model-calibration.md#武器结果场的性能边界) |
 | 调整性能预算或排查掉帧 | [截止准入与连续保真度](#截止准入与连续保真度) | [性能反馈的可解释范围](model-calibration.md#性能反馈的可解释范围) |
-| 调整文件归属或依赖方向 | [模块边界与责任](#模块边界与责任) | — |
+| 调整文件归属或依赖方向 | [模块边界与责任](module-boundaries.md) | [玩家权限边界](fair-play.md) |
 
 ## 运行链路
 
@@ -465,7 +465,7 @@ visible_world
 | `integrated_environmental_exposure` | 敌人接近、生成、远程火力、地图边缘和队友阻塞扣除对应减压后的沿途环境暴露；不含碰撞 |
 | `field_utility_breakdown.forecast_health_inventory_loss_value` | 效用模型对动作预测窗内的生命消耗沿预计生命库存的对数障碍积分，再对超过即时生存缓冲的部分改用终止生命损失单价后形成的负向贡献 |
 | `forecast_terminal_collision_risk` | 最强单次命中可能耗尽当前生命，或原版规则规定受正伤即失败时保留的条件终止风险；生存效用按 `terminal_health_loss_unit_value` 与即时一击储备计价，不重复表示多次亚致命承伤 |
-| `navigation_terminal_value_gain` | 本动作对最佳导航终点总增益的有符号兑现值：按输入相对零输入造成的提交位移在终点方向上的距离比例计算；反向位移产生负值 |
+| `navigation_terminal_value_gain` | 本动作在相邻导航方向样本间作环形线性插值得到的终点单位距离价值，再按输入相对零输入造成的提交位移兑现；不同动作使用各自方向的终点边际价值 |
 | `standing_seconds`、`moving_seconds` | 对应移动状态在动作预测窗内的持续时间，只承载该状态的周期材料收益 |
 
 以下字段记录预测证据和中间量。部分字段参与上方评分量的合成，但都不会作为独立收益或成本再次计分：
@@ -491,8 +491,10 @@ visible_world
 | `peak_environmental_pressure` | 动作预测中任一采样点的峰值环境暴露 |
 | `peak_path_collision_risk` | 位置域采样和扫掠得到的峰值碰撞风险 |
 | `integrated_hostile_collision_risk` | 位置域敌对接触风险沿预测时间的积分，用于区分短暂交会与持续贴身 |
+| `path_contact_evidence_seconds`、`path_raw_damage_evidence_seconds` | 位置域扫掠对各独立敌人和未被拦截投射物保留的接触占用时间与伤害加权占用时间；生命模型随后统一应用无敌帧、护甲、闪避和命中保护 |
 | `committed_peak_path_collision_risk` | 位置域峰值碰撞证据中落在本次提交期内的部分 |
 | `committed_integrated_hostile_collision_risk` | 位置域累计敌对接触中落在本次提交期内的部分 |
+| `committed_path_contact_evidence_seconds`、`committed_path_raw_damage_evidence_seconds` | 上述可叠加位置域接触证据中落在本次提交期内的部分 |
 | `committed_hostile_velocity_obstacle_risk` | 本次提交期内的敌方投射物 TTC 与锁定冲撞走廊风险 |
 | `forecast_hostile_velocity_obstacle_risk` | 候选动作自身预测窗内的敌方投射物 TTC 与锁定冲撞走廊风险 |
 | `forecast_hostile_velocity_obstacle_contact_evidence_sum`、`forecast_hostile_velocity_obstacle_raw_damage_evidence_sum` | 解析交会在动作预测窗内保留的可叠加接触证据总量与原始伤害加权证据总量；用于承伤换算，不作为独立评分字段 |
@@ -523,10 +525,10 @@ visible_world
 ### 暴露与导航意图
 
 底层环境暴露 `P(x,t)` 是位置和时间上的连续启发式运行成本，不声称是物理压力、受伤概率或完整价值函数。
-`NavigationIntentPlanner` 只在最长导航时域与本波剩余时间两者较短者的可达终点上采样该场，用于选择
-大方向而非精确避弹。均匀方向保证没有已知机会时仍能比较空间；最强正价值机会的精确方向属于基线，
-避免计算压力让稀疏目标从候选空间消失；其余机会方向只增加候选，不预选目标。候选终点受本波有效导航
-时域和已知边界裁剪。地图信息场对从当前点至候选终点的视口扫掠按观察网格去重计值：未见网格具有完整
+`NavigationIntentPlanner` 只在最长导航时域与本波剩余时间两者较短者的可达终点上采样该场，用于比较
+大方向而非精确避弹。均匀方向保证没有已知机会时仍能比较空间；预算允许时，机会场的方向聚合和连续
+方向细分只增加采样密度，不预选目标。候选终点受本波有效导航时域和已知边界裁剪。地图信息场对从当前点
+至候选终点的视口扫掠按观察网格去重计值：未见网格具有完整
 再观察价值，已见网格按距上次观察的时间相对波长连续恢复该价值。它只表达合法视野的预期信息收益，
 不把未知区域视为已知安全区，也不编码巡逻路线。
 
@@ -538,17 +540,17 @@ visible_world
 统一奖励、战场后果和攻击容量账本，而非树木或敌人类别优先级。敌人机会用起点、中点和终点的可达性
 近似沿途积分，使更早形成攻击窗口的候选获得更高价值。
 候选与零输入基线在各时刻使用相同运动机制，因此敌人自行靠近只改变共同未来状态，不会伪装成移动收益。
-导航环境暴露也比较同一终点时刻的反事实差值。终点总增益只决定导航方向和总行程价值；动作评分再按
-本次输入相对零输入造成的提交位移在该方向上的投影占终点距离的比例兑现，不能把击退归因给移动输入，
-也不能在一个控制期内预支完整行程。
-导航意图公开方向与价值（`movement_preference`、`terminal_value_gain`、`origin_value`、
+导航环境暴露也比较同一终点时刻的反事实差值。每个已评价方向都保留相对原点的终点价值差；动作评分在
+相邻方向样本间线性插值单位距离价值，只按输入相对零输入造成的本提交期位移兑现。因此击退保持为共同
+反事实，且本次动作只取得实际完成的路线进度价值。
+导航意图公开方向与价值（`movement_preference`、`directional_value_samples`、`terminal_value_gain`、`origin_value`、
 `selected_displacement`、`selected_value_breakdown`）、评价次数（`position_evaluation_count`）和空间尺度
 （`sampling_radius`、`local_prediction_radius`、`control_distance`），便于验证导航意图来源。其中
 `terminal_value_gain` 是终点总增益，不是单个动作结果中的本提交期兑现字段
 `navigation_terminal_value_gain`；
 `origin_value` 是零输入反事实的零值基线；`position_evaluation_count` 包含原点，
 `baseline_position_evaluation_count` 与 `extra_position_evaluation_count` 分别记录基线和额外评价次数；
-`baseline_opportunity_evaluation_count` 记录基线中是否补入了不与均匀格点重合的最强机会方向；
+`directional_value_samples` 记录各已评价方向的终点距离、相对原点价值差和值分解；
 `sampling_radius` 是地图边界裁剪前的候选半径，不声称是实际行进距离。
 
 导航终点的环境暴露按局部生存效用使用的同一动态风险价格计入成本。动作评价仍检查完整路径并执行扫掠
@@ -720,122 +722,6 @@ Godot 性能监视器按渲染帧而非物理回调更新，因此控制层会�
 并排除包含规划的监视值世代。
 单项耗时 EMA 只能阻止启动预计无法在截止前完成的额外工作，不能中断已经开始的单项计算；基线工作、
 首次成本估计、同帧突发负载和监视值更新延迟仍可能造成超预算。预算为零或尚无帧样本时只执行基线工作。
-
-## 模块边界与责任
-
-| 模块 | 责任 | 公共边界 |
-| --- | --- | --- |
-| `bot/control` | 安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`get_decision_sample_path()` 提供当前采样文件；`AutopilotMovementBehavior` 是唯一控制输出 |
-| `bot/planning` | 管理导航意图、运动学、速度障碍碰撞证据、动作搜索、机会与资源定价及最大效用选择 | `MovementPlanner.plan()`；其余模块是规划包内部协作者 |
-| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.get_observation()` |
-| `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
-
-目录表达依赖与所有权，文件后缀表达组件角色。统一命名规则如下：
-
-| 后缀 | 稳定语义 | 入口动词 |
-| --- | --- | --- |
-| `Observer` | 读取当前合法状态并形成观察 | `observe` |
-| `Adapter` | 按来源或事件域把目标版本存储契约翻译成规范契约 | `adapt` |
-| `Compiler` | 分析运行时对象及其资源，把多个具体机制编译为正交规划语义 | `compile` |
-| `Profiler` | 融合稳定机制与局内证据形成画像 | `build_profile`、`accumulate_evidence` |
-| `Estimator` | 从既有观察估计不可直接测量的当前量 | `estimate` 或状态化 `update` |
-| `Predictor` | 沿时间或候选动作推演未来结果 | `predict` 或 `accumulate_outcome` |
-| `Projector` | 将同一组已知规则或状态映射到候选表示，不模拟世界演化 | `project` |
-| `Model` | 封装可复用的领域关系或评价规律 | 领域动词 |
-| `Generator` | 按已给空间与画像构造候选集合，不拥有评价或选择 | `generate`、`make_*` |
-| `Selector` | 从已评分候选中选择结果，不拥有预测或评分 | `select` |
-| `Planner` | 协调候选生成、预测、评价与选择，产出一个完整决策 | `plan` |
-| `Monitor` | 读取运行时监视值，维护平滑状态并公开上下文 | `observe_*`、`build_context` |
-| `Filter` | 按明确判据产生输入子集，并公开过滤诊断 | `filter` |
-| `Refiner` | 根据已评价候选提出更细的搜索候选，不拥有评价或停止策略 | `propose_*` |
-| `Allocator` | 把既有资源信号映射为某一计算维度的本轮额度，不拥有资源测量或行为价值 | `allocate` |
-| `Policy` | 根据资源上下文形成计算预算或其他可调策略 | 领域动词，或 `set_frame_budget_context`、`allocate`、`observe_*` |
-| `Telemetry` | 按既定采样政策持久化诊断记录，不参与被记录的决策 | `start`、`record_decision`、`close` |
-
-数据仍按其产物命名，例如 `attack_model`、`rule_projection`、`behavior_profile` 和 `navigation_intent`；组件名
-则使用上表的角色后缀。这样可以区分“投影结果”与执行投影的 `Projector`，以及导航意图与生成它的
-`NavigationIntentPlanner`。`bot/planning` 根目录仍是主要的扁平协作包，因为这些组件共同服务唯一入口
-`MovementPlanner`，且存在密集的包内依赖。只有可单独消费的稳定子协议进入子目录：`motion` 拥有“规范
-运动观察与稳定响应 → 未来位置和可达包络”的协议，供暴露、交会、事件与动作采样共同消费；`weapons`
-拥有“攻击模型 → 与目标无关的期望攻击容量”协议，该容量同时由战斗、机会与生命补充模型消费；`health`
-拥有两段健康语义：“碰撞证据 → 条件生命损失与直接终止风险”，以及“当前生命、即时威胁与
-清场前补充 → 生命库存及单位价值”；结果供导航风险和动作效用共同消费。
-`WeaponOutcomeFieldModel` 需要组合运动学、敌人运动、机会定价和动作结果账本，因此与其他动作结果协作者
-一起留在规划根目录。
-
-所有新增能力必须先满足 [玩家权限边界](fair-play.md)。玩家效果的原版字段映射由
-`bot/knowledge/player_effects` 拥有，消耗品稳定画像由 `bot/knowledge/pickups` 拥有；公共规则轴及其解释权
-属于规划模型，不能随字段数量同步扩张。新增敌人稳定特征或画像规则应放入 `bot/knowledge/enemies`。
-新增参与评分的结果维度必须同时定义预测语义和效用权重；新增诊断维度则应明确标注不参与评分。
-
-关键所有权如下：
-
-- `bot/knowledge/allies/ally_mechanic_compiler.gd` 与
-  `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
-- `bot/knowledge/pickups/material_quantity_estimator.gd` 只把可见材料缩放估算为目标版本机制保证的
-  单位下界；
-  `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定恢复与处理画像。二者都不读取
-  不可见实体或未来随机结果。
-- `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
-  `bot/planning/weapons/weapon_attack_capacity_model.gd` 统一定义与目标无关的期望主路径攻击率、单次命中
-  伤害和生命偷取率；`bot/planning/weapon_outcome_field_model.gd` 负责把这些容量与可见目标投影为下一决策
-  状态的局部期望结果场。
-- `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、位置域碰撞风险、战斗支援伤害与消耗、友方减压、
-  治疗和挡弹时序；
-  `bot/planning/navigation_intent_planner.gd` 为尚未兑现的空间机会、地图信息和导航时域环境暴露形成导航偏好。
-  规划时间域及其波次剩余时间裁剪由 `bot/planning/movement_timing_model.gd` 唯一定义，体型、
-  速度与这些时域形成的共享空间尺度由 `bot/planning/movement_geometry_model.gd` 统一派生；后者区分不会
-  随波末收缩的地图探索范围，以及只覆盖波次结束前可行动距离的机会范围和局部预测半径。
-  `bot/planning/motion/enemy_reach_envelope_model.gd` 统一派生敌人的最大位移和接触支撑半径，供即时生命
-  储备与局部投影复用；`bot/planning/local_enemy_interaction_projector.gd` 再结合压力作用范围与武器锁定
-  距离构造动作预测的敌人空间粗筛。完整观察仍归导航与价值上下文所有，局部投影只供动作结果
-  协作者消费。
-- `bot/planning/velocity_obstacle_collision_model.gd` 计算弹道与队友 TTC 及已知冲撞扫掠走廊的局部速度
-  空间交会证据，最终碰撞风险由动作结果预测器与普通敌人、投射物的位置域扫掠证据合并；
-  `bot/planning/motion/projectile_motion_predictor.gd` 解析积分已形成的确定性弹道，
-  `bot/planning/health/collision_health_impact_model.gd` 按原版当前最短无敌帧间隔，把峰值及累计接触证据
-  换算为预期生命损失与直接终止风险；
-  `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的地图消耗品、概率掉落、被动恢复
-  和生命偷取，`bot/planning/health/health_inventory_value_model.gd` 只负责即时生存缓冲、预计生命库存及其
-  单位价值；`bot/planning/target_completion_allocation_model.gd` 统一分配共享攻击容量，并建立敌人击杀和
-  树木摧毁完成账本，供机会定价与恢复掉落预测共同消费；
-  `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
-- `bot/planning/movement_outcome_predictor.gd` 预测动作结果，`bot/planning/movement_utility_model.gd` 把结果转换为
-  效用。`bot/planning/opportunity_pricing_model.gd` 统一换算材料、消耗品、树木和敌人移除机会的边际价值，
-  并在每次规划中建立共享敌人移除价值账本；
-  `bot/planning/consumable_drop_probability_model.gd` 唯一负责把稳定掉落画像与当前幸运组合为消耗品及
-  箱子概率；`bot/planning/spatial_opportunity_value_model.gd` 统一计算
-  可见与记忆机会沿候选路径的价值，以及动态敌人的同时间反事实价值差。
-- `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量，
-  `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线；
-  `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
-- `bot/planning/map_information_value_model.gd` 根据视口、已观察边界、覆盖陈旧度和候选路径计算新观察与
-  再观察价值；它不编码探索方向、巡逻路线或地图中心。
-  `bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何，
-  `bot/planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量，
-  `bot/planning/player_rule_projector.gd` 将规则归约为正交状态；这些模块都不能读取场景节点。
-- `bot/observation/observed_world_memory.gd` 聚合每位玩家的实体、敌人轨迹与视野覆盖记忆；实体存在性由
-  `bot/observation/remembered_entity_existence_estimator.gd` 估计。观察层只输出语义画像，规划层不读取观察层的
-  场景节点或内部实现细节。
-- `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量，
-  `bot/planning/motion/observed_motion_predictor.gd` 只负责纯观测运动外推；
-  `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 编译稳定目标位置响应与冲撞机制，
-  `bot/planning/motion/enemy_motion_predictor.gd` 对稳定目标位置响应作自适应中点积分，并在不适用时改用
-  观测运动外推。普通敌人接触扫掠归战场影响模型所有；冲撞时序仍由观察层拥有，候选路径与锁定走廊的
-  交会则由速度障碍碰撞模型拥有；观察层不得反向依赖规划层。
-- `bot/observation/enemy_attack_timing_observer.gd` 只拥有当前可见敌人的下一轮齐射与冲撞时间窗。稳定投射物
-  攻击配置由 `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 拥有；稳定冲撞配置由
-  `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 拥有。敌人的稳定接触形状也由前者编译；当前
-  敌方投射物及友方角色的碰撞形状由 `bot/observation/visible_world_observer.gd` 观察。规划层只消费这些
-  必需字段，不读取场景形状或建立替代几何。两类机制编译缓存都不得混入战斗期状态。
-- `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
-  边界公开帧预算上下文。
-- `bot/planning/planning_compute_budget_policy.gd` 把控制层提供的帧预算上下文转换成统一最终截止与连续预算
-  压力，并维护额外工作的耗时估计；`planning_search_fidelity_allocator.gd` 独占从预算压力和物理影响时间到
-  搜索保真度及额外工作额度的映射，不拥有行为效用；`projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；
-  `adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止策略仍归调用方。
-- `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；
-  `MovementPlanner` 拥有规划结果及其诊断语义，采样器只删除重复画像，不改变保留字段的语义值。
 
 ## 算法依据与适用边界
 

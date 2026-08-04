@@ -91,9 +91,7 @@ func plan(observation: Dictionary) -> Dictionary:
 	var navigation_intent: Dictionary = _navigation_intent_planner.plan(
 		planning_observation, context, compute_budget, search_fidelity, _compute_budget_policy
 	)
-	context.navigation_movement_preference = navigation_intent.movement_preference
-	context.navigation_terminal_value_gain = navigation_intent.terminal_value_gain
-	context.navigation_terminal_distance = navigation_intent.selected_displacement.length()
+	context.navigation_directional_value_samples = navigation_intent.directional_value_samples
 	phase_duration_usec.navigation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
 	var actions: Array = _action_generator.generate(
@@ -156,6 +154,7 @@ func plan(observation: Dictionary) -> Dictionary:
 	plan.context = context.duplicate(false)
 	plan.context.erase("enemy_removal_value_ledger")
 	plan.context.erase("target_completion_ledger")
+	plan.context.erase("navigation_directional_value_samples")
 	plan.target_completion_allocation = context.target_completion_ledger.duplicate(false)
 	plan.target_completion_allocation.erase("enemy_completion_likelihood_by_track_id")
 	plan.target_completion_allocation.erase("tree_completion_likelihood_by_memory_record_id")

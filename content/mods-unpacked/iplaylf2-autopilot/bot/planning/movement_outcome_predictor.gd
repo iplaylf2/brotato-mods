@@ -137,7 +137,7 @@ func predict_base(
 		_movement_damage_exposure_reduction(observation, action)
 		* outcome.collision_risk
 	)
-	outcome.navigation_terminal_value_gain = _navigation_terminal_value_progress(
+	outcome.navigation_terminal_value_gain = _navigation_value_progress(
 		observation, committed_action, planning_context
 	)
 	return outcome
@@ -146,7 +146,8 @@ func predict_base(
 func _committed_collision_evidence(outcome: Dictionary) -> Dictionary:
 	return {
 		"path_collision_risk": outcome.committed_peak_path_collision_risk,
-		"integrated_path_collision_risk": outcome.committed_integrated_hostile_collision_risk,
+		"path_contact_evidence_seconds": outcome.committed_path_contact_evidence_seconds,
+		"path_raw_damage_evidence_seconds": outcome.committed_path_raw_damage_evidence_seconds,
 		"maximum_path_raw_damage": outcome.committed_maximum_path_collision_raw_damage,
 		"velocity_collision_risk": outcome.committed_hostile_velocity_obstacle_risk,
 		"velocity_contact_evidence_sum":
@@ -160,7 +161,8 @@ func _committed_collision_evidence(outcome: Dictionary) -> Dictionary:
 func _forecast_collision_evidence(outcome: Dictionary) -> Dictionary:
 	return {
 		"path_collision_risk": outcome.peak_path_collision_risk,
-		"integrated_path_collision_risk": outcome.integrated_hostile_collision_risk,
+		"path_contact_evidence_seconds": outcome.path_contact_evidence_seconds,
+		"path_raw_damage_evidence_seconds": outcome.path_raw_damage_evidence_seconds,
 		"maximum_path_raw_damage": outcome.maximum_path_collision_raw_damage,
 		"velocity_collision_risk": outcome.forecast_hostile_velocity_obstacle_risk,
 		"velocity_contact_evidence_sum":
@@ -212,25 +214,50 @@ func _material_acquisition_value(observation: Dictionary, samples: Array) -> flo
 	return value
 
 
-func _navigation_terminal_value_progress(
+func _navigation_value_progress(
 	observation: Dictionary, action: Dictionary, planning_context: Dictionary
 ) -> float:
-	# A terminal plan contributes only the fraction caused by this committed
-	# input. Subtracting the zero-input path prevents knockback from earning it.
-	var terminal_distance: float = planning_context.get("navigation_terminal_distance", 0.0)
-	var movement_preference: Vector2 = planning_context.navigation_movement_preference
-	if terminal_distance <= 0.0 or movement_preference == Vector2.ZERO:
-		return 0.0
+	# Realize the terminal value field at this action's direction using only the
+	# displacement caused by the submitted movement input.
 	var committed_sample: Dictionary = action.samples.back()
 	var committed_displacement: Vector2 = committed_sample.displacement
 	var zero_input_displacement: Vector2 = _player_kinematics_model.predict_displacement(
 		observation, Vector2.ZERO, committed_sample.time
 	)
 	var controlled_displacement: Vector2 = committed_displacement - zero_input_displacement
-	var terminal_progress: float = clamp(
-		controlled_displacement.dot(movement_preference) / terminal_distance, -1.0, 1.0
+	if controlled_displacement.length_squared() <= 0.0:
+		return 0.0
+	var directional_samples: Array = planning_context.navigation_directional_value_samples
+	if directional_samples.empty():
+		return 0.0
+	var value_rate: float = _interpolated_navigation_value_rate(
+		controlled_displacement.normalized(), directional_samples
 	)
-	return terminal_progress * planning_context.navigation_terminal_value_gain
+	return controlled_displacement.length() * value_rate
+
+
+func _interpolated_navigation_value_rate(direction: Vector2, directional_samples: Array) -> float:
+	var direction_angle: float = fposmod(direction.angle(), TAU)
+	var before: Dictionary = directional_samples[0]
+	var after: Dictionary = directional_samples[0]
+	var before_distance := INF
+	var after_distance := INF
+	for sample in directional_samples:
+		var sample_angle: float = fposmod(sample.direction.angle(), TAU)
+		var clockwise_distance: float = fposmod(direction_angle - sample_angle, TAU)
+		var counterclockwise_distance: float = fposmod(sample_angle - direction_angle, TAU)
+		if clockwise_distance < before_distance:
+			before_distance = clockwise_distance
+			before = sample
+		if counterclockwise_distance < after_distance:
+			after_distance = counterclockwise_distance
+			after = sample
+	var before_rate: float = before.terminal_value_delta / before.terminal_distance
+	if before_distance <= 0.000001:
+		return before_rate
+	var after_rate: float = after.terminal_value_delta / after.terminal_distance
+	var angular_span: float = before_distance + after_distance
+	return lerp(before_rate, after_rate, before_distance / angular_span)
 
 
 func _committed_action(

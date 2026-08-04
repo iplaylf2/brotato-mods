@@ -35,9 +35,9 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 
 为控制体积，敌人轨迹只保留规划实际消费的 `behavior_profile`，省略重复的行为证据与测量内稳定画像；
 规划过程不生成或持久化逐采样点暴露轨迹，所选动作与高分备选只保留聚合通道、动作路径与效用账本。
-导航意图记录候选位置数、移动偏好、终端价值增益、价值分解和派生空间尺度；单次规划共享的逐敌人价值
-缓存不进入采样。导航意图还保留至多一个由当前最高合计可达价值机会角区派生的局部动作方向；它只确保
-完整动作模型评价该方向，不绕过最大效用选择。
+导航意图记录候选位置数、移动偏好、各方向终点价值样本、胜出终点价值分解和派生空间尺度；单次规划共享
+的逐敌人价值缓存不进入采样。动作候选来自统一方向格点、导航偏好和角区间细分，并按自身方向的插值
+边际价值进入完整效用账本。
 `Vector2` 写成 `{ "x": ..., "y": ... }`，非有限浮点数写成可识别字符串。
 复盘工具应先按 `session_id + player_index + sample_index` 排序，再用
 `decision_index` 和 `physics_frame` 检查缺口。
@@ -233,7 +233,9 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
 
 ## 复盘方法
 
-比较样本时，应优先采用成对或交替局次，而不是只挑成功局：
+比较样本时，应优先采用成对或交替局次，不只挑选成功局。
+
+### 基本顺序
 
 1. 按角色、武器、波次、设备和负载区间分层，并区分是否已取得有效帧耗时样本。
 2. 先检查 `decision_index` 和 `physics_frame` 的间隔。只在观察时间与预测时间对齐、且中间控制变化不会
@@ -246,58 +248,72 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
    连续移向更陈旧的合法视野，而不是只检查某个预设巡逻方向。
    敌人接近和导航环境暴露必须比较候选动作与同一未来时刻的零输入状态；若两者只因敌人自然运动而共同
    改善或恶化，动作边际值应为零，不能把时间经过造成的变化归给移动方向。
-5. 材料复盘按本波剩余比例分段，比较可见材料数、实际材料增长、`material_acquisition_value` 和导航中的
-   `selected_value_breakdown.material_opportunity`。再按材料密度比较路径势能变化、吸附触发与实际拾取率，
-   并按 `material_quantity_estimate.minimum_units` 区分普通材料、合并材料与奖励材料，确认节点数达到原版
-   上限后，合并价值不会退化为单个材料，同时也不把外观尺寸封顶后的隐藏差额提前计入。进入吸附范围但
-   尚未进入收集圈时，机会价值必须继续存在；未扫近任何材料时，路径机会不应继续提供正收益。波末样本
-   还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。动作预测窗内的拾取是持续采用
-   该候选输入时的条件结果，不是已经执行的事实。另行区分导航意图中的终点总增益
-   `terminal_value_gain` 与动作结果中的本提交期兑现值 `navigation_terminal_value_gain`：后者应等于前者乘以
-   输入相对零输入造成的提交位移在终点方向上的投影与终点距离之比，并限制在前者的正负范围内。
-   材料密集或路线穿过多个材料簇时，重点比较逐控制期反转率。出现 `material_assimilation.active` 的敌人时，
-   还应比较材料与玩家、敌人的预计到达次序、后续实际材料消失及候选排序；没有可争夺材料时，该画像本身
-   不应形成固定击杀优先级。
-6. 树木复盘同时比较导航中的 `selected_value_breakdown.tree_opportunity`、
-   `expected_tree_harvest_value_progress` 及当时的武器期望攻击率，
-   不能把进入射程直接当作已经命中或摧毁。确认候选读取的结果场受动作预测窗攻击容量和可见目标容量约束，
-   没有超过可见目标的总耐久、总移除价值或总收获价值。树木价值应随箱子生成概率提高，且箱子结果仍应
-   贡献治疗供给；箱子落地后，满血且没有拾取事件收益时不应继续产生正向导航机会，缺血时则应与同等
-   治疗量的果实一致。同一候选动作可以同时兑现 `material_acquisition_value` 和武器结果，复盘时不得把
-   两类并行收益误判成取舍。
-7. 武器复盘检查连续性、路径几何与容量，而不是寻找并不存在的唯一命中序列：候选跨越射程边界时场值应
-   连续；锁定可用性应使用目标中心距离，外观半径只能改变命中路径交会；主目标概率应遵循最近目标的可用
-   次序，且接近途中只按实际覆盖时间产生输出。目标密度增加可以提高贯穿、弹射和范围投送的期望容量，
-   但直接贯穿只应随同一攻击走廊内的目标增加，且不得超过编译容量和可见目标质量。移动许可、攻击速度、
-   伤害、暴击与生命偷取变化应按同一攻击模型轴改变场值。按波次比较候选前三名的 `combat`
-   跨度和实际输出趋势，若群体平均近似产生系统性排序偏差，应改进通用核或网格，而不是为武器或敌人
-   添加目标优先级。
-8. 同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、提交期诊断
-   `expected_health_loss` 和 `field_utility_breakdown.forecast_health_inventory_loss_value`：直接终止风险与
-   生命库存损失都应由统一效用账本与材料、输出、恢复和地图信息价值交换，不能在选择器外再次过滤。
-   生命库存复盘按本波剩余比例和恢复构筑分层，对照
-   `reachable_observed_replenishment`、`expected_drop_replenishment`、`passive_replenishment`、
-   `expected_lifesteal_replenishment`、`expected_passive_health_drain`、`immediate_survival_buffer`、
-   `projected_health_inventory` 与 `marginal_health_unit_value`；确认时间本身不改变同一库存状态的生命价格，
-   清场前可兑现补充会降低非致命承伤成本，而超过 `immediate_survival_buffer` 的部分仍按终止价值计价；
-   拾取恢复按 `terminal_health_loss_unit_value` 产生即时生命收益，同时
-   `consumed_consumable_recovery_supply` 按 `replenishment_unit_value` 结清离开地图的储备，两者净额应等于
-   `recovery_conversion_unit_value`；
-   满血接触不应继续免费享受该储备带来的生命折价。地雷路径还应联合检查
-   `consumed_single_use_support_supply` 与 `expected_allied_damage`，确认空踩只消耗储备，而覆盖敌人的引爆
-   能由当轮伤害机会抵偿，且 `terminal_health_loss_unit_value` 不随这些供给折价。
-9. 群体接触应同时检查峰值风险、累计敌对接触、解析交会的接触证据总量与原始伤害加权证据总量、预期
-   命中次数、生命库存损失、终止风险与原版当前最短无敌帧间隔，并对照外观半径与稳定接触形状，避免把
-   持续贴身压缩成单次伤害或把精灵留白当作碰撞。追击敌人应按目标位置响应分步预测，
-   再以敌我相对线段扫掠复核，并区分进入偏好距离后停住与向外恢复距离的行为。弯曲弹道应检查解析相位
-   轨迹与扫掠交会。多枚弹体样本必须确认期望伤害随独立交会增加，并受无敌帧命中槽上限约束；多次
-   亚致命交会由生命库存损失计价，不应再产生一份终止概率。位置扫掠与解析 TTC 对同一弹体的证据不得
-   相加两次。不能用扩大碰撞半径或加大效用权重掩盖外推错误。
-   冲撞怪还应联合检查 `enemy_charge_obstacle_risk`、`forecast_expected_health_loss` 与提交期诊断
-   `expected_health_loss`，确认独立冲撞证据进入合成风险后
-   没有被重复计分。
-   按[性能反馈的可解释范围](#性能反馈的可解释范围)检查帧耗时样本、预算利用率、截止超时量、导航与角度
-   细分次数及对应单项耗时 EMA；结合敌人、原始投射物及延后投射物数量解释成本变化。
+
+### 导航与材料
+
+材料复盘按本波剩余比例分段，比较可见材料数、实际材料增长、`material_acquisition_value` 和导航中的
+`selected_value_breakdown.material_opportunity`。再按材料密度比较路径势能变化、吸附触发与实际拾取率，
+并按 `material_quantity_estimate.minimum_units` 区分普通材料、合并材料与奖励材料，确认节点数达到原版
+上限后，合并价值不会退化为单个材料，同时也不把外观尺寸封顶后的隐藏差额提前计入。进入吸附范围但
+尚未进入收集圈时，机会价值必须继续存在；未扫近任何材料时，路径机会不应继续提供正收益。波末样本
+还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。动作预测窗内的拾取是持续采用
+该候选输入时的条件结果，不是已经执行的事实。另行区分导航意图中的终点总增益
+`terminal_value_gain` 与动作结果中的本提交期兑现值 `navigation_terminal_value_gain`：后者应先将相邻
+`directional_value_samples` 的终点单位距离价值作环形线性插值，再乘以输入相对零输入造成的提交位移。
+材料密集或路线穿过多个材料簇时，重点比较逐控制期反转率。出现 `material_assimilation.active` 的敌人时，
+还应比较材料与玩家、敌人的预计到达次序、后续实际材料消失及候选排序；没有可争夺材料时，该画像本身
+不应形成固定击杀优先级。
+
+### 树木与武器
+
+树木复盘同时比较导航中的 `selected_value_breakdown.tree_opportunity`、
+`expected_tree_harvest_value_progress` 及当时的武器期望攻击率，
+不能把进入射程直接当作已经命中或摧毁。确认候选读取的结果场受动作预测窗攻击容量和可见目标容量约束，
+没有超过可见目标的总耐久、总移除价值或总收获价值。树木价值应随箱子生成概率提高，且箱子结果仍应
+贡献治疗供给；箱子落地后，满血且没有拾取事件收益时不应继续产生正向导航机会，缺血时则应与同等
+治疗量的果实一致。同一候选动作可以同时兑现 `material_acquisition_value` 和武器结果，复盘时不得把
+两类并行收益误判成取舍。
+
+武器复盘检查连续性、路径几何与容量，而不是寻找并不存在的唯一命中序列：候选跨越射程边界时场值应
+连续；锁定可用性应使用目标中心距离，外观半径只能改变命中路径交会；主目标概率应遵循最近目标的可用
+次序，且接近途中只按实际覆盖时间产生输出。目标密度增加可以提高贯穿、弹射和范围投送的期望容量，
+但直接贯穿只应随同一攻击走廊内的目标增加，且不得超过编译容量和可见目标质量。移动许可、攻击速度、
+伤害、暴击与生命偷取变化应按同一攻击模型轴改变场值。按波次比较候选前三名的 `combat`
+跨度和实际输出趋势，若群体平均近似产生系统性排序偏差，应改进通用核或网格，而不是为武器或敌人
+添加目标优先级。
+
+### 生存与碰撞
+
+先同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、提交期诊断
+`expected_health_loss` 和 `field_utility_breakdown.forecast_health_inventory_loss_value`：直接终止风险与
+生命库存损失都应由统一效用账本与材料、输出、恢复和地图信息价值交换，不能在选择器外再次过滤。
+生命库存复盘按本波剩余比例和恢复构筑分层，对照
+`reachable_observed_replenishment`、`expected_drop_replenishment`、`passive_replenishment`、
+`expected_lifesteal_replenishment`、`expected_passive_health_drain`、`immediate_survival_buffer`、
+`projected_health_inventory` 与 `marginal_health_unit_value`；确认时间本身不改变同一库存状态的生命价格，
+清场前可兑现补充会降低非致命承伤成本，而超过 `immediate_survival_buffer` 的部分仍按终止价值计价；
+拾取恢复按 `terminal_health_loss_unit_value` 产生即时生命收益，同时
+`consumed_consumable_recovery_supply` 按 `replenishment_unit_value` 结清离开地图的储备，两者净额应等于
+`recovery_conversion_unit_value`。满血接触不应继续免费享受该储备带来的生命折价。地雷路径还应联合检查
+`consumed_single_use_support_supply` 与 `expected_allied_damage`，确认空踩只消耗储备，而覆盖敌人的引爆
+能由当轮伤害机会抵偿，且 `terminal_health_loss_unit_value` 不随这些供给折价。
+
+再检查群体接触的峰值风险、累计敌对接触、解析交会的接触证据总量与原始伤害加权证据总量、预期
+命中次数、生命库存损失、终止风险与原版当前最短无敌帧间隔，并对照外观半径与稳定接触形状，避免把
+持续贴身压缩成单次伤害或把精灵留白当作碰撞。追击敌人应按目标位置响应分步预测，
+再以敌我相对线段扫掠复核，并区分进入偏好距离后停住与向外恢复距离的行为。弯曲弹道应检查解析相位
+轨迹与扫掠交会。多枚弹体样本必须确认期望伤害随独立交会增加，并受无敌帧命中槽上限约束；多次
+亚致命交会由生命库存损失计价，不应再产生一份终止概率。位置扫掠与解析 TTC 对同一弹体的证据不得
+相加两次。不能用扩大碰撞半径或加大效用权重掩盖外推错误。
+
+冲撞怪还应联合检查 `enemy_charge_obstacle_risk`、`forecast_expected_health_loss` 与提交期诊断
+`expected_health_loss`，确认独立冲撞证据进入合成风险后
+没有被重复计分。
+
+### 性能
+
+按 [性能反馈的可解释范围](#性能反馈的可解释范围) 检查帧耗时样本、预算利用率、截止超时量、导航与角度
+细分次数及对应单项耗时 EMA；结合敌人、原始投射物及延后投射物数量解释成本变化。
 
 校准目标是减少系统性偏差并提高跨构筑稳定性，不是让单局结果贴合某个理想路线。任何新常数都应先说明
 所属等级、所有者、可观察结果与重新评估条件；若能由现有状态和上游参数表达，就不新增独立调节点。

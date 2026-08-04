@@ -1,0 +1,141 @@
+# Autopilot 模块边界与责任
+
+本文面向修改目录归属、依赖方向或公共入口的维护者。运行链路、观察字段和规划语义由
+[架构文档](architecture.md) 定义；信息与控制权限由 [玩家权限边界](fair-play.md) 定义。本文只维护代码
+所有权和跨模块契约，不重复算法说明。
+
+## 顶层依赖
+
+| 模块 | 责任 | 公共边界 |
+| --- | --- | --- |
+| `bot/control` | 安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.get_current_plan()` 提供计划诊断；`get_decision_sample_path()` 提供当前采样文件；`AutopilotMovementBehavior` 是唯一控制输出 |
+| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价及最大效用选择 | `MovementPlanner.plan()`；其余模块是规划包内部协作者 |
+| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.get_observation()` 提供防御性副本；`get_planning_observation()` 提供同步只读规划视图 |
+| `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
+
+依赖方向为 `control → observation`、`control → planning` 和 `observation → knowledge`。`planning` 只接收
+已经移除场景节点的观察字典，不反向依赖 `control`、`observation` 或 `knowledge`。
+
+所有新增能力必须先满足玩家权限边界。玩家效果的原版字段映射由 `bot/knowledge/player_effects` 拥有，
+消耗品稳定画像由 `bot/knowledge/pickups` 拥有；公共规则轴及其解释权属于规划模型，不能随原版字段数量
+同步扩张。新增敌人稳定特征或画像规则应放入 `bot/knowledge/enemies`。新增评分维度必须同时定义预测
+语义和效用权重；新增诊断维度则应明确不参与评分。
+
+## 规划包的子目录边界
+
+`bot/planning` 根目录是主要协作包：其中组件共同服务唯一入口 `MovementPlanner`，并存在密集的包内依赖。
+只有可单独消费的稳定子协议进入子目录：
+
+- `motion` 拥有“规范运动观察与稳定响应 → 未来位置和可达包络”的协议，供暴露、交会、事件与动作采样
+  共同消费；
+- `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
+- `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”和“当前生命、即时威胁与清场前补充 →
+  生命库存及单位价值”两段协议，结果供导航风险和动作效用共同消费。
+
+`WeaponOutcomeFieldModel` 需要组合运动学、敌人运动、机会定价和动作结果账本，因此与其他动作结果协作者
+一起留在规划根目录。
+
+## 关键所有权
+
+### 版本知识
+
+- `bot/knowledge/allies/ally_mechanic_compiler.gd` 与
+  `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
+- `bot/knowledge/pickups/material_quantity_estimator.gd` 只把可见材料缩放估算为目标版本机制保证的单位下界；
+  `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定恢复与处理画像。二者都不读取
+  不可见实体或未来随机结果。
+- `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
+  `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量；
+  `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线。
+- `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 拥有稳定投射物攻击配置与敌人接触形状；
+  `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 拥有稳定目标位置响应与冲撞配置。两类缓存都不得
+  混入战斗期状态。
+
+### 观察与记忆
+
+- `bot/observation/observed_world_memory.gd` 聚合每位玩家的实体、敌人轨迹与视野覆盖记忆；
+  `bot/observation/remembered_entity_existence_estimator.gd` 估计实体存在性。
+- `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量；
+  `bot/observation/enemy_attack_timing_observer.gd` 只拥有当前可见敌人的下一轮齐射与冲撞时间窗；
+  `bot/observation/visible_world_observer.gd` 观察当前敌方投射物及友方角色的碰撞形状。
+- 观察层只输出语义画像。它不读取规划结果，规划层也不读取观察层的场景节点或内部实现细节。
+
+### 运动、碰撞与生命
+
+- `bot/planning/movement_timing_model.gd` 唯一定义规划时域及其波次剩余时间裁剪；
+  `bot/planning/movement_geometry_model.gd` 统一派生共享空间尺度。
+- `bot/planning/motion/observed_motion_predictor.gd` 只负责纯观测运动外推；
+  `bot/planning/motion/enemy_motion_predictor.gd` 对稳定目标位置响应作自适应中点积分，并在不适用时改用
+  观测运动外推；`bot/planning/motion/projectile_motion_predictor.gd` 解析积分已形成的确定性弹道；
+  `bot/planning/motion/enemy_reach_envelope_model.gd` 派生敌人的最大位移和接触支撑半径。
+- `bot/planning/local_enemy_interaction_projector.gd` 结合敌人可达包络、压力作用范围与武器锁定距离，构造
+  动作预测的敌人空间粗筛。完整观察仍归导航与价值上下文所有。
+- `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、普通敌人与投射物的位置域碰撞证据、战斗支援
+  伤害与消耗、友方减压、治疗和挡弹时序；
+  `bot/planning/velocity_obstacle_collision_model.gd` 拥有投射物与队友 TTC，以及已知冲撞锁定走廊的速度
+  空间交会证据。
+- `bot/planning/health/collision_health_impact_model.gd` 合并位置域和速度空间证据，并按原版当前最短无敌帧
+  间隔换算预期生命损失与直接终止风险；
+  `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
+  `bot/planning/health/health_inventory_value_model.gd` 只负责即时生存缓冲、预计生命库存及其单位价值。
+- `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
+
+### 机会、规则与动作结果
+
+- `bot/planning/navigation_intent_planner.gd` 为尚未兑现的空间机会、地图信息和导航时域环境暴露形成导航
+  偏好；`bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆机会沿候选路径的价值，以及动态
+  敌人的同时间反事实价值差；`bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码
+  探索方向、巡逻路线或地图中心。
+- `bot/planning/weapons/weapon_attack_capacity_model.gd` 定义与目标无关的期望主路径攻击率、单次命中伤害和
+  生命偷取率；`bot/planning/weapon_outcome_field_model.gd` 把这些容量与可见目标投影为下一决策状态的局部
+  期望结果场。
+- `bot/planning/target_completion_allocation_model.gd` 分配共享攻击容量，并建立敌人击杀与树木摧毁完成
+  账本；`bot/planning/opportunity_pricing_model.gd` 换算材料、消耗品、树木和敌人移除机会的边际价值；
+  `bot/planning/consumable_drop_probability_model.gd` 把稳定掉落画像与当前幸运组合为消耗品及箱子概率；
+  `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
+- `bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何；
+  `bot/planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量；
+  `bot/planning/player_rule_projector.gd` 将规则归约为正交状态。这些模块都不能读取场景节点。
+- `bot/planning/movement_outcome_predictor.gd` 组合动作结果；`bot/planning/movement_utility_model.gd` 将结果换算
+  为效用。预测和评分是两个边界，选择器不拥有二者。
+
+### 计算预算与遥测
+
+- `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
+  边界公开帧预算上下文。
+- `bot/planning/planning_compute_budget_policy.gd` 把帧预算上下文转换成统一最终截止与连续预算压力，并维护
+  额外工作的耗时估计；`bot/planning/planning_search_fidelity_allocator.gd` 把预算压力和物理影响时间映射为
+  搜索保真度及额外工作额度，不拥有行为效用。
+- `bot/planning/projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；
+  `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止
+  策略仍归调用方。
+- `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；`MovementPlanner`
+  拥有规划结果及诊断语义，采样器只删除重复画像，不改变保留字段的语义值。
+
+## 组件角色命名
+
+目录表达依赖与所有权，文件后缀表达组件角色：
+
+| 后缀 | 稳定语义 | 入口动词 |
+| --- | --- | --- |
+| `Observer` | 读取当前合法状态并形成观察 | `observe` |
+| `Adapter` | 按来源或事件域把目标版本存储契约翻译成规范契约 | `adapt` |
+| `Compiler` | 分析运行时对象及其资源，把多个具体机制编译为正交规划语义 | `compile` |
+| `Profiler` | 融合稳定机制与局内证据形成画像 | `build_profile`、`accumulate_evidence` |
+| `Estimator` | 从既有观察估计不可直接测量的当前量 | `estimate` 或状态化 `update` |
+| `Predictor` | 沿时间或候选动作推演未来结果 | `predict` 或 `accumulate_outcome` |
+| `Projector` | 将同一组已知规则或状态映射到候选表示，不模拟世界演化 | `project` |
+| `Model` | 封装可复用的领域关系或评价规律 | 领域动词 |
+| `Generator` | 按已给空间与画像构造候选集合，不拥有评价或选择 | `generate`、`make_*` |
+| `Selector` | 从已评分候选中选择结果，不拥有预测或评分 | `select` |
+| `Planner` | 协调候选生成、预测、评价与选择，产出完整决策 | `plan` |
+| `Monitor` | 读取运行时监视值，维护平滑状态并公开上下文 | `observe_*`、`build_context` |
+| `Filter` | 按明确判据产生输入子集，并公开过滤诊断 | `filter` |
+| `Refiner` | 根据已评价候选提出更细的搜索候选，不拥有评价或停止策略 | `propose_*` |
+| `Allocator` | 把既有资源信号映射为某一计算维度的本轮额度，不拥有资源测量或行为价值 | `allocate` |
+| `Policy` | 根据资源上下文形成计算预算或其他可调策略 | 领域动词，或 `set_frame_budget_context`、`allocate`、`observe_*` |
+| `Telemetry` | 按既定采样政策持久化诊断记录，不参与被记录的决策 | `start`、`record_decision`、`close` |
+
+数据按产物命名，例如 `attack_model`、`rule_projection`、`behavior_profile` 和 `navigation_intent`；组件使用
+上表的角色后缀。这样可以区分投影结果与执行投影的 `Projector`，以及导航意图与生成它的
+`NavigationIntentPlanner`。
