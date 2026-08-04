@@ -195,13 +195,27 @@ func get_remembered_entities() -> Array:
 
 
 func get_planning_remembered_entities() -> Array:
-	return _materialize_remembered_entities(true)
+	# Confirmed-absent records remain part of the public historical observation
+	# contract, but cannot affect planning. Keeping them out of the hot snapshot
+	# prevents battle-long pickup history from growing every navigation query and
+	# telemetry sample without bound.
+	return _materialize_remembered_entities(true, true)
 
 
-func _materialize_remembered_entities(planning_view: bool) -> Array:
+func _materialize_remembered_entities(
+	planning_view: bool, omit_confirmed_absent: bool = false
+) -> Array:
 	var result := []
 	for memory_record_id in _remembered_entities:
 		var memory_record: Dictionary = _remembered_entities[memory_record_id]
+		if (
+			omit_confirmed_absent
+			and (
+				memory_record.get("absence_confirmed", false)
+				or memory_record.get("existence_confidence", 0.0) <= 0.0
+			)
+		):
+			continue
 		var seconds_since_seen: float = _elapsed_seconds - memory_record.last_seen_at_seconds
 		var confidence: float = memory_record.existence_confidence
 		var observation: Dictionary = memory_record.observation.duplicate(not planning_view)

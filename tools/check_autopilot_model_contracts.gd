@@ -1,9 +1,6 @@
 extends SceneTree
 
-# Executable mechanics contracts for the planning models whose errors are hard
-# to detect through script compilation alone. The mod archive is mounted at
-# runtime so this check exercises the same res:// paths as the game.
-
+# Executable mechanics contracts run against the same mounted archive as the game.
 var _failed := false
 
 
@@ -328,12 +325,13 @@ func _check_spatial_target_control() -> void:
 	)
 
 	observation.physics_frame = 5
-	observation.enemy_tracks = []
+	observation.enemy_tracks = [_enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)]
 	observation.remembered_entities = [
 		{
 			"memory_record_id": 1,
 			"kind": "tree",
 			"relative_position": Vector2(500.0, 0.0),
+			"visible": true,
 			"existence_confidence": 1.0,
 			"destructible_profile":
 			{
@@ -347,12 +345,16 @@ func _check_spatial_target_control() -> void:
 			},
 		}
 	]
-	context.target_completion_ledger = _completion_ledger({}, {1: 1.0})
+	context.enemy_removal_value_ledger = {"removal_value_by_track_id": {1: 0.0}}
+	context.target_completion_ledger = _completion_ledger({1: 1.0}, {1: 1.0})
 	spatial = spatial_script.new()
-	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(100.0, 0.0), 1.0)
+	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(450.0, 0.0), 1.0)
 	_expect(
 		tree_delta.tree_opportunity > 0.0,
-		"closing on a positive-value tree must retain a navigation gradient"
+		(
+			"entering a tree's nearest-target region must retain a navigation gradient "
+			+ "without assigning trees a fixed priority"
+		)
 	)
 
 
@@ -707,6 +709,14 @@ func _check_target_completion_allocation() -> void:
 	_expect(
 		ledger.competition_scale < 1.0,
 		"crowded completion forecasts must expose attack-capacity competition"
+	)
+	var full_health_likelihood: float = ledger.enemy_completion_likelihood_by_track_id[1]
+	first.last_measurement.health = {"current": 10.0, "maximum": 100.0, "ratio": 0.1}
+	observation.physics_frame += 1
+	ledger = allocation_model.allocate(observation)
+	_expect(
+		ledger.enemy_completion_likelihood_by_track_id[1] > full_health_likelihood,
+		"observed remaining health must reduce completion work for a damaged enemy"
 	)
 	observation.player_state.weapons = []
 	ledger = allocation_model.allocate(observation)

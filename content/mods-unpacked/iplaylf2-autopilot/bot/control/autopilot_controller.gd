@@ -1,7 +1,8 @@
 extends Node
 
-# Closes the observation -> planning -> movement-input loop. Planning runs at a
-# lower cadence than physics; the chosen movement remains active until replanning.
+# Closes the observation -> planning -> movement-input loop. Planning runs on a
+# single background thread at a lower cadence than physics; the chosen movement
+# remains active until a completed plan replaces it.
 
 const AutopilotMovementBehavior := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/control/autopilot_movement_behavior.gd"
@@ -27,6 +28,8 @@ var _current_plans: Array = []
 var _previous_movements: Array = []
 var _decision_telemetry: Reference = DecisionTelemetry.new()
 var _physics_frame_budget_monitor: Reference = PhysicsFrameBudgetMonitor.new()
+var _planning_thread: Thread = Thread.new()
+var _planning_in_flight := false
 var _seconds_until_replan := 0.0
 var _shut_down := false
 var _replan_interval_seconds := 0.0
@@ -54,17 +57,19 @@ func _physics_process(delta: float) -> void:
 
 	_physics_frame_budget_monitor.observe_physics_duration(delta)
 	_seconds_until_replan -= delta
-	if _seconds_until_replan > 0.0:
+	if _seconds_until_replan > 0.0 or _planning_in_flight:
 		return
 	_seconds_until_replan = _replan_interval_seconds
-	_replan_all_players()
-	_physics_frame_budget_monitor.mark_planning_completed()
+	_start_replan()
 
 
 func shutdown() -> void:
 	if _shut_down:
 		return
 	_shut_down = true
+	if _planning_in_flight:
+		_planning_thread.wait_to_finish()
+		_planning_in_flight = false
 	_decision_telemetry.close()
 	for player_index in _players.size():
 		var player: Node = _players[player_index]
@@ -88,21 +93,81 @@ func get_decision_sample_path() -> String:
 	return _decision_telemetry.get_current_path()
 
 
-func _replan_all_players() -> void:
+func _start_replan() -> void:
 	var scheduled_planner_count := 0
 	for player in _players:
 		if is_instance_valid(player) and not player.dead:
 			scheduled_planner_count += 1
+	if scheduled_planner_count <= 0:
+		return
 	var frame_budget_context: Dictionary = _physics_frame_budget_monitor.build_context(
 		scheduled_planner_count
 	)
+	var requests := []
 	for player_index in _players.size():
 		var player: Node = _players[player_index]
-		if not is_instance_valid(player):
+		if not is_instance_valid(player) or player.dead:
 			continue
 		_movement_planners[player_index].set_frame_budget_context(frame_budget_context)
 		var observation: Dictionary = _observation_service.get_planning_observation(player_index)
-		var plan: Dictionary = _movement_planners[player_index].plan(observation)
+		requests.push_back(
+			{
+				"player_index": player_index,
+				"observation": observation,
+				"planner": _movement_planners[player_index],
+			}
+		)
+	var start_error := _planning_thread.start(self, "_plan_in_background", requests)
+	if start_error == OK:
+		_planning_in_flight = true
+		return
+	# Thread creation failure is exceptional; preserve control availability with
+	# one synchronous fallback instead of silently leaving the actuator stale.
+	_apply_plan_results(_compute_plan_results(requests))
+
+
+func _plan_in_background(requests: Array) -> Array:
+	var results := _compute_plan_results(requests)
+	call_deferred("_receive_background_plan_results", results)
+	return []
+
+
+func _compute_plan_results(requests: Array) -> Array:
+	var results := []
+	for request in requests:
+		results.push_back(
+			{
+				"player_index": request.player_index,
+				"observation": request.observation,
+				"plan": request.planner.plan(request.observation),
+			}
+		)
+	return results
+
+
+func _receive_background_plan_results(results: Array) -> void:
+	if not _planning_in_flight:
+		return
+	_planning_thread.wait_to_finish()
+	_planning_in_flight = false
+	if _shut_down:
+		return
+	_apply_plan_results(results)
+
+
+func _apply_plan_results(results: Array) -> void:
+	for result in results:
+		var player_index: int = result.player_index
+		var player: Node = _players[player_index]
+		if not is_instance_valid(player) or player.dead:
+			continue
+		var observation: Dictionary = result.observation
+		var plan: Dictionary = result.plan
+		var compute_budget: Dictionary = plan.get("compute_budget", {})
+		if compute_budget.has("planning_started_usec"):
+			compute_budget.planning_turnaround_usec = max(
+				0, OS.get_ticks_usec() - int(compute_budget.planning_started_usec)
+			)
 		_current_plans[player_index] = plan
 		_decision_telemetry.record_decision(
 			player_index,

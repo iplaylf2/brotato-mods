@@ -7,8 +7,12 @@ extends Reference
 const WeaponAttackCapacityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
 )
+const EnemyHealthModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/enemy_health_model.gd"
+)
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
+var _enemy_health_model: Reference = EnemyHealthModel.new()
 
 
 func allocate(observation: Dictionary) -> Dictionary:
@@ -28,7 +32,7 @@ func allocate(observation: Dictionary) -> Dictionary:
 	var entries := []
 	if mean_damage_per_primary_hit > 0.0:
 		for track in observation.enemy_tracks:
-			var health: float = track.behavior_profile.durability.maximum_health
+			var health: float = _enemy_health_model.remaining_health(track)
 			var required_hits := health / mean_damage_per_primary_hit
 			entries.push_back(
 				{

@@ -8,7 +8,7 @@ const MOD_ID := "iplaylf2-autopilot"
 const SAMPLE_DIRECTORY := "user://logs/mods/iplaylf2-autopilot"
 const SAMPLE_INTERVAL_SECONDS := 1.0
 const MAX_FILE_BYTES := 32 * 1024 * 1024
-const FLUSH_EVERY_SAMPLES := 4
+const FLUSH_EVERY_SAMPLES := 16
 
 var _file: File = null
 var _session_id := ""
@@ -182,6 +182,7 @@ func _compact_observation(observation: Dictionary) -> Dictionary:
 	for observed_track in result.get("enemy_tracks", []):
 		var track: Dictionary = observed_track.duplicate(false)
 		track.erase("behavior_evidence")
+		track.behavior_profile = _compact_behavior_profile(track.get("behavior_profile", {}))
 		var measurement: Dictionary = track.get("last_measurement", {}).duplicate(false)
 		measurement.erase("stable_mechanic_profile")
 		measurement.erase("next_volley_window")
@@ -189,6 +190,36 @@ func _compact_observation(observation: Dictionary) -> Dictionary:
 		tracks.push_back(track)
 	result.enemy_tracks = tracks
 	return result
+
+
+func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
+	# The full stable mechanic graph is identical across many samples and is not
+	# needed to calibrate target completion, path risk, or observed health.
+	# Persist the causal scalars that explain those ledgers instead of repeatedly
+	# serializing attack configuration and rule evidence on the main thread.
+	var projectile_attack: Dictionary = profile.get("projectile_attack", {})
+	var charge_attack: Dictionary = profile.get("charge_attack", {})
+	return {
+		"durability": profile.get("durability", {}).duplicate(true),
+		"contact_damage": profile.get("contact_damage", 0.0),
+		"contact_radius": profile.get("contact_radius", 0.0),
+		"kill_rewards": profile.get("kill_rewards", {}).duplicate(true),
+		"projectile_attack":
+		{
+			"kind": projectile_attack.get("kind", "unconfirmed"),
+			"confidence": projectile_attack.get("confidence", 0.0),
+			"creates_projectile_pressure":
+			projectile_attack.get("creates_projectile_pressure", false),
+			"pressure_intensity": projectile_attack.get("pressure_intensity", 0.0),
+		},
+		"charge_attack":
+		{
+			"active": charge_attack.get("active", false),
+			"confidence": charge_attack.get("confidence", 0.0),
+		},
+		"battlefield_effects": profile.get("battlefield_effects", {}).duplicate(true),
+		"removal_effects": profile.get("removal_effects", {}).duplicate(true),
+	}
 
 
 func _compact_plan(plan: Dictionary) -> Dictionary:

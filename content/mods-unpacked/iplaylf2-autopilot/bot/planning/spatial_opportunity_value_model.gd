@@ -17,11 +17,15 @@ const MovementGeometryModel := preload(
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
+const AutomaticTargetSelectionFieldModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/automatic_target_selection_field_model.gd"
+)
 
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
+var _target_selection_field: Reference = AutomaticTargetSelectionFieldModel.new()
 var _prepared_physics_frame := -1
 var _prepared_geometry := {}
 var _prepared_maximum_targeting_distance := 0.0
@@ -32,10 +36,14 @@ var _prepared_candidate_entries := []
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_enemy_motion_predictor = predictor
+	_target_selection_field.set_enemy_motion_predictor(predictor)
 
 
 func _evaluate_route(
-	observation: Dictionary, context: Dictionary, player_displacement: Vector2, time: float
+	observation: Dictionary,
+	context: Dictionary,
+	player_displacement: Vector2,
+	forecast_seconds: float
 ) -> Dictionary:
 	_prepare_inputs(observation, context)
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
@@ -47,10 +55,19 @@ func _evaluate_route(
 		"total": 0.0,
 	}
 	var reach_distance: float = _prepared_geometry.opportunity_reach_distance
+	var selection_likelihoods: Dictionary = _target_selection_field.selection_likelihood_by_target(
+		observation,
+		player_displacement,
+		forecast_seconds,
+		_prepared_maximum_targeting_distance,
+		_prepared_geometry.control_distance
+	)
 	for entry in _prepared_entities:
 		var entity: Dictionary = entry.entity
 		var gap: float = _route_interaction_gap(observation, entity, player_displacement)
 		var accessibility: float = _accessibility(gap, reach_distance)
+		if entity.kind == "tree" and entity.get("visible", false):
+			accessibility *= selection_likelihoods.get(entry.target_key, 0.0)
 		var contribution: float = entry.value * accessibility
 		match entity.kind:
 			"material":
@@ -60,9 +77,17 @@ func _evaluate_route(
 			"tree":
 				result.tree_opportunity += contribution
 	for entry in _prepared_enemies:
+		var track: Dictionary = entry.track
+		# Outside the current lock range, the route accessibility below owns the
+		# approach gradient. Once the target enters lock range, nearest-target
+		# competition determines whether automatic weapons can select that target.
+		var selection_likelihood: float = selection_likelihoods.get(entry.target_key, 1.0)
 		result.enemy_opportunity += (
 			entry.value
-			* _enemy_route_accessibility(entry.track, player_displacement, time, reach_distance)
+			* _enemy_route_accessibility(
+				track, player_displacement, forecast_seconds, reach_distance
+			)
+			* selection_likelihood
 		)
 	result.total = (
 		result.material_opportunity
@@ -77,13 +102,15 @@ func value_delta(
 	observation: Dictionary,
 	context: Dictionary,
 	player_displacement: Vector2,
-	time: float,
+	forecast_seconds: float,
 	stationary := {}
 ) -> Dictionary:
 	_prepare_inputs(observation, context)
 	if stationary.empty():
-		stationary = _evaluate_route(observation, context, Vector2.ZERO, time)
-	var candidate: Dictionary = _evaluate_route(observation, context, player_displacement, time)
+		stationary = _evaluate_route(observation, context, Vector2.ZERO, forecast_seconds)
+	var candidate: Dictionary = _evaluate_route(
+		observation, context, player_displacement, forecast_seconds
+	)
 	return {
 		"material_opportunity": candidate.material_opportunity - stationary.material_opportunity,
 		"recovery_opportunity": candidate.recovery_opportunity - stationary.recovery_opportunity,
@@ -93,9 +120,11 @@ func value_delta(
 	}
 
 
-func stationary_value(observation: Dictionary, context: Dictionary, time: float) -> Dictionary:
+func stationary_value(
+	observation: Dictionary, context: Dictionary, forecast_seconds: float
+) -> Dictionary:
 	_prepare_inputs(observation, context)
-	return _evaluate_route(observation, context, Vector2.ZERO, time)
+	return _evaluate_route(observation, context, Vector2.ZERO, forecast_seconds)
 
 
 func candidate_directions(observation: Dictionary, context: Dictionary) -> Array:
@@ -139,7 +168,11 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		)
 		if value <= 0.0:
 			continue
-		var entity_entry := {"entity": entity, "value": value}
+		var entity_entry := {
+			"entity": entity,
+			"value": value,
+			"target_key": "tree:%s" % entity.memory_record_id if entity.kind == "tree" else "",
+		}
 		_prepared_entities.push_back(entity_entry)
 		var gap: float = _entity_interaction_gap(observation, entity, Vector2.ZERO)
 		_prepared_candidate_entries.push_back(
@@ -157,7 +190,11 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 				completion_ledger, track
 			)
 		)
-		var enemy_entry := {"track": track, "value": value}
+		var enemy_entry := {
+			"track": track,
+			"value": value,
+			"target_key": "enemy:%s" % track.track_id,
+		}
 		_prepared_enemies.push_back(enemy_entry)
 		if value <= 0.0:
 			continue
@@ -173,24 +210,24 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 
 
 func _enemy_route_accessibility(
-	track: Dictionary, player_displacement: Vector2, time: float, reach_distance: float
+	track: Dictionary, player_displacement: Vector2, forecast_seconds: float, reach_distance: float
 ) -> float:
 	var initial_accessibility := _enemy_accessibility(
 		track.relative_position, Vector2.ZERO, reach_distance
 	)
-	if time <= 0.0:
+	if forecast_seconds <= 0.0:
 		return initial_accessibility
 	# Simpson integration values earlier access to an automatic attack window
 	# without constructing a shot schedule or a pursue/retreat mode. This avoids
 	# treating "the enemy eventually walks into range" as equivalent to a
 	# candidate that creates useful firing time sooner.
-	var midpoint_time := time * 0.5
+	var midpoint_time := forecast_seconds * 0.5
 	var midpoint_player_position := player_displacement * 0.5
 	var midpoint_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
 		track, midpoint_time, midpoint_player_position
 	)
 	var terminal_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
-		track, time, player_displacement
+		track, forecast_seconds, player_displacement
 	)
 	var midpoint_accessibility := _enemy_accessibility(
 		midpoint_enemy_position, midpoint_player_position, reach_distance

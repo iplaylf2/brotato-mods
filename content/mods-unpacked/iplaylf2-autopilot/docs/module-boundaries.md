@@ -10,9 +10,9 @@
 | --- | --- | --- |
 | `mod_main.gd` | 安装主场景扩展，接入 Mod Loader 配置并发布启用状态 | `is_enabled()` 与 `enabled_changed`；不创建战斗期观察或规划对象 |
 | `extensions/main.gd` | 作为组合根响应玩家生成、启用切换和房间清理，按顺序创建或停止观察服务与控制器 | 主场景上的 `autopilot_observation_service` 与 `autopilot_controller` 只提供诊断入口；不承载观察或规划语义 |
-| `bot/control` | 安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.initialize()`、`shutdown()` 和计划诊断入口；`AutopilotMovementBehavior` 是唯一控制输出 |
+| `bot/control` | 截取不可变规划快照、在单一后台线程安排重规划、估计规划帧预算、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.initialize()`、`shutdown()` 和计划诊断入口；`AutopilotMovementBehavior` 是唯一控制输出 |
 | `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价及最大效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
-| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 提供同步只读规划视图 |
+| `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 截取不含场景节点的只读规划快照 |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
 
 依赖从组合根向领域边界单向展开：`mod_main.gd → extensions/main.gd`，主场景扩展再依赖 `control` 与
@@ -63,7 +63,8 @@
   `bot/observation/remembered_entity_existence_estimator.gd` 估计实体存在性。
 - `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量；
   `bot/observation/enemy_attack_timing_observer.gd` 只拥有当前可见敌人的下一轮齐射与冲撞时间窗；
-  `bot/observation/visible_world_observer.gd` 观察当前敌方投射物及友方角色的碰撞形状。
+  `bot/observation/visible_world_observer.gd` 从原版统一敌人域观察普通敌人、精英与 Boss，并读取可见敌人的
+  当前生命，以及当前敌方投射物和友方角色的碰撞形状。
 - 观察层只输出语义画像。它不读取规划结果，规划层也不读取观察层的场景节点或内部实现细节。
 
 ### 运动、碰撞与生命
@@ -90,13 +91,15 @@
 
 - `bot/planning/navigation_intent_planner.gd` 为尚未兑现的空间机会、地图信息和导航时域环境暴露形成导航
   偏好；`bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆机会沿候选路径的价值，以及动态
-  敌人的同时间反事实价值差；`bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码
-  探索方向、巡逻路线或地图中心。
+  敌人的同时间反事实价值差；`bot/planning/automatic_target_selection_field_model.gd` 把原版最近目标规则
+  投影为敌人与树木共用的连续空间选择场；`bot/planning/map_information_value_model.gd` 计算新观察与
+  再观察价值，不编码探索方向、巡逻路线或地图中心。
 - `bot/planning/weapons/weapon_attack_capacity_model.gd` 定义与目标无关的期望主路径攻击率、单次命中伤害和
   生命偷取率；`bot/planning/weapon_outcome_field_model.gd` 把这些容量与可见目标投影为下一决策状态的局部
   期望结果场。
 - `bot/planning/target_completion_allocation_model.gd` 分配共享攻击容量，并建立敌人击杀与树木摧毁完成
-  账本；`bot/planning/opportunity_pricing_model.gd` 换算材料、消耗品、树木和敌人移除机会的边际价值；
+  账本；`bot/planning/enemy_health_model.gd` 统一把敌人最后可见生命测量与稳定最大生命先验解析为剩余
+  生命；`bot/planning/opportunity_pricing_model.gd` 换算材料、消耗品、树木和敌人移除机会的边际价值；
   `bot/planning/consumable_drop_probability_model.gd` 把稳定掉落画像与当前幸运组合为消耗品及箱子概率；
   `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
 - `bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何；
@@ -111,15 +114,17 @@
 ### 计算预算与遥测
 
 - `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视、基线物理耗时与耗时偏差估计，向规划
-  边界公开帧预算上下文。
+  边界公开帧预算上下文；`bot/control/autopilot_controller.gd` 独占后台线程生命周期和结果交接，规划器
+  不访问场景节点或可变观察状态。
 - `bot/planning/planning_compute_budget_policy.gd` 把帧预算上下文转换成统一最终截止与连续预算压力，并维护
-  额外工作的耗时估计；`bot/planning/planning_search_fidelity_allocator.gd` 把预算压力和物理影响时间映射为
-  搜索保真度及额外工作额度，不拥有行为效用。
+  额外工作的耗时估计；`bot/planning/planning_search_fidelity_allocator.gd` 把预算压力映射为搜索保真度及
+  额外工作额度，不拥有行为效用。
 - `bot/planning/projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止
   策略仍归调用方。
 - `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；`MovementPlanner`
-  拥有规划结果及诊断语义，采样器只删除重复画像，不改变保留字段的语义值。
+  拥有规划结果及诊断语义。采样器删除重复机制画像并降低同步刷新频率；规划视图省略已确认不存在的永久
+  历史记录，公共观察仍保留它们。两项优化都不改变规划所消费的当前机会或保留字段的语义值。
 
 ## 组件角色命名
 

@@ -17,6 +17,12 @@ const MovementGeometryModel := preload(
 const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
+const TargetCompletionAllocationModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
+)
+const EnemyHealthModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/enemy_health_model.gd"
+)
 
 const RANGED_SOURCE_PRESSURE_DISTANCE := 650.0
 
@@ -24,6 +30,8 @@ var _observed_motion_predictor: Reference = ObservedMotionPredictor.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
+var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
+var _enemy_health_model: Reference = EnemyHealthModel.new()
 var _initial_pressure_physics_frame := -1
 var _initial_environmental_pressure := 0.0
 var _shared_input_physics_frame := -1
@@ -422,7 +430,7 @@ func _single_use_damage(
 		if (enemy_position - source_position).length() > blast_radius:
 			continue
 		result += (
-			min(damage, max(1.0, float(track.behavior_profile.durability.maximum_health)))
+			min(damage, _enemy_health_model.remaining_health(track))
 			* track.recency_confidence
 		)
 	return result * source.get("existence_confidence", 1.0)

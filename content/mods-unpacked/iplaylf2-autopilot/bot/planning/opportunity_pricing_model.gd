@@ -20,10 +20,18 @@ const StatOpportunityPricingModel := preload(
 const ConsumableDropProbabilityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
 )
+const TargetCompletionAllocationModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
+)
+const EnemyHealthModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/enemy_health_model.gd"
+)
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_pricing_model: Reference = StatOpportunityPricingModel.new()
 var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
+var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
+var _enemy_health_model: Reference = EnemyHealthModel.new()
 
 
 func material_unit_collection_value(observation: Dictionary) -> float:
@@ -122,10 +130,7 @@ func build_enemy_removal_value_ledger(
 		)
 		values[track.track_id] = value
 		mean_absolute_removal_value += abs(value)
-		mean_removal_value_per_enemy_health += (
-			value
-			/ max(1.0, track.behavior_profile.durability.maximum_health)
-		)
+		mean_removal_value_per_enemy_health += (value / _enemy_health_model.remaining_health(track))
 	return {
 		"removal_value_by_track_id": values,
 		"mean_removal_value_per_enemy_health": mean_removal_value_per_enemy_health / tracks.size(),

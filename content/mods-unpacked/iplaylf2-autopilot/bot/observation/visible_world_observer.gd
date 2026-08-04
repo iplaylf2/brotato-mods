@@ -104,7 +104,10 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 
 func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 	var observations := []
-	for enemy in _main._entity_spawner.enemies:
+	# Vanilla stores bosses separately from ordinary enemies. Its public spawner
+	# query merges both domains and is also the collection used by weapon target
+	# behaviors; observing only `enemies` made bosses absent from every bot model.
+	for enemy in _main._entity_spawner.get_all_enemies():
 		if not _is_node_visible(enemy, visible_rect):
 			continue
 		var relative_position: Vector2 = enemy.global_position - player.global_position
@@ -120,6 +123,11 @@ func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 				"features":
 				{
 					"visual_radius": _get_visual_radius(enemy),
+					# This is mutable battle state, so it belongs to the visible
+					# measurement rather than the stable mechanic compiler. Vanilla can
+					# render enemy life bars; once the enemy leaves the viewport, memory
+					# retains only this last legally observed value.
+					"health": _observe_health(enemy),
 					"stable_mechanic_profile": _enemy_mechanic_compiler.compile(enemy),
 					"next_volley_window":
 					_enemy_attack_timing_observer.observe_projectile_volley_window(enemy),
@@ -130,6 +138,20 @@ func _observe_enemies(player: Node2D, visible_rect: Rect2) -> Array:
 			}
 		)
 	return observations
+
+
+func _observe_health(enemy: Node) -> Dictionary:
+	var maximum_health := 1.0
+	var current_health := 1.0
+	if "max_stats" in enemy and enemy.max_stats != null and "health" in enemy.max_stats:
+		maximum_health = max(1.0, float(enemy.max_stats.health))
+	if "current_stats" in enemy and enemy.current_stats != null and "health" in enemy.current_stats:
+		current_health = clamp(float(enemy.current_stats.health), 0.0, maximum_health)
+	return {
+		"current": current_health,
+		"maximum": maximum_health,
+		"ratio": current_health / maximum_health,
+	}
 
 
 func _observe_enemy_projectiles(origin: Vector2, visible_rect: Rect2, enemies: Array) -> Array:

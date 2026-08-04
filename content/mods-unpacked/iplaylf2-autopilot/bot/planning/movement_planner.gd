@@ -84,7 +84,7 @@ func plan(observation: Dictionary) -> Dictionary:
 	context.control_interval_seconds = timing.control_interval_seconds
 	var compute_budget: Dictionary = _compute_budget_policy.allocate(planning_started_usec)
 	var search_fidelity: Dictionary = _search_fidelity_allocator.allocate(
-		planning_observation, compute_budget
+		compute_budget, int(context.geometry.direction_count)
 	)
 	phase_duration_usec.observation_preparation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()

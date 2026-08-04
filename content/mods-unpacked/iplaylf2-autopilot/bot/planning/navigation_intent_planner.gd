@@ -55,7 +55,7 @@ func plan(
 		observation, context
 	)
 	var baseline_directions: Array = _baseline_directions(
-		baseline_direction_count, opportunity_directions
+		baseline_direction_count, opportunity_directions, observation.get("physics_frame", 0)
 	)
 	# The value field's highest reachable opportunity bound is part of the semantic
 	# baseline, not optional search refinement. Otherwise frame pressure removes
@@ -284,17 +284,28 @@ func _evaluate_position(
 	}
 
 
-func _uniform_directions(direction_count: int) -> Array:
+func _uniform_directions(direction_count: int, phase_index: int) -> Array:
 	var result := []
+	# A golden-ratio phase forms a low-discrepancy sequence across replans. At
+	# minimum fidelity this avoids turning the retained opposite pair into a
+	# permanent horizontal/vertical policy while keeping each individual lattice
+	# exactly balanced.
+	var phase := (
+		TAU * fposmod(float(phase_index) * 0.61803398875, 1.0)
+		if direction_count <= 2
+		else 0.0
+	)
 	for direction_index in direction_count:
 		result.push_back(
-			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))
+			Vector2.RIGHT.rotated(phase + TAU * float(direction_index) / float(direction_count))
 		)
 	return result
 
 
-func _baseline_directions(direction_count: int, opportunity_directions: Array) -> Array:
-	var result: Array = _uniform_directions(direction_count)
+func _baseline_directions(
+	direction_count: int, opportunity_directions: Array, phase_index: int
+) -> Array:
+	var result: Array = _uniform_directions(direction_count, phase_index)
 	if opportunity_directions.empty():
 		return result
 	var opportunity_direction: Vector2 = opportunity_directions[0].direction

@@ -13,6 +13,12 @@ const PlayerMovementStateProjector := preload(
 const OpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
+const TargetCompletionAllocationModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
+)
+const EnemyHealthModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/enemy_health_model.gd"
+)
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
@@ -33,6 +39,8 @@ const OUTCOME_FIELDS := [
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
+var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
+var _enemy_health_model: Reference = EnemyHealthModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _prepared_physics_frame := -1
@@ -96,6 +104,7 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 		var maximum_health: float = max(
 			1.0, float(track.behavior_profile.durability.maximum_health)
 		)
+		var remaining_health: float = _enemy_health_model.remaining_health(track)
 		var removal_value: float = _opportunity_pricing_model.enemy_removal_value(
 			removal_value_ledger, track
 		)
@@ -106,11 +115,12 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 				"radius": track.last_measurement.visual_radius,
 				"confidence": track.recency_confidence,
 				"maximum_health": maximum_health,
-				"removal_value_per_health": removal_value / maximum_health,
+				"remaining_health": remaining_health,
+				"removal_value_per_health": removal_value / remaining_health,
 			}
 		)
 		visible_enemy_count += 1.0
-		total_enemy_health += maximum_health
+		total_enemy_health += remaining_health
 		positive_removal_value += max(0.0, removal_value)
 		negative_removal_value += min(0.0, removal_value)
 	var total_tree_harvest_value := 0.0
@@ -377,11 +387,12 @@ func _accumulate_weapon_outcome(
 		* coverage.mean_removal_value_per_health
 	)
 	outcome.expected_kill_weight += min(
-		coverage.covered_enemy_mass, enemy_damage / max(1.0, coverage.mean_enemy_maximum_health)
+		coverage.covered_enemy_mass, enemy_damage / max(1.0, coverage.mean_enemy_remaining_health)
 	)
 	outcome.expected_critical_kill_weight += (
 		min(
-			coverage.covered_enemy_mass, enemy_damage / max(1.0, coverage.mean_enemy_maximum_health)
+			coverage.covered_enemy_mass,
+			enemy_damage / max(1.0, coverage.mean_enemy_remaining_health)
 		)
 		* clamp(attack_model.impact.critical_chance, 0.0, 1.0)
 	)
@@ -410,6 +421,7 @@ func _summarize_target_coverage(
 	var covered_target_mass := 0.0
 	var weighted_removal_value_per_health := 0.0
 	var weighted_enemy_maximum_health := 0.0
+	var weighted_enemy_remaining_health := 0.0
 	var weighted_tree_harvest_value_per_hit := 0.0
 	var covered_samples := []
 	for sample in target_samples:
@@ -446,6 +458,7 @@ func _summarize_target_coverage(
 				* target.removal_value_per_health
 			)
 			weighted_enemy_maximum_health += selection_weight * target.maximum_health
+			weighted_enemy_remaining_health += selection_weight * target.remaining_health
 		else:
 			tree_selection_weight += selection_weight
 			weighted_tree_harvest_value_per_hit += (
@@ -469,6 +482,8 @@ func _summarize_target_coverage(
 		weighted_removal_value_per_health / max(0.0001, enemy_selection_weight),
 		"mean_enemy_maximum_health":
 		weighted_enemy_maximum_health / max(0.0001, enemy_selection_weight),
+		"mean_enemy_remaining_health":
+		weighted_enemy_remaining_health / max(0.0001, enemy_selection_weight),
 		"mean_tree_harvest_value_per_hit":
 		weighted_tree_harvest_value_per_hit / max(0.0001, tree_selection_weight),
 	}

@@ -1,6 +1,6 @@
 extends Reference
 
-# Collects the physics-frame timing inputs used to budget synchronous movement
+# Collects the physics-frame timing inputs used to budget background movement
 # planning. Godot owns the raw monitor; this object owns sampling, smoothing,
 # and the context contract passed across the control -> planning boundary.
 
@@ -10,7 +10,6 @@ var _physics_duration_deviation_seconds_ema := 0.0
 var _has_frame_time_sample := false
 var _last_observed_idle_frame := -1
 var _last_observed_physics_frame := -1
-var _exclude_through_idle_frame := -1
 
 
 func observe_physics_duration(delta_seconds: float) -> void:
@@ -27,11 +26,6 @@ func observe_physics_duration(delta_seconds: float) -> void:
 		completed_physics_ticks = physics_frame - _last_observed_physics_frame
 	_last_observed_physics_frame = physics_frame
 	if completed_physics_ticks <= 0:
-		return
-	# A plan executed before the next rendered frame is part of that frame's
-	# physics monitor. Excluding the corresponding monitor generation prevents the
-	# planner from being learned as immutable base-game cost.
-	if idle_frame <= _exclude_through_idle_frame:
 		return
 	# Godot reports the physics time accumulated by one rendered frame. A slow
 	# rendered frame can contain several catch-up physics ticks, while the planning
@@ -57,12 +51,6 @@ func observe_physics_duration(delta_seconds: float) -> void:
 	)
 	_physics_duration_deviation_seconds_ema = lerp(
 		_physics_duration_deviation_seconds_ema, absolute_deviation, sample_weight
-	)
-
-
-func mark_planning_completed() -> void:
-	_exclude_through_idle_frame = max(
-		_exclude_through_idle_frame, int(Engine.get_idle_frames()) + 1
 	)
 
 
