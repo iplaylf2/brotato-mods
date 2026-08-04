@@ -46,7 +46,7 @@ func material_collection_value(observation: Dictionary, material: Dictionary) ->
 func tree_destruction_value(
 	observation: Dictionary, tree: Dictionary, health_inventory_value: Dictionary
 ) -> float:
-	var rewards: Dictionary = tree.get("destructible_profile", {}).get("kill_rewards", {})
+	var rewards: Dictionary = tree.destructible_profile.kill_rewards
 	var kill_value := kill_reward_value(observation, rewards)
 	# Tree materials are still wave pickups, so their timing value must use the
 	# same price as already visible materials. A tree's base consumable chance is

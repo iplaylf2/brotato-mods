@@ -1,12 +1,16 @@
 extends Reference
 
-# Compiles stable destruction effort and reward inputs after a neutral becomes
-# visible. Planning owns the state-dependent valuation of these raw mechanics.
+# Compiles a visible neutral's stable completion mechanics and reward inputs.
+# Planning owns the state-dependent valuation of these raw mechanics.
 
 
 func compile(neutral: Node) -> Dictionary:
 	var result := {
-		"destruction": {"required_hits": 1.0},
+		"destruction":
+		{
+			"hit_limit": 1.0,
+			"maximum_health": max(1.0, float(neutral.max_stats.health)),
+		},
 		"kill_rewards":
 		{
 			"base_materials": 0.0,
@@ -16,7 +20,7 @@ func compile(neutral: Node) -> Dictionary:
 		},
 	}
 	if "number_of_hits_before_dying" in neutral:
-		result.destruction.required_hits = max(1.0, float(neutral.number_of_hits_before_dying))
+		result.destruction.hit_limit = max(1.0, float(neutral.number_of_hits_before_dying))
 	if not "stats" in neutral or neutral.stats == null:
 		return result
 	var stats: Resource = neutral.stats

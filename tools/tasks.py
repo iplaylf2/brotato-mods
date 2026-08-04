@@ -28,6 +28,12 @@ AUTOPILOT_PLANNING_WORKER_CHECKS = (
 )
 EXPECTED_GODOT_VERSION = (3, 7, "dev")
 IMPORTED_RESOURCE_PATTERN = re.compile(r'res://(\.import/[^"\r\n]+)')
+AUTOPILOT_SCRIPT_ERROR_PATTERN = re.compile(
+    r"SCRIPT ERROR:[^\n]*\n\s+at: [^\n]*(?:"
+    r"res://mods-unpacked/iplaylf2-autopilot/|"
+    r"/tools/(?:check_autopilot|autopilot_model_contract_fixtures)"
+    r")"
+)
 
 
 def run(
@@ -92,6 +98,11 @@ def run_godot_script(
     if "SCRIPT ERROR: Parse Error:" in result.stdout:
         relative_script = script.relative_to(REPOSITORY)
         raise SystemExit(f"error: Godot could not parse {relative_script}")
+    if AUTOPILOT_SCRIPT_ERROR_PATTERN.search(result.stdout):
+        relative_script = script.relative_to(REPOSITORY)
+        raise SystemExit(
+            f"error: {relative_script} reported an autopilot runtime error"
+        )
 
 
 def validate_manifest(mod_directory: Path) -> None:

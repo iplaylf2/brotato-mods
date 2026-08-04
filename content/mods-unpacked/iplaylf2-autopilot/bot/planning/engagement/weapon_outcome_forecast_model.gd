@@ -2,7 +2,7 @@ extends Reference
 
 # Forecasts action-conditioned weapon outcomes along each retained movement path.
 # This model owns target coverage, nearest-target selection, and hit attribution by
-# target kind. It does not roll out individual attacks, projectiles, contacts,
+# completion mechanism. It does not roll out individual attacks, projectiles, contacts,
 # redirects, or triggered event chains.
 
 const WeaponAttackCapacityModel := preload(
@@ -11,14 +11,11 @@ const WeaponAttackCapacityModel := preload(
 const PlayerMovementStateProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
 )
-const OpportunityPricingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
-)
-const EnemyCompletionValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/enemy_completion_value_model.gd"
-)
-const EnemyHealthModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/enemy_health_model.gd"
+const EngagementTargetProjector := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "engagement_target_projector.gd"
+	)
 )
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
@@ -27,12 +24,6 @@ const WeaponOutcomeConservationModel := preload(
 	(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
 		+ "weapon_outcome_conservation_model.gd"
-	)
-)
-const NeutralDestructionWorkModel := preload(
-	(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
-		+ "neutral_destruction_work_model.gd"
 	)
 )
 const OUTCOME_FIELDS := [
@@ -51,12 +42,9 @@ const OUTCOME_FIELDS := [
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
-var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
-var _enemy_completion_value_model: Reference = EnemyCompletionValueModel.new()
-var _enemy_health_model: Reference = EnemyHealthModel.new()
+var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _weapon_outcome_conservation_model: Reference = WeaponOutcomeConservationModel.new()
-var _neutral_destruction_work_model: Reference = NeutralDestructionWorkModel.new()
 var _prepared_physics_frame := -1
 var _prepared_targets := []
 var _prepared_target_capacity := {}
@@ -112,52 +100,18 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 	_prepared_attack_models = {}
 	var enemy_health_capacity := 0.0
 	var enemy_count_capacity := 0.0
-	var completion_value_ledger: Dictionary = planning_context.enemy_completion_value_ledger
-	for track in observation.enemy_tracks:
-		if not track.visible:
-			continue
-		var maximum_health: float = max(
-			1.0, float(track.behavior_profile.durability.maximum_health)
-		)
-		var remaining_health: float = _enemy_health_model.remaining_health(track)
-		var completion_value: Dictionary = _enemy_completion_value_model.entry(
-			completion_value_ledger, track
-		)
-		_prepared_targets.push_back(
-			{
-				"kind": "enemy",
-				"track": track,
-				"radius": track.last_measurement.visual_radius,
-				"confidence": track.recency_confidence,
-				"maximum_health": maximum_health,
-				"remaining_health": remaining_health,
-				"reward_delta_value": completion_value.reward_delta_value,
-				"burden_relief_value": completion_value.burden_relief_value,
-				"death_consequence_value": completion_value.death_consequence_value,
-				"net_completion_value": completion_value.net_completion_value,
-			}
-		)
-		enemy_count_capacity += 1.0
-		enemy_health_capacity += remaining_health
 	var tree_harvest_value_capacity := 0.0
-	for tree in observation.visible_world.trees:
-		var remaining_hits: float = _neutral_destruction_work_model.remaining_hits(tree)
-		if remaining_hits <= 0.0:
+	for target in _engagement_target_projector.project_visible_targets(
+		observation, planning_context
+	):
+		if target.completion.completed:
 			continue
-		var harvest_value: float = _opportunity_pricing_model.tree_destruction_value(
-			observation, tree, planning_context.state_factors.health_inventory_value
-		)
-		_prepared_targets.push_back(
-			{
-				"kind": "tree",
-				"tree": tree,
-				"radius": tree.get("visual_radius", 0.0),
-				"confidence": 1.0,
-				"remaining_hits": remaining_hits,
-				"harvest_value": harvest_value,
-			}
-		)
-		tree_harvest_value_capacity += harvest_value
+		_prepared_targets.push_back(target)
+		if target.weapon_response.hit_limit_progress_per_hit <= 0.0:
+			enemy_count_capacity += 1.0
+			enemy_health_capacity += target.completion.health.remaining
+		else:
+			tree_harvest_value_capacity += target.value.net_completion_value
 	_prepared_target_capacity = {
 		"enemy_health": enemy_health_capacity,
 		"enemy_count": enemy_count_capacity,
@@ -253,13 +207,9 @@ func _sample_targets(observation: Dictionary, player_displacement: Vector2, time
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := []
 	for target in _prepared_targets:
-		var position: Vector2
-		if target.kind == "enemy":
-			position = _enemy_motion_predictor.predict_position(
-				target.track, time, player_displacement
-			)
-		else:
-			position = target.tree.relative_position
+		var position: Vector2 = _enemy_motion_predictor.predict_position(
+			target.motion_track, time, player_displacement
+		)
 		var relative_position: Vector2 = position - player_displacement
 		result.push_back(
 			{
@@ -301,6 +251,7 @@ func _accumulate_weapon_outcome(
 	)
 	var enemy_hits: float = expected_attack_count * target_hits.enemy * coverage.target_availability
 	var tree_hits: float = expected_attack_count * target_hits.tree * coverage.target_availability
+	var tree_damage: float = expected_damage * tree_hits / max(0.0001, expected_hits)
 	var enemy_damage: float = expected_damage * enemy_hits / max(0.0001, expected_hits)
 	outcome.expected_attack_hits += expected_hits
 	outcome.expected_enemy_hits += enemy_hits
@@ -308,9 +259,12 @@ func _accumulate_weapon_outcome(
 	_weapon_outcome_conservation_model.accumulate_enemy_completion(
 		outcome, coverage, enemy_hits, enemy_damage, attack_model.impact.critical_chance
 	)
-	outcome.expected_tree_completion_value += (tree_hits * coverage.mean_tree_harvest_value_per_hit)
+	outcome.expected_tree_completion_value += (max(
+		tree_hits * coverage.mean_tree_completion_value_per_hit,
+		tree_damage * coverage.mean_tree_completion_value_per_damage
+	))
 	outcome.expected_lifesteal_recovery += (
-		enemy_hits
+		expected_hits
 		* clamp(attack_model.impact.lifesteal, 0.0, 1.0)
 	)
 
@@ -333,7 +287,8 @@ func _summarize_target_coverage(
 	var weighted_enemy_death_consequence_value := 0.0
 	var weighted_enemy_maximum_health := 0.0
 	var weighted_enemy_remaining_health := 0.0
-	var weighted_tree_harvest_value_per_hit := 0.0
+	var weighted_tree_completion_value_per_hit := 0.0
+	var weighted_tree_completion_value_per_damage := 0.0
 	var covered_samples := []
 	for sample in target_samples:
 		var target: Dictionary = sample.target
@@ -361,24 +316,39 @@ func _summarize_target_coverage(
 		covered_target_mass += covered.coverage
 		nearer_targets_unavailable_probability *= 1.0 - clamp(covered.coverage, 0.0, 1.0)
 		var target: Dictionary = covered.sample.target
-		if target.kind == "enemy":
+		if target.weapon_response.hit_limit_progress_per_hit <= 0.0:
 			enemy_selection_weight += selection_weight
 			covered_enemy_mass += covered.coverage
-			weighted_enemy_reward_delta_value += selection_weight * target.reward_delta_value
-			weighted_enemy_burden_relief_value += selection_weight * target.burden_relief_value
+			weighted_enemy_reward_delta_value += (
+				selection_weight
+				* target.value.reward_delta_value
+			)
+			weighted_enemy_burden_relief_value += (
+				selection_weight
+				* target.value.burden_relief_value
+			)
 			weighted_enemy_death_consequence_value += (
 				selection_weight
-				* target.death_consequence_value
+				* target.value.death_consequence_value
 			)
-			weighted_enemy_maximum_health += selection_weight * target.maximum_health
-			weighted_enemy_remaining_health += selection_weight * target.remaining_health
+			weighted_enemy_maximum_health += (selection_weight * target.completion.health.maximum)
+			weighted_enemy_remaining_health += (
+				selection_weight
+				* target.completion.health.remaining
+			)
 		else:
 			tree_selection_weight += selection_weight
 			covered_tree_mass += covered.coverage
-			weighted_tree_harvest_value_per_hit += (
+			weighted_tree_completion_value_per_hit += (
 				covered.coverage
-				* target.harvest_value
-				/ target.remaining_hits
+				* target.value.net_completion_value
+				* target.weapon_response.hit_limit_progress_per_hit
+				/ max(1.0, target.completion.hit_limit.remaining)
+			)
+			weighted_tree_completion_value_per_damage += (
+				covered.coverage
+				* target.value.net_completion_value
+				/ max(1.0, target.completion.health.remaining)
 			)
 	var enemy_selection_share: float = enemy_selection_weight / max(0.0001, total_selection_weight)
 	var tree_selection_share: float = tree_selection_weight / max(0.0001, total_selection_weight)
@@ -403,8 +373,10 @@ func _summarize_target_coverage(
 		weighted_enemy_maximum_health / max(0.0001, enemy_selection_weight),
 		"mean_enemy_remaining_health":
 		weighted_enemy_remaining_health / max(0.0001, enemy_selection_weight),
-		"mean_tree_harvest_value_per_hit":
-		weighted_tree_harvest_value_per_hit / max(0.0001, covered_tree_mass),
+		"mean_tree_completion_value_per_hit":
+		weighted_tree_completion_value_per_hit / max(0.0001, covered_tree_mass),
+		"mean_tree_completion_value_per_damage":
+		weighted_tree_completion_value_per_damage / max(0.0001, covered_tree_mass),
 	}
 
 
@@ -460,8 +432,12 @@ func _additional_direct_target_mass(
 				)
 			)
 			contact_mass *= primary.selection_weight / total_selection_weight
-			var kind: String = secondary.sample.target.kind
-			result[kind] += contact_mass
+			var channel := (
+				"enemy"
+				if secondary.sample.target.weapon_response.hit_limit_progress_per_hit <= 0.0
+				else "tree"
+			)
+			result[channel] += contact_mass
 			result.total += contact_mass
 	return result
 
@@ -545,7 +521,11 @@ func _expected_target_hits(attack_model: Dictionary, coverage: Dictionary) -> Di
 			+ redirect_stages * tree_redirect_share
 		)
 	)
-	return {"enemy": enemy_hits, "tree": tree_hits, "total": enemy_hits + tree_hits}
+	return {
+		"enemy": enemy_hits,
+		"tree": tree_hits,
+		"total": enemy_hits + tree_hits,
+	}
 
 
 func _expected_damage_per_attack(attack_model: Dictionary, coverage: Dictionary) -> float:

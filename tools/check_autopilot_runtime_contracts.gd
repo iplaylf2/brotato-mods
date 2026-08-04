@@ -16,7 +16,7 @@ func _init() -> void:
 		quit(1)
 		return
 	_check_planning_budget_and_search_allocation()
-	_check_neutral_destruction_work()
+	_check_neutral_completion_work()
 	_check_neutral_progress_completion_forecast()
 	_check_tree_visibility_absence_evidence()
 	quit(1 if _failed else 0)
@@ -50,25 +50,47 @@ func _check_planning_budget_and_search_allocation() -> void:
 	)
 
 
-func _check_neutral_destruction_work() -> void:
-	var work_script: Script = load(PLANNING_PATH + "engagement/neutral_destruction_work_model.gd")
+func _check_neutral_completion_work() -> void:
+	var work_script: Script = load(PLANNING_PATH + "engagement/neutral_completion_work_model.gd")
 	var work_model: Reference = work_script.new()
 	var tree := {
-		"destructible_profile": {"destruction": {"required_hits": 8.0}},
-		"destruction_progress": {"completed_hits": 6.0, "remaining_hits": 2.0},
+		"destructible_profile": {"destruction": {"hit_limit": 8.0, "maximum_health": 80.0}},
+		"destruction_state":
+		{
+			"received_hits": 6.0,
+			"remaining_hits_to_limit": 2.0,
+			"health": {"current": 80.0, "maximum": 80.0, "ratio": 1.0},
+		},
 	}
 	_expect(
-		is_equal_approx(work_model.remaining_hits(tree), 2.0),
+		is_equal_approx(work_model.remaining_hits_to_limit(tree), 2.0),
 		"visible neutral progress must be the source of remaining destruction work"
 	)
-	tree.destruction_progress = {"completed_hits": 8.0, "remaining_hits": 0.0}
 	_expect(
-		is_equal_approx(work_model.remaining_hits(tree), 0.0),
+		is_equal_approx(work_model.expected_hits_to_complete(tree, 1.0, false), 2.0),
+		"the remaining hit limit must complete a neutral before insufficient damage does"
+	)
+	tree.destruction_state = {
+		"received_hits": 0.0,
+		"remaining_hits_to_limit": 8.0,
+		"health": {"current": 5.0, "maximum": 80.0, "ratio": 0.0625},
+	}
+	_expect(
+		is_equal_approx(work_model.expected_hits_to_complete(tree, 10.0, false), 0.5),
+		"remaining health and weapon damage must complete a neutral before its hit limit"
+	)
+	_expect(
+		is_equal_approx(work_model.expected_hits_to_complete(tree, 1.0, true), 1.0),
+		"the observed one-shot-tree effect must reduce neutral completion to one player hit"
+	)
+	tree.destruction_state = {"received_hits": 8.0, "remaining_hits_to_limit": 0.0}
+	_expect(
+		is_equal_approx(work_model.remaining_hits_to_limit(tree), 0.0),
 		"completed neutral work must remain complete instead of becoming a synthetic hit"
 	)
-	tree.erase("destruction_progress")
+	tree.erase("destruction_state")
 	_expect(
-		is_equal_approx(work_model.remaining_hits(tree), 8.0),
+		is_equal_approx(work_model.remaining_hits_to_limit(tree), 8.0),
 		"unobserved neutral progress must fall back to stable required hits"
 	)
 
@@ -88,27 +110,29 @@ func _check_neutral_progress_completion_forecast() -> void:
 			"kind": "tree",
 			"memory_record_id": 1,
 			"existence_confidence": 1.0,
-			"destructible_profile": {"destruction": {"required_hits": 10.0}},
+			"destructible_profile": {"destruction": {"hit_limit": 10.0, "maximum_health": 100.0}},
 		}
 	]
 	var untouched: Dictionary = forecast_model.forecast(observation)
-	observation.remembered_entities[0].destruction_progress = {
-		"completed_hits": 9.0, "remaining_hits": 1.0
+	observation.remembered_entities[0].destruction_state = {
+		"received_hits": 0.0,
+		"remaining_hits_to_limit": 10.0,
+		"health": {"current": 10.0, "maximum": 100.0, "ratio": 0.1},
 	}
 	var damaged: Dictionary = forecast_model.forecast(observation)
 	_expect(
 		(
-			damaged.tree_completion_fraction_by_memory_record_id[1]
-			> untouched.tree_completion_fraction_by_memory_record_id[1]
+			damaged.completion_fraction_by_target_id["tree:1"]
+			> untouched.completion_fraction_by_target_id["tree:1"]
 		),
 		"observed neutral damage must increase its feasible completion fraction"
 	)
-	observation.remembered_entities[0].destruction_progress = {
-		"completed_hits": 10.0, "remaining_hits": 0.0
+	observation.remembered_entities[0].destruction_state = {
+		"received_hits": 10.0, "remaining_hits_to_limit": 0.0
 	}
 	var completed: Dictionary = forecast_model.forecast(observation)
 	_expect(
-		is_equal_approx(completed.tree_completion_fraction_by_memory_record_id[1], 0.0),
+		is_equal_approx(completed.completion_fraction_by_target_id.get("tree:1", 0.0), 0.0),
 		"completed neutral work must consume no future attack capacity"
 	)
 

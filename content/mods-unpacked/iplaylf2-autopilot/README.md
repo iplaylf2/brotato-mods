@@ -24,7 +24,7 @@ Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetail
 ## 公平边界
 
 - 外部战场信息只有在玩家可见时才能进入观察；离开视野的敌人只依据先前观察继续估计。
-- 玩家通过正常游玩可以掌握的敌人、投射物和波次机制可以作为预置知识，不要求每局重新学习。
+- 玩家通过正常游玩可以掌握的敌人、树木、投射物和波次机制可以作为预置知识，不要求每局重新学习。
 - 玩家自身状态可以参与规划，但唯一控制输出始终是 `MovementBehavior.get_movement()` 的返回值。
 - 只读武器结果估计只用于比较移动动作，不会调用或修改瞄准、攻击、目标、冷却、伤害和实体状态。
 
@@ -90,5 +90,6 @@ README 只提供使用概览。维护时按任务进入对应文档：
 - [架构文档](docs/architecture.md) 定义运行链路、公共观察、机制语义和规划结果；
 - [模块边界与责任](docs/module-boundaries.md) 定义目录归属、依赖方向、公共入口和组件角色；
 - [决策采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
-- [原版敌人与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人运动、攻击与投射物入口；
+- [原版敌人、树木与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人运动与攻击、树木
+  完成机制及投射物入口；
 - [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。

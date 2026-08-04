@@ -26,8 +26,8 @@ const ConsumableProfileAdapter := preload(
 const MaterialQuantityEstimator := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/pickups/material_quantity_estimator.gd"
 )
-const NeutralDestructionCompiler := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/neutrals/neutral_destruction_compiler.gd"
+const NeutralMechanicCompiler := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/neutrals/neutral_mechanic_compiler.gd"
 )
 const ProjectileMotionCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/projectiles/projectile_motion_compiler.gd"
@@ -42,7 +42,7 @@ var _structure_mechanic_compiler: Reference = StructureMechanicCompiler.new()
 var _ally_mechanic_compiler: Reference = AllyMechanicCompiler.new()
 var _consumable_profile_adapter: Reference = ConsumableProfileAdapter.new()
 var _material_quantity_estimator: Reference = MaterialQuantityEstimator.new()
-var _neutral_destruction_compiler: Reference = NeutralDestructionCompiler.new()
+var _neutral_mechanic_compiler: Reference = NeutralMechanicCompiler.new()
 var _projectile_motion_compiler: Reference = ProjectileMotionCompiler.new()
 
 
@@ -316,22 +316,23 @@ func _observe_trees(origin: Vector2, visible_rect: Rect2) -> Array:
 		var observation := _make_entity_observation(tree, origin, "tree")
 		observation._source = tree
 		observation._world_position = tree.global_position
-		observation.destructible_profile = _neutral_destruction_compiler.compile(tree)
-		observation.destruction_progress = _observe_destruction_progress(
+		observation.destructible_profile = _neutral_mechanic_compiler.compile(tree)
+		observation.destruction_state = _observe_destruction_state(
 			tree, observation.destructible_profile
 		)
 		observations.push_back(observation)
 	return observations
 
 
-func _observe_destruction_progress(tree: Node, destructible_profile: Dictionary) -> Dictionary:
-	var required_hits: float = destructible_profile.destruction.required_hits
-	var completed_hits := 0.0
+func _observe_destruction_state(tree: Node, destructible_profile: Dictionary) -> Dictionary:
+	var hit_limit: float = destructible_profile.destruction.hit_limit
+	var received_hits := 0.0
 	if "current_number_of_hits" in tree:
-		completed_hits = clamp(float(tree.current_number_of_hits), 0.0, required_hits)
+		received_hits = clamp(float(tree.current_number_of_hits), 0.0, hit_limit)
 	return {
-		"completed_hits": completed_hits,
-		"remaining_hits": max(0.0, required_hits - completed_hits),
+		"received_hits": received_hits,
+		"remaining_hits_to_limit": max(0.0, hit_limit - received_hits),
+		"health": _observe_health(tree),
 	}
 
 

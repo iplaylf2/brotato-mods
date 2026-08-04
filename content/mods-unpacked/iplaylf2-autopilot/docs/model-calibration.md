@@ -107,10 +107,10 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 优化前后应在相同候选数与相关轨迹数下比较导航及动作阶段耗时，确认收益来自消除重复积分，而不是少算
 目标、方向或碰撞采样。
 
-`decision.wave_completion_forecast` 记录本波敌人与树木共享的 `primary_hit_capacity`、把每个目标独立
-估算时产生的 `independent_demand_hits`、实际 `allocated_hits`，以及敌人与树木各自分到的命中数。敌人需求
-使用最后可见时的剩余生命；树木需求使用最后可见时的剩余命中数；没有合法状态测量时才分别退回稳定
-最大生命或总命中需求先验。`competition_scale` 低于 `1` 表示逐目标独立估算会重复占用同一段火力。
+`decision.wave_completion_forecast` 记录统一目标共享的 `primary_hit_capacity`、把每个目标独立估算时产生的
+`independent_demand_hits`、实际 `allocated_hits` 和竞争缩放。敌人需求使用最后可见时的剩余生命；树木需求
+同时比较剩余生命按平均单次伤害耗尽所需命中、剩余命中上限及一击树效果；没有合法状态测量时才退回
+稳定最大生命或总命中需求先验。`competition_scale` 低于 `1` 表示逐目标独立估算会重复占用同一段火力。
 复盘未来掉落补给、树木机会和特殊敌人机会时，应先核对该缩放，再比较实际击杀或破坏的兑现率；不能用
 增大掉落价值掩盖容量重复计算。
 
@@ -302,7 +302,7 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
 
 #### 树木机会与兑现
 
-树木复盘同时比较导航中的 `selected_value_breakdown.tree_opportunity`、
+树木复盘同时比较导航中的 `selected_value_breakdown.engagement_completion_opportunity`、
 `expected_tree_completion_value` 及当时的武器期望攻击率，不能把进入射程直接当作已经命中或摧毁。
 射程外应先检查接近树木是否形成连续正梯度；进入射程后，再比较
 候选移动前后局部武器结果是否因最近目标次序而改变。战略机会进入射程后应保持饱和，不得再次给同一
@@ -330,7 +330,7 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
 
 #### 武器聚群结果
 
-聚群行为复盘同时比较 `selected_value_breakdown.enemy_completion_opportunity` 与
+聚群行为复盘同时比较 `selected_value_breakdown.engagement_completion_opportunity` 与
 `selected_value_breakdown.weapon_cluster_outcome`。前者表示主目标攻击窗口，后者只表示主目标之外、可被
 当前武器贯穿、弹射或范围机制利用的额外容量。单体武器的后者必须恒为零；已确认追踪玩家的敌人应按候选
 终点与时刻投影，因此“先处理不追踪目标，让追踪群自然进入有效走廊”可以从几何与容量中产生，但不能由

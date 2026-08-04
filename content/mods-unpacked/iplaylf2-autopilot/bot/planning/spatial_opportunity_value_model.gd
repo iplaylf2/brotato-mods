@@ -8,11 +8,11 @@ extends Reference
 const OpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
-const EnemyCompletionValueModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/enemy_completion_value_model.gd"
-)
-const WaveCompletionForecastModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/wave_completion_forecast_model.gd"
+const EngagementTargetProjector := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "engagement_target_projector.gd"
+	)
 )
 const WeaponClusterOutcomeModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/weapon_cluster_outcome_model.gd"
@@ -24,8 +24,7 @@ const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
-var _enemy_completion_value_model: Reference = EnemyCompletionValueModel.new()
-var _wave_completion_forecast_model: Reference = WaveCompletionForecastModel.new()
+var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _weapon_cluster_outcome_model: Reference = WeaponClusterOutcomeModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
@@ -33,7 +32,7 @@ var _prepared_physics_frame := -1
 var _prepared_geometry := {}
 var _prepared_maximum_targeting_distance := 0.0
 var _prepared_entities := []
-var _prepared_enemies := []
+var _prepared_targets := []
 var _prepared_candidate_entries := []
 
 
@@ -53,10 +52,9 @@ func _evaluate_route(
 	var result := {
 		"material_opportunity": 0.0,
 		"recovery_opportunity": 0.0,
-		"tree_opportunity": 0.0,
-		"enemy_completion_opportunity": 0.0,
+		"engagement_completion_opportunity": 0.0,
 		"weapon_cluster_outcome": 0.0,
-		"enemy_opportunity": 0.0,
+		"engagement_opportunity": 0.0,
 		"total": 0.0,
 	}
 	var reach_distance: float = _prepared_geometry.opportunity_reach_distance
@@ -70,25 +68,25 @@ func _evaluate_route(
 				result.material_opportunity += contribution
 			"consumable":
 				result.recovery_opportunity += contribution
-			"tree":
-				result.tree_opportunity += contribution
-	for entry in _prepared_enemies:
-		var track: Dictionary = entry.track
-		result.enemy_completion_opportunity += (
+	for entry in _prepared_targets:
+		var target: Dictionary = entry.target
+		result.engagement_completion_opportunity += (
 			entry.value
-			* _enemy_route_accessibility(
-				track, player_displacement, forecast_seconds, reach_distance
+			* _target_route_accessibility(
+				target, player_displacement, forecast_seconds, reach_distance
 			)
 		)
 	result.weapon_cluster_outcome = _weapon_cluster_outcome_model.estimate_value(
 		observation, context, player_displacement, forecast_seconds
 	)
-	result.enemy_opportunity = (result.enemy_completion_opportunity + result.weapon_cluster_outcome)
+	result.engagement_opportunity = (
+		result.engagement_completion_opportunity
+		+ result.weapon_cluster_outcome
+	)
 	result.total = (
 		result.material_opportunity
 		+ result.recovery_opportunity
-		+ result.tree_opportunity
-		+ result.enemy_opportunity
+		+ result.engagement_opportunity
 	)
 	return result
 
@@ -109,12 +107,12 @@ func value_delta(
 	return {
 		"material_opportunity": candidate.material_opportunity - stationary.material_opportunity,
 		"recovery_opportunity": candidate.recovery_opportunity - stationary.recovery_opportunity,
-		"tree_opportunity": candidate.tree_opportunity - stationary.tree_opportunity,
-		"enemy_completion_opportunity":
-		candidate.enemy_completion_opportunity - stationary.enemy_completion_opportunity,
+		"engagement_completion_opportunity":
+		candidate.engagement_completion_opportunity - stationary.engagement_completion_opportunity,
 		"weapon_cluster_outcome":
 		candidate.weapon_cluster_outcome - stationary.weapon_cluster_outcome,
-		"enemy_opportunity": candidate.enemy_opportunity - stationary.enemy_opportunity,
+		"engagement_opportunity":
+		candidate.engagement_opportunity - stationary.engagement_opportunity,
 		"total": candidate.total - stationary.total,
 	}
 
@@ -154,15 +152,16 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		observation.player_state.weapons
 	)
 	_prepared_entities = []
-	_prepared_enemies = []
+	_prepared_targets = []
 	_prepared_candidate_entries = []
 	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
-	var wave_completion_forecast: Dictionary = context.wave_completion_forecast
 	for entity in observation.get("remembered_entities", []):
+		if entity.kind == "tree":
+			continue
 		if entity.existence_confidence <= 0.0:
 			continue
 		var value: float = (
-			_entity_value(observation, entity, health_inventory_value, wave_completion_forecast)
+			_entity_value(observation, entity, health_inventory_value)
 			* entity.existence_confidence
 		)
 		if value <= 0.0:
@@ -179,38 +178,35 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 				"value": value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance),
 			}
 		)
-	for track in observation.enemy_tracks:
+	for target in _engagement_target_projector.project_navigation_targets(observation, context):
 		var value: float = (
-			_enemy_completion_value_model.net_completion_value(
-				context.enemy_completion_value_ledger, track
-			)
-			* _wave_completion_forecast_model.enemy_completion_fraction(
-				wave_completion_forecast, track
-			)
+			target.value.net_completion_value
+			* target.completion.forecast_fraction
+			* target.confidence
 		)
-		var enemy_entry := {
-			"track": track,
+		var target_entry := {
+			"target": target,
 			"value": value,
 		}
-		_prepared_enemies.push_back(enemy_entry)
+		_prepared_targets.push_back(target_entry)
 		if value <= 0.0:
 			continue
 		var gap: float = max(
-			0.0, track.relative_position.length() - _prepared_maximum_targeting_distance
+			0.0, target.relative_position.length() - _prepared_maximum_targeting_distance
 		)
 		_prepared_candidate_entries.push_back(
 			{
-				"position": track.relative_position,
+				"position": target.relative_position,
 				"value": value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance),
 			}
 		)
 
 
-func _enemy_route_accessibility(
-	track: Dictionary, player_displacement: Vector2, forecast_seconds: float, reach_distance: float
+func _target_route_accessibility(
+	target: Dictionary, player_displacement: Vector2, forecast_seconds: float, reach_distance: float
 ) -> float:
-	var initial_accessibility := _enemy_accessibility(
-		track.relative_position, Vector2.ZERO, reach_distance
+	var initial_accessibility := _target_accessibility(
+		target.relative_position, Vector2.ZERO, reach_distance
 	)
 	if forecast_seconds <= 0.0:
 		return initial_accessibility
@@ -220,22 +216,22 @@ func _enemy_route_accessibility(
 	# candidate that creates useful firing time sooner.
 	var midpoint_time := forecast_seconds * 0.5
 	var midpoint_player_position := player_displacement * 0.5
-	var midpoint_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
-		track, midpoint_time, midpoint_player_position
+	var midpoint_target_position: Vector2 = _enemy_motion_predictor.predict_position(
+		target.motion_track, midpoint_time, midpoint_player_position
 	)
-	var terminal_enemy_position: Vector2 = _enemy_motion_predictor.predict_position(
-		track, forecast_seconds, player_displacement
+	var terminal_target_position: Vector2 = _enemy_motion_predictor.predict_position(
+		target.motion_track, forecast_seconds, player_displacement
 	)
-	var midpoint_accessibility := _enemy_accessibility(
-		midpoint_enemy_position, midpoint_player_position, reach_distance
+	var midpoint_accessibility := _target_accessibility(
+		midpoint_target_position, midpoint_player_position, reach_distance
 	)
-	var terminal_accessibility := _enemy_accessibility(
-		terminal_enemy_position, player_displacement, reach_distance
+	var terminal_accessibility := _target_accessibility(
+		terminal_target_position, player_displacement, reach_distance
 	)
 	return (initial_accessibility + 4.0 * midpoint_accessibility + terminal_accessibility) / 6.0
 
 
-func _enemy_accessibility(
+func _target_accessibility(
 	predicted_position: Vector2, player_displacement: Vector2, reach_distance: float
 ) -> float:
 	# Strategic movement earns value only by creating an attack window sooner.
@@ -250,10 +246,7 @@ func _enemy_accessibility(
 
 
 func _entity_value(
-	observation: Dictionary,
-	entity: Dictionary,
-	health_inventory_value: Dictionary,
-	wave_completion_forecast: Dictionary
+	observation: Dictionary, entity: Dictionary, health_inventory_value: Dictionary
 ) -> float:
 	match entity.kind:
 		"material":
@@ -262,15 +255,6 @@ func _entity_value(
 			return _opportunity_pricing_model.consumable_pickup_value(
 				observation, entity, health_inventory_value
 			)
-		"tree":
-			return (
-				_opportunity_pricing_model.tree_destruction_value(
-					observation, entity, health_inventory_value
-				)
-				* _wave_completion_forecast_model.tree_completion_fraction(
-					wave_completion_forecast, entity
-				)
-			)
 	return 0.0
 
 
@@ -278,8 +262,6 @@ func _entity_interaction_gap(
 	observation: Dictionary, entity: Dictionary, player_displacement: Vector2
 ) -> float:
 	var interaction_radius: float = _entity_interaction_radius(observation)
-	if entity.kind == "tree":
-		interaction_radius = _prepared_maximum_targeting_distance
 	return max(0.0, (entity.relative_position - player_displacement).length() - interaction_radius)
 
 

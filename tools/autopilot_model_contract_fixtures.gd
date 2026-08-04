@@ -4,18 +4,6 @@ extends Reference
 
 
 func planning_observation(enemy_tracks: Array) -> Dictionary:
-	for track in enemy_tracks:
-		track.behavior_profile.durability = track.behavior_profile.get(
-			"durability", {"maximum_health": 10.0}
-		)
-		track.behavior_profile.kill_rewards = track.behavior_profile.get(
-			"kill_rewards",
-			{
-				"base_materials": 1.0,
-				"base_consumable_drop_chance": 0.0,
-				"item_box_conditional_chance": 0.0,
-			}
-		)
 	return {
 		"physics_frame": 20,
 		"wave_state": {"number": 1, "seconds_remaining": 10.0, "duration_seconds": 10.0},
@@ -34,6 +22,7 @@ func planning_observation(enemy_tracks: Array) -> Dictionary:
 			},
 			"effective_stats": {"luck": 0.0},
 			"movement": {"knockback_velocity": Vector2.ZERO},
+			"neutral_completion": {"instant_on_player_hit": false},
 			"effect_rules": [],
 			"weapons": [],
 		},
@@ -85,6 +74,30 @@ func weapon_attack_model() -> Dictionary:
 	}
 
 
+func wave_completion_forecast(enemy_fractions: Dictionary, tree_fractions := {}) -> Dictionary:
+	var fractions := {}
+	for track_id in enemy_fractions:
+		fractions["enemy:%s" % track_id] = enemy_fractions[track_id]
+	for memory_record_id in tree_fractions:
+		fractions["tree:%s" % memory_record_id] = tree_fractions[memory_record_id]
+	return {"completion_fraction_by_target_id": fractions}
+
+
+func tree_destructible_profile(
+	hit_limit: float, maximum_health: float, base_materials := 0.0
+) -> Dictionary:
+	return {
+		"destruction": {"hit_limit": hit_limit, "maximum_health": maximum_health},
+		"kill_rewards":
+		{
+			"base_materials": base_materials,
+			"base_consumable_drop_chance": 0.0,
+			"item_box_conditional_chance": 0.0,
+			"guaranteed_consumable": false,
+		},
+	}
+
+
 func enemy_track(position: Vector2, velocity: Vector2, follows_player: bool) -> Dictionary:
 	return {
 		"track_id": 1,
@@ -95,9 +108,20 @@ func enemy_track(position: Vector2, velocity: Vector2, follows_player: bool) -> 
 		"motion_confidence": 0.0,
 		"recency_confidence": 1.0,
 		"uncertainty_radius": 0.0,
-		"last_measurement": {"visual_radius": 10.0},
+		"last_measurement":
+		{
+			"visual_radius": 10.0,
+			"health": {"current": 10.0, "maximum": 10.0, "ratio": 1.0},
+		},
 		"behavior_profile":
 		{
+			"durability": {"maximum_health": 10.0},
+			"kill_rewards":
+			{
+				"base_materials": 1.0,
+				"base_consumable_drop_chance": 0.0,
+				"item_box_conditional_chance": 0.0,
+			},
 			"contact_radius": 10.0,
 			"contact_damage": 3.0,
 			"projectile_attack": {"creates_projectile_pressure": false},

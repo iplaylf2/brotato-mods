@@ -285,10 +285,10 @@ func _evaluate_position(
 		{
 			"material_opportunity": opportunity_delta.material_opportunity,
 			"recovery_opportunity": opportunity_delta.recovery_opportunity,
-			"tree_opportunity": opportunity_delta.tree_opportunity,
-			"enemy_completion_opportunity": opportunity_delta.enemy_completion_opportunity,
+			"engagement_completion_opportunity":
+			opportunity_delta.engagement_completion_opportunity,
 			"weapon_cluster_outcome": opportunity_delta.weapon_cluster_outcome,
-			"enemy_opportunity": opportunity_delta.enemy_opportunity,
+			"engagement_opportunity": opportunity_delta.engagement_opportunity,
 			"map_information": information_value,
 			"environmental_exposure": -exposure_cost_delta,
 		},

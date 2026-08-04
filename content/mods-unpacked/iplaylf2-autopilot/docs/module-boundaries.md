@@ -35,8 +35,8 @@
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
 - `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”和“当前生命、即时威胁与清场前补充 →
   生命库存及单位价值”两段协议，结果供导航风险和动作效用共同消费；
-- `engagement` 拥有敌人完成价值账本、本波共享主路径容量分配、动作条件武器结果预测与容量守恒，以及
-  候选终点的武器聚群结果四项协议。
+- `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、动作条件武器结果
+  预测与容量守恒，以及候选终点的武器聚群结果五项协议。
 
 根目录只保留组合多个稳定子协议的规划协作者；`engagement` 子目录不拥有候选生成、行为模式或敌人身份
 优先级。
@@ -50,7 +50,7 @@
 - `bot/knowledge/pickups/material_quantity_estimator.gd` 只把可见材料缩放估算为目标版本机制保证的单位下界；
   `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定恢复与处理画像。二者都不读取
   不可见实体或未来随机结果。
-- `bot/knowledge/neutrals/neutral_destruction_compiler.gd` 拥有可见树木的稳定破坏需求与掉落画像；
+- `bot/knowledge/neutrals/neutral_mechanic_compiler.gd` 拥有可见树木的稳定生命、命中上限与掉落画像；
   `bot/knowledge/projectiles/projectile_motion_compiler.gd` 把可见投射物的稳定运动配置编译为解析运动模型。
 - `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
   `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量；
@@ -97,17 +97,19 @@
   自动选靶。`bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，比较
   导航终点，并公开胜出导航方向与可达机会价值上界最高的方向。
   `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
+- `bot/planning/engagement/engagement_target_projector.gd` 把敌人轨迹与树木投影为统一的可交战
+  目标契约；契约公开移动、完成状态、收益、负担、死亡后果与武器响应，不指定目标优先级。
 - `bot/planning/weapons/weapon_attack_capacity_model.gd` 定义与目标无关的期望主路径攻击率、单次命中伤害和
-  生命偷取率；`bot/planning/engagement/weapon_outcome_forecast_model.gd` 把这些容量与动作路径上的可见
-  目标投影为按目标类别归属的局部命中与伤害容量；
+  生命偷取率；`bot/planning/engagement/weapon_outcome_forecast_model.gd` 把这些容量与动作路径上的统一可见
+  目标投影为局部命中、伤害与完成容量；
   `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样的有限目标容量守恒。
-- `bot/planning/engagement/wave_completion_forecast_model.gd` 在敌人与树木之间分配本波共享主路径容量；
-  `bot/planning/engagement/neutral_destruction_work_model.gd` 把树木最后一次观测的破坏进度统一解释为
-  剩余命中工作量，供波次容量与局部武器结果共享。
+- `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
+  `bot/planning/engagement/neutral_completion_work_model.gd` 把树木最后一次观测的剩余生命、命中状态和
+  玩家的一击完成状态统一解释为有效攻击工作量，供波次容量与局部武器结果共享。
 - `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
   `bot/planning/enemy_health_model.gd` 把敌人最后可见生命测量与稳定最大生命先验统一解析为剩余生命。
 - `bot/planning/engagement/weapon_cluster_outcome_model.gd` 只计算贯穿、弹射和范围机制可利用的额外目标
-  容量，并按候选终点时刻的预计敌群几何计价。
+  容量，并按候选终点时刻的预计可交战目标几何计价。
 - `bot/planning/opportunity_pricing_model.gd` 只换算材料、
   消耗品、树木和击杀掉落，不再拥有敌人威胁或死亡转移；
   `bot/planning/consumable_drop_probability_model.gd` 把稳定掉落画像与当前幸运组合为消耗品及箱子概率；

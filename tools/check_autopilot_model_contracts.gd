@@ -173,17 +173,9 @@ func _check_navigation_opportunity_retention() -> void:
 		"memory_record_id": 1,
 		"relative_position": diagonal * 500.0,
 		"last_observed_relative_position": diagonal * 500.0,
+		"visual_radius": 10.0,
 		"existence_confidence": 1.0,
-		"destructible_profile":
-		{
-			"destruction": {"required_hits": 1.0},
-			"kill_rewards":
-			{
-				"base_materials": 10.0,
-				"base_consumable_drop_chance": 0.0,
-				"item_box_conditional_chance": 0.0,
-			},
-		},
+		"destructible_profile": _fixtures.tree_destructible_profile(1.0, 10.0, 10.0),
 	}
 	var observation := _planning_observation([])
 	observation.remembered_entities = [tree]
@@ -196,8 +188,9 @@ func _check_navigation_opportunity_retention() -> void:
 			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0},
 			"information_value_per_viewport": 0.0,
 			"environmental_exposure_value": 1.0,
+			"continuation_horizon_seconds": 1.0,
 		},
-		"wave_completion_forecast": _wave_completion_forecast({}, {1: 1.0}),
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({}, {1: 1.0}),
 	}
 	var compute_budget := {"has_deadline": false}
 	var compute_policy_script: Script = load(
@@ -222,7 +215,7 @@ func _check_navigation_opportunity_retention() -> void:
 	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
 	observation.player_state.movement.input_vector = Vector2.ZERO
 	context.enemy_completion_value_ledger = _completion_value_ledger({1: 1.0, 2: 100.0})
-	context.wave_completion_forecast = _wave_completion_forecast({1: 1.0, 2: 1.0})
+	context.wave_completion_forecast = _fixtures.wave_completion_forecast({1: 1.0, 2: 1.0})
 	context.state_factors.continuation_horizon_seconds = 1.0
 	result = planner_script.new().plan(
 		observation,
@@ -282,7 +275,7 @@ func _check_pickup_interaction_geometry() -> void:
 		observation,
 		{
 			"state_factors": {"health_inventory_value": {}},
-			"wave_completion_forecast": _wave_completion_forecast({}),
+			"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
 		},
 		0.0
 	)
@@ -310,10 +303,12 @@ func _check_spatial_target_control() -> void:
 			},
 			"effective_stats": {"luck": 0.0},
 			"movement": {"knockback_velocity": Vector2.ZERO},
+			"neutral_completion": {"instant_on_player_hit": false},
 			"effect_rules": [],
 			"weapons": [{"slot": 0, "attack_model": _weapon_attack_model()}],
 		},
 		"remembered_entities": [],
+		"visible_world": {"trees": []},
 		"enemy_tracks":
 		[
 			_enemy_track(Vector2(-100.0, 0.0), Vector2.ZERO, false),
@@ -332,14 +327,14 @@ func _check_spatial_target_control() -> void:
 			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0},
 			"continuation_horizon_seconds": 1.0,
 		},
-		"wave_completion_forecast": _wave_completion_forecast({1: 1.0, 2: 1.0}),
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 1.0, 2: 1.0}),
 	}
 	var spatial: Reference = spatial_script.new()
 	var enemy_delta: Dictionary = spatial.value_delta(
 		observation, context, Vector2(100.0, 0.0), 1.0
 	)
 	_expect(
-		enemy_delta.enemy_opportunity > 0.0,
+		enemy_delta.engagement_opportunity > 0.0,
 		"creating a positive enemy-completion-value attack window must retain a navigation gradient"
 	)
 	observation.physics_frame += 1
@@ -349,7 +344,7 @@ func _check_spatial_target_control() -> void:
 		observation, context, Vector2(50.0, 0.0), 0.5
 	)
 	_expect(
-		is_equal_approx(in_range_delta.enemy_opportunity, 0.0),
+		is_equal_approx(in_range_delta.engagement_opportunity, 0.0),
 		(
 			"strategic access must not price an in-range nearest-target switch; "
 			+ "the action-conditioned weapon field owns that consequence"
@@ -363,26 +358,18 @@ func _check_spatial_target_control() -> void:
 			"memory_record_id": 1,
 			"kind": "tree",
 			"relative_position": Vector2(500.0, 0.0),
+			"visual_radius": 10.0,
 			"visible": true,
 			"existence_confidence": 1.0,
-			"destructible_profile":
-			{
-				"destruction": {"required_hits": 1.0},
-				"kill_rewards":
-				{
-					"base_materials": 8.0,
-					"base_consumable_drop_chance": 0.0,
-					"item_box_conditional_chance": 0.0,
-				},
-			},
+			"destructible_profile": _fixtures.tree_destructible_profile(1.0, 10.0, 8.0),
 		}
 	]
 	context.enemy_completion_value_ledger = _completion_value_ledger({1: 0.0})
-	context.wave_completion_forecast = _wave_completion_forecast({1: 1.0}, {1: 1.0})
+	context.wave_completion_forecast = _fixtures.wave_completion_forecast({1: 1.0}, {1: 1.0})
 	spatial = spatial_script.new()
 	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(100.0, 0.0), 1.0)
 	_expect(
-		tree_delta.tree_opportunity > 0.0,
+		tree_delta.engagement_completion_opportunity > 0.0,
 		(
 			"a visible tree outside the lock boundary must retain an approach gradient; "
 			+ "local weapon outcomes own target competition after lock becomes possible"
@@ -438,6 +425,7 @@ func _check_weapon_outcome_contracts() -> void:
 			"effective_stats": {"percent_damage": 0.0, "attack_speed": 0.0},
 			"effect_rules": [],
 			"movement": {"knockback_velocity": Vector2.ZERO},
+			"neutral_completion": {"instant_on_player_hit": false},
 			"weapons": [{"slot": 0, "attack_model": _weapon_attack_model()}],
 		},
 		"enemy_tracks": [low_value_track, high_value_track],
@@ -453,6 +441,7 @@ func _check_weapon_outcome_contracts() -> void:
 		"control_interval_seconds": 0.1,
 		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0, 2: 100.0}),
 		"state_factors": {"health_inventory_value": {}},
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 0.0, 2: 0.0}),
 	}
 	var outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
 	field.accumulate_outcome(observation, action, outcome, context)
@@ -521,9 +510,7 @@ func _check_weapon_outcome_contracts() -> void:
 	low_value_track.relative_position = Vector2(1.0, 0.0)
 	observation.enemy_tracks = [low_value_track]
 	var tree := {"relative_position": Vector2(58.0, 76.0), "visual_radius": 10.0}
-	tree.destructible_profile = {
-		"destruction": {"required_hits": 1.0}, "kill_rewards": {"base_materials": 6.0}
-	}
+	tree.destructible_profile = _fixtures.tree_destructible_profile(1.0, 10.0, 6.0)
 	observation.visible_world.trees = [tree]
 	var tree_action := action.duplicate(true)
 	tree_action.movement = Vector2(0.6, 0.8)
@@ -557,7 +544,7 @@ func _check_weapon_cluster_outcome() -> void:
 	var context := {
 		"state_factors": {"continuation_horizon_seconds": 1.0},
 		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0, 2: 10.0}),
-		"wave_completion_forecast": _wave_completion_forecast({1: 0.0, 2: 0.0}),
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 0.0, 2: 0.0}),
 	}
 	var outcome_model: Reference = outcome_script.new()
 	var follower_outcome: float = outcome_model.estimate_value(
@@ -790,6 +777,7 @@ func _check_wave_completion_forecast() -> void:
 	var forecast_model: Reference = forecast_script.new()
 	var first := _enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
 	first.behavior_profile.durability = {"maximum_health": 100.0}
+	first.last_measurement.health = {"current": 100.0, "maximum": 100.0, "ratio": 1.0}
 	var observation := _planning_observation([first])
 	observation.wave_state.seconds_remaining = 5.0
 	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
@@ -798,15 +786,15 @@ func _check_wave_completion_forecast() -> void:
 			"kind": "tree",
 			"memory_record_id": 1,
 			"existence_confidence": 1.0,
-			"destructible_profile": {"destruction": {"required_hits": 10.0}},
+			"destructible_profile": _fixtures.tree_destructible_profile(10.0, 100.0),
 		}
 	]
 	var forecast: Dictionary = forecast_model.forecast(observation)
 	_expect(
 		(
 			forecast.allocated_hits <= forecast.primary_hit_capacity + 0.001
-			and forecast.enemy_allocated_hits > 0.0
-			and forecast.tree_allocated_hits > 0.0
+			and forecast.completion_fraction_by_target_id["enemy:1"] > 0.0
+			and forecast.completion_fraction_by_target_id["tree:1"] > 0.0
 		),
 		(
 			"enemy and tree completion must draw from one attack-capacity ledger "
@@ -817,12 +805,12 @@ func _check_wave_completion_forecast() -> void:
 		forecast.competition_scale < 1.0,
 		"crowded completion forecasts must expose attack-capacity competition"
 	)
-	var full_health_fraction: float = forecast.enemy_completion_fraction_by_track_id[1]
+	var full_health_fraction: float = forecast.completion_fraction_by_target_id["enemy:1"]
 	first.last_measurement.health = {"current": 10.0, "maximum": 100.0, "ratio": 0.1}
 	observation.physics_frame += 1
 	forecast = forecast_model.forecast(observation)
 	_expect(
-		forecast.enemy_completion_fraction_by_track_id[1] > full_health_fraction,
+		forecast.completion_fraction_by_target_id["enemy:1"] > full_health_fraction,
 		"observed remaining health must reduce completion work for a damaged enemy"
 	)
 	observation.player_state.weapons = []
@@ -860,7 +848,7 @@ func _check_immediate_hit_reserve_reachability() -> void:
 			"recovery": {"maximum_consumable_recovery": 0.0},
 			"survival": {"health_rate": 0.0, "recovery_rate": 0.0},
 		},
-		_wave_completion_forecast({})
+		_fixtures.wave_completion_forecast({})
 	)
 	_expect(
 		is_equal_approx(result.immediate_hit_reserve, 10.0),
@@ -874,19 +862,12 @@ func _check_immediate_hit_reserve_reachability() -> void:
 			"recovery": {"maximum_consumable_recovery": 0.0},
 			"survival": {"health_rate": 0.0, "recovery_rate": 0.0},
 		},
-		_wave_completion_forecast({})
+		_fixtures.wave_completion_forecast({})
 	)
 	_expect(
 		is_equal_approx(result.immediate_hit_reserve, 0.0),
 		"the next-hit reserve must be zero when no threat can arrive before replanning"
 	)
-
-
-func _wave_completion_forecast(enemy_fractions: Dictionary, tree_fractions := {}) -> Dictionary:
-	return {
-		"enemy_completion_fraction_by_track_id": enemy_fractions,
-		"tree_completion_fraction_by_memory_record_id": tree_fractions,
-	}
 
 
 func _completion_value_ledger(net_values: Dictionary) -> Dictionary:

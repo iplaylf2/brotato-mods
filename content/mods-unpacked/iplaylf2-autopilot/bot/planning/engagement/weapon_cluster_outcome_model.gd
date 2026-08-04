@@ -11,9 +11,16 @@ const WeaponAttackCapacityModel := preload(
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
+const EngagementTargetProjector := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "engagement_target_projector.gd"
+	)
+)
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
+var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
@@ -26,7 +33,7 @@ func estimate_value(
 	player_displacement: Vector2,
 	forecast_seconds: float
 ) -> float:
-	if observation.player_state.weapons.empty() or observation.enemy_tracks.size() < 2:
+	if observation.player_state.weapons.empty():
 		return 0.0
 	var post_forecast_seconds: float = max(
 		0.0, observation.wave_state.seconds_remaining - forecast_seconds
@@ -57,29 +64,20 @@ func _project_visible_targets(
 ) -> Array:
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := []
-	var completion_value_ledger: Dictionary = context.enemy_completion_value_ledger
-	var entries_by_track_id: Dictionary = completion_value_ledger.entries_by_track_id
-	var wave_forecast: Dictionary = context.wave_completion_forecast
-	var completion_fractions: Dictionary = wave_forecast.enemy_completion_fraction_by_track_id
-	for track in observation.enemy_tracks:
-		if not track.visible:
-			continue
-		var value_entry: Dictionary = entries_by_track_id[track.track_id]
+	for target in _engagement_target_projector.project_visible_targets(observation, context):
 		var position: Vector2 = _enemy_motion_predictor.predict_position(
-			track, forecast_seconds, player_displacement
+			target.motion_track, forecast_seconds, player_displacement
 		)
 		var relative_position: Vector2 = position - player_displacement
-		var completion_fraction: float = completion_fractions[track.track_id]
 		result.push_back(
 			{
+				"target": target,
 				"relative_position": relative_position,
 				"distance": relative_position.length(),
-				"radius": track.last_measurement.visual_radius,
-				"confidence": track.recency_confidence,
-				"completion_headroom": 1.0 - completion_fraction,
-				"net_completion_value_per_health":
-				value_entry.net_completion_value / max(1.0, value_entry.remaining_health),
-				"net_completion_value": value_entry.net_completion_value,
+				"radius": target.radius,
+				"confidence": target.confidence,
+				"completion_headroom": 1.0 - target.completion.forecast_fraction,
+				"net_completion_value": target.value.net_completion_value,
 			}
 		)
 	result.sort_custom(self, "_nearer_target")
@@ -114,52 +112,59 @@ func _weapon_cluster_outcome(
 	var area_value := 0.0
 	var negative_value_cap := 0.0
 	var positive_value_cap := 0.0
+	var damage_per_hit: float = _weapon_attack_capacity_model.expected_damage_per_hit(attack_model)
 	for secondary in targets:
 		if secondary == primary or secondary.distance > maximum_distance:
 			continue
 		var available_mass: float = secondary.confidence * secondary.completion_headroom
 		if available_mass <= 0.0:
 			continue
-		var net_completion_value_per_health: float = secondary.net_completion_value_per_health
 		negative_value_cap += available_mass * min(0.0, secondary.net_completion_value)
 		positive_value_cap += available_mass * max(0.0, secondary.net_completion_value)
 		var direct_coverage := _direct_path_coverage(primary, secondary, paths)
 		direct_mass += available_mass * direct_coverage
-		direct_value += available_mass * direct_coverage * net_completion_value_per_health
+		direct_value += (
+			available_mass
+			* direct_coverage
+			* _completion_value_per_hit(
+				secondary.target, damage_per_hit, clamp(paths.retained_damage, 0.0, 1.0)
+			)
+		)
 		redirect_mass += available_mass
-		redirect_value += available_mass * net_completion_value_per_health
-		var area_coverage := _area_coverage(primary, secondary, attack_model)
+		redirect_value += (
+			available_mass
+			* _completion_value_per_hit(
+				secondary.target,
+				damage_per_hit,
+				clamp(delivery.redirects.retained_damage, 0.0, 1.0)
+			)
+		)
+		var area_coverage := (
+			_area_coverage(primary, secondary, attack_model)
+			if secondary.target.weapon_response.health_damage_applies
+			else 0.0
+		)
 		area_mass += available_mass * area_coverage
-		area_value += available_mass * area_coverage * net_completion_value_per_health
+		area_value += (
+			available_mass
+			* area_coverage
+			* _completion_value_per_hit(secondary.target, damage_per_hit, 1.0)
+		)
 
-	var damage_per_hit: float = _weapon_attack_capacity_model.expected_damage_per_hit(attack_model)
 	var attack_interval: float = max(0.05, attack_model.timing.expected_attack_interval_seconds)
 	var primary_path_count: float = (
 		max(1.0, float(paths.count))
 		* clamp(paths.primary_probability_floor, 0.05, 1.0)
 	)
-	var base_damage_capacity: float = (
-		damage_per_hit
-		* primary_path_count
-		* outcome_horizon_seconds
-		/ attack_interval
-	)
+	var base_hit_capacity: float = primary_path_count * outcome_horizon_seconds / attack_interval
 	var direct_share := min(direct_capacity, direct_mass)
 	var redirect_share := min(redirect_capacity, redirect_mass)
 	var area_share := min(area_capacity, area_mass)
 	var projected_value := (
-		base_damage_capacity
+		base_hit_capacity
 		* (
-			(
-				direct_share
-				* _mean_value(direct_value, direct_mass)
-				* clamp(paths.retained_damage, 0.0, 1.0)
-			)
-			+ (
-				redirect_share
-				* _mean_value(redirect_value, redirect_mass)
-				* clamp(delivery.redirects.retained_damage, 0.0, 1.0)
-			)
+			direct_share * _mean_value(direct_value, direct_mass)
+			+ redirect_share * _mean_value(redirect_value, redirect_mass)
 			+ area_share * _mean_value(area_value, area_mass)
 		)
 	)
@@ -214,6 +219,26 @@ func _area_coverage(primary: Dictionary, secondary: Dictionary, attack_model: Di
 
 func _mean_value(weighted_value: float, mass: float) -> float:
 	return weighted_value / max(0.0001, mass)
+
+
+func _completion_value_per_hit(
+	target: Dictionary, damage_per_hit: float, retained_damage: float
+) -> float:
+	var completion_fraction := 0.0
+	if target.weapon_response.health_damage_applies:
+		completion_fraction = max(
+			completion_fraction,
+			damage_per_hit * retained_damage / max(1.0, target.completion.health.remaining)
+		)
+	if target.weapon_response.hit_limit_progress_per_hit > 0.0:
+		completion_fraction = max(
+			completion_fraction,
+			(
+				target.weapon_response.hit_limit_progress_per_hit
+				/ max(1.0, target.completion.hit_limit.remaining)
+			)
+		)
+	return target.value.net_completion_value * clamp(completion_fraction, 0.0, 1.0)
 
 
 func _nearer_target(left: Dictionary, right: Dictionary) -> bool:

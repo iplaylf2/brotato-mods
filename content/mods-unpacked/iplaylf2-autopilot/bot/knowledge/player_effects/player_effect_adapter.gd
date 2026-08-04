@@ -41,6 +41,7 @@ func adapt(player_index: int, player: Node) -> Dictionary:
 	return {
 		"effect_rules": rules,
 		"automatic_attacks_allowed_while_moving": bool(effects[Keys.can_attack_while_moving_hash]),
+		"instant_neutral_completion_on_player_hit": bool(effects[Keys.one_shot_trees_hash]),
 	}
 
 

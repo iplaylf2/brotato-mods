@@ -47,6 +47,10 @@ func observe(player_index: int, player: Node) -> Dictionary:
 		_observe_weapons(
 			player_index, player, adapted_effects.automatic_attacks_allowed_while_moving
 		),
+		"neutral_completion":
+		{
+			"instant_on_player_hit": adapted_effects.instant_neutral_completion_on_player_hit,
+		},
 		"effect_rules": adapted_effects.effect_rules,
 	}
 
