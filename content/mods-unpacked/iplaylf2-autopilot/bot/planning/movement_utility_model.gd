@@ -11,10 +11,14 @@ const HealthInventoryValueModel := preload(
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
+const TargetCompletionAllocationModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
+)
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _health_inventory_value_model: Reference = HealthInventoryValueModel.new()
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
+var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
 var _scoring_schema_validated := false
 
 
@@ -26,8 +30,9 @@ func build_context(observation: Dictionary) -> Dictionary:
 	)
 	var player_rule_projection: Dictionary = _rule_projector.project(observation)
 	var recovery_profile: Dictionary = player_rule_projection.recovery
+	var completion_ledger: Dictionary = _target_completion_allocation_model.allocate(observation)
 	var health_inventory_value: Dictionary = _health_inventory_value_model.estimate(
-		observation, player_rule_projection
+		observation, player_rule_projection, completion_ledger
 	)
 	var marginal_health_unit_value: float = health_inventory_value.marginal_health_unit_value
 	var terminal_health_loss_unit_value: float = health_inventory_value.terminal_health_loss_unit_value
@@ -118,6 +123,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"environmental_exposure_value": marginal_health_unit_value,
 		},
 		"enemy_removal_value_ledger": removal_value_ledger,
+		"target_completion_ledger": completion_ledger,
 	}
 	if OS.is_debug_build() and not _scoring_schema_validated:
 		_assert_valid_scoring_schema(context)
@@ -167,10 +173,9 @@ func _information_value_per_viewport(
 	health_inventory_value: Dictionary,
 	remaining_ratio: float
 ) -> float:
-	var observed_value: float = (
-		observation.visible_world.materials.size()
-		* _opportunity_value_model.material_collection_value(observation)
-	)
+	var observed_value := 0.0
+	for material in observation.visible_world.materials:
+		observed_value += _opportunity_value_model.material_collection_value(observation, material)
 	var observation_count: int = observation.visible_world.materials.size()
 	for consumable in observation.visible_world.consumables:
 		observed_value += (
@@ -179,7 +184,7 @@ func _information_value_per_viewport(
 		)
 		observation_count += 1
 	for tree in observation.visible_world.trees:
-		observed_value += _opportunity_value_model.tree_reward_value(
+		observed_value += _opportunity_value_model.tree_destruction_value(
 			observation, tree, health_inventory_value
 		)
 		observation_count += 1

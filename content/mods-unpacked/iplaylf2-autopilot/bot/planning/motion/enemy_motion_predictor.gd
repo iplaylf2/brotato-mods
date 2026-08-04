@@ -9,6 +9,10 @@ const ObservedMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/observed_motion_predictor.gd"
 )
 
+const MAXIMUM_INTEGRATION_STEP_SECONDS := 0.4
+const MINIMUM_INTEGRATION_STEP_SECONDS := 0.0125
+const INTEGRATION_POSITION_ERROR_TOLERANCE := 1.0
+
 var _observed_motion_predictor: Reference = ObservedMotionPredictor.new()
 var _baseline_cache_physics_frame := -1
 var _observed_positions_by_track_and_time := {}
@@ -61,29 +65,108 @@ func _integrate_target_response(
 ) -> Vector2:
 	# The observed contract does not expose a future player path. Candidate
 	# movement is first-order, so its endpoint uniquely defines the straight path
-	# used by the rolling planner. Short substeps approximate vanilla's immediate
-	# heading updates and prevent a pursuer from being projected through and away
-	# from the player after reaching the old target position.
-	var step_count := int(ceil(time / 0.05))
-	var step_seconds: float = time / float(step_count)
+	# used by the rolling planner. Embedded midpoint step doubling follows
+	# vanilla's immediate heading updates with an explicit position-error bound and
+	# prevents a pursuer from being projected through the old target position.
 	var enemy_position := initial_enemy_position
-	for step_index in step_count:
-		var player_position: Vector2 = (
-			player_displacement
-			* float(step_index + 1)
-			/ float(step_count)
+	var elapsed := 0.0
+	var step_seconds := min(MAXIMUM_INTEGRATION_STEP_SECONDS, time)
+	while elapsed < time - 0.00001:
+		step_seconds = min(step_seconds, time - elapsed)
+		var full_step_position := _integrate_midpoint_step(
+			enemy_position,
+			player_displacement,
+			time,
+			elapsed,
+			step_seconds,
+			movement_speed,
+			target_response
 		)
-		var velocity := _target_directed_velocity(
-			enemy_position, player_position, movement_speed, target_response
+		var half_step_seconds := step_seconds * 0.5
+		var refined_position := _integrate_midpoint_step(
+			enemy_position,
+			player_displacement,
+			time,
+			elapsed,
+			half_step_seconds,
+			movement_speed,
+			target_response
 		)
-		var displacement: Vector2 = velocity * step_seconds
-		var target_offset: Vector2 = player_position - enemy_position
-		var preferred_distance: float = target_response.preferred_distance
-		var distance_to_target_position := abs(target_offset.length() - preferred_distance)
-		if displacement.length() > distance_to_target_position:
-			displacement = displacement.normalized() * distance_to_target_position
-		enemy_position += displacement
+		refined_position = _integrate_midpoint_step(
+			refined_position,
+			player_displacement,
+			time,
+			elapsed + half_step_seconds,
+			half_step_seconds,
+			movement_speed,
+			target_response
+		)
+		var estimated_error: float = full_step_position.distance_to(refined_position)
+		if (
+			estimated_error > INTEGRATION_POSITION_ERROR_TOLERANCE
+			and step_seconds > MINIMUM_INTEGRATION_STEP_SECONDS + 0.00001
+		):
+			step_seconds = max(MINIMUM_INTEGRATION_STEP_SECONDS, half_step_seconds)
+			continue
+		enemy_position = refined_position
+		elapsed += step_seconds
+		if estimated_error < INTEGRATION_POSITION_ERROR_TOLERANCE * 0.25:
+			step_seconds = min(MAXIMUM_INTEGRATION_STEP_SECONDS, step_seconds * 2.0)
 	return enemy_position
+
+
+func _integrate_midpoint_step(
+	enemy_position: Vector2,
+	player_displacement: Vector2,
+	total_seconds: float,
+	elapsed_seconds: float,
+	step_seconds: float,
+	movement_speed: float,
+	target_response: Dictionary
+) -> Vector2:
+	var player_position: Vector2 = player_displacement * elapsed_seconds / total_seconds
+	var initial_velocity := _target_directed_velocity(
+		enemy_position, player_position, movement_speed, target_response
+	)
+	var midpoint_player_position: Vector2 = (
+		player_displacement
+		* (elapsed_seconds + step_seconds * 0.5)
+		/ total_seconds
+	)
+	var midpoint_enemy_position: Vector2 = enemy_position + initial_velocity * step_seconds * 0.5
+	var midpoint_velocity := _target_directed_velocity(
+		midpoint_enemy_position, midpoint_player_position, movement_speed, target_response
+	)
+	# Landing on or crossing the response surface during the trial step means the
+	# initial velocity is the interval average up to that surface; using the
+	# reversed midpoint direction would spuriously bounce through the target.
+	if (
+		midpoint_velocity == Vector2.ZERO
+		or (initial_velocity != Vector2.ZERO and midpoint_velocity.dot(initial_velocity) < 0.0)
+	):
+		midpoint_velocity = initial_velocity
+	var displacement: Vector2 = midpoint_velocity * step_seconds
+	var terminal_player_position: Vector2 = (
+		player_displacement
+		* (elapsed_seconds + step_seconds)
+		/ total_seconds
+	)
+	var target_offset: Vector2 = terminal_player_position - enemy_position
+	var preferred_distance: float = target_response.preferred_distance
+	var distance_to_target_position := abs(target_offset.length() - preferred_distance)
+	if displacement.length() > distance_to_target_position:
+		displacement = displacement.normalized() * distance_to_target_position
+	var result: Vector2 = enemy_position + displacement
+	var terminal_offset: Vector2 = result - terminal_player_position
+	if (
+		abs(terminal_offset.length() - preferred_distance) <= INTEGRATION_POSITION_ERROR_TOLERANCE
+		and (
+			terminal_offset.length() >= preferred_distance
+			or target_response.moves_away_inside_preferred_distance
+		)
+	):
+		result = terminal_player_position + terminal_offset.normalized() * preferred_distance
+	return result
 
 
 func _observed_position(track: Dictionary, time: float) -> Vector2:

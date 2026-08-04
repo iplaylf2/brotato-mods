@@ -48,6 +48,12 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 	var minimum_ttc := INF
 
 	for track in observation.enemy_tracks:
+		var charge_attack: Dictionary = track.behavior_profile.get("charge_attack", {})
+		if (
+			not charge_attack.get("active", false)
+			or not charge_attack.get("aims_at_player_region", false)
+		):
+			continue
 		var track_charge_risk := 0.0
 		var committed_track_charge_risk := 0.0
 		for sample in action.samples:

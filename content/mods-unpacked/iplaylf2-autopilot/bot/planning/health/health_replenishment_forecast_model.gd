@@ -2,13 +2,13 @@ extends Reference
 
 # Forecasts health replenishment that can be realized before wave cleanup.
 # This module owns source mechanics and availability; inventory valuation owns
-# neither source enumeration nor target-completion feasibility.
+# neither source enumeration nor target-completion allocation.
 
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
-const TargetCompletionFeasibilityModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_feasibility_model.gd"
+const TargetCompletionAllocationModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
 )
 const ConsumableDropProbabilityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
@@ -18,12 +18,14 @@ const WeaponAttackCapacityModel := preload(
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
-var _target_completion_feasibility_model: Reference = TargetCompletionFeasibilityModel.new()
+var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
 var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 
 
-func forecast(observation: Dictionary, rule_projection: Dictionary) -> Dictionary:
+func forecast(
+	observation: Dictionary, rule_projection: Dictionary, completion_ledger: Dictionary
+) -> Dictionary:
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
 	var maximum_consumable_recovery: float = rule_projection.recovery.maximum_consumable_recovery
 	var observed_replenishment := _observed_replenishment(observation)
@@ -31,7 +33,7 @@ func forecast(observation: Dictionary, rule_projection: Dictionary) -> Dictionar
 		observation, remaining_seconds
 	)
 	var expected_drop_replenishment := _expected_drop_replenishment(
-		observation, maximum_consumable_recovery
+		observation, maximum_consumable_recovery, completion_ledger
 	)
 	var passive_health_rate: float = (
 		rule_projection.survival.health_rate
@@ -108,7 +110,7 @@ func _expected_lifesteal_replenishment(observation: Dictionary, remaining_second
 
 
 func _expected_drop_replenishment(
-	observation: Dictionary, maximum_consumable_recovery: float
+	observation: Dictionary, maximum_consumable_recovery: float, completion_ledger: Dictionary
 ) -> float:
 	if maximum_consumable_recovery <= 0.0:
 		return 0.0
@@ -121,8 +123,9 @@ func _expected_drop_replenishment(
 		result += (
 			maximum_consumable_recovery
 			* drop_chance
-			* _target_completion_feasibility_model.enemy_kill_feasibility(observation, track)
-			* track.recency_confidence
+			* _target_completion_allocation_model.enemy_completion_likelihood(
+				completion_ledger, track
+			)
 		)
 	for tree in observation.get("remembered_entities", []):
 		if tree.kind != "tree":
@@ -131,8 +134,9 @@ func _expected_drop_replenishment(
 		result += (
 			maximum_consumable_recovery
 			* _consumable_drop_probability_model.any_consumable_drop_chance(observation, rewards)
-			* _target_completion_feasibility_model.tree_destruction_feasibility(observation, tree)
-			* tree.existence_confidence
+			* _target_completion_allocation_model.tree_completion_likelihood(
+				completion_ledger, tree
+			)
 		)
 	return result
 

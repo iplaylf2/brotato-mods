@@ -17,20 +17,16 @@ const PlayerRuleProjector := preload(
 const StatOpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_value_model.gd"
 )
-const TargetCompletionFeasibilityModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_feasibility_model.gd"
-)
 const ConsumableDropProbabilityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_value_model: Reference = StatOpportunityValueModel.new()
-var _target_completion_feasibility_model: Reference = TargetCompletionFeasibilityModel.new()
 var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
 
 
-func material_collection_value(observation: Dictionary) -> float:
+func material_unit_collection_value(observation: Dictionary) -> float:
 	# A material collected during the wave is immediately available for the next
 	# shop and level-up processing. Vanilla defers uncollected materials through
 	# bonus gold, so the value of avoiding that deferral rises continuously as the
@@ -42,8 +38,13 @@ func material_collection_value(observation: Dictionary) -> float:
 	return 1.0 + (1.0 - remaining_ratio)
 
 
-func tree_reward_value(
-	observation: Dictionary, tree: Dictionary, health_inventory_value := {}
+func material_collection_value(observation: Dictionary, material: Dictionary) -> float:
+	var minimum_units: float = material.material_quantity_estimate.minimum_units
+	return minimum_units * material_unit_collection_value(observation)
+
+
+func tree_destruction_value(
+	observation: Dictionary, tree: Dictionary, health_inventory_value: Dictionary
 ) -> float:
 	var rewards: Dictionary = tree.get("destructible_profile", {}).get("kill_rewards", {})
 	var kill_value := kill_reward_value(observation, rewards)
@@ -54,7 +55,7 @@ func tree_reward_value(
 	# full consumable chance rather than only the complementary fruit outcome.
 	kill_value += (
 		max(0.0, rewards.get("base_materials", 0.0))
-		* (material_collection_value(observation) - 1.0)
+		* (material_unit_collection_value(observation) - 1.0)
 	)
 	if not health_inventory_value.empty():
 		kill_value += (
@@ -62,10 +63,7 @@ func tree_reward_value(
 			* health_inventory_value.get("maximum_consumable_recovery", 0.0)
 			* health_inventory_value.get("recovery_conversion_unit_value", 0.0)
 		)
-	return (
-		max(0.0, kill_value - _living_tree_preservation_value(observation))
-		* _target_completion_feasibility_model.tree_destruction_feasibility(observation, tree)
-	)
+	return max(0.0, kill_value - _living_tree_preservation_value(observation))
 
 
 func build_enemy_removal_value_ledger(
@@ -198,7 +196,10 @@ func _material_assimilation_burden_by_track(
 		var track_id: int = best_consumer.track.track_id
 		result[track_id] += (
 			assimilation_likelihood
-			* (material_collection_value(observation) + best_consumer.growth_burden_per_material)
+			* (
+				material_collection_value(observation, material)
+				+ best_consumer.growth_burden_per_material
+			)
 		)
 	return result
 

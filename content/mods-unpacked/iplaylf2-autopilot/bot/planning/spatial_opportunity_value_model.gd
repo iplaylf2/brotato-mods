@@ -8,8 +8,8 @@ extends Reference
 const OpportunityValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_value_model.gd"
 )
-const TargetCompletionFeasibilityModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_feasibility_model.gd"
+const TargetCompletionAllocationModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
 )
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
@@ -19,7 +19,7 @@ const EnemyMotionPredictor := preload(
 )
 
 var _opportunity_value_model: Reference = OpportunityValueModel.new()
-var _target_completion_feasibility_model: Reference = TargetCompletionFeasibilityModel.new()
+var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _prepared_physics_frame := -1
@@ -123,11 +123,12 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	_prepared_enemies = []
 	_prepared_candidate_entries = []
 	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
+	var completion_ledger: Dictionary = context.target_completion_ledger
 	for entity in observation.get("remembered_entities", []):
 		if entity.existence_confidence <= 0.0:
 			continue
 		var value: float = (
-			_entity_value(observation, entity, health_inventory_value)
+			_entity_value(observation, entity, health_inventory_value, completion_ledger)
 			* entity.existence_confidence
 		)
 		if value <= 0.0:
@@ -144,8 +145,9 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	for track in observation.enemy_tracks:
 		var value: float = (
 			_opportunity_value_model.enemy_removal_value(context.enemy_removal_value_ledger, track)
-			* _target_completion_feasibility_model.enemy_kill_feasibility(observation, track)
-			* track.recency_confidence
+			* _target_completion_allocation_model.enemy_completion_likelihood(
+				completion_ledger, track
+			)
 		)
 		var enemy_entry := {"track": track, "value": value}
 		_prepared_enemies.push_back(enemy_entry)
@@ -202,18 +204,26 @@ func _enemy_accessibility(
 
 
 func _entity_value(
-	observation: Dictionary, entity: Dictionary, health_inventory_value: Dictionary
+	observation: Dictionary,
+	entity: Dictionary,
+	health_inventory_value: Dictionary,
+	completion_ledger: Dictionary
 ) -> float:
 	match entity.kind:
 		"material":
-			return _opportunity_value_model.material_collection_value(observation)
+			return _opportunity_value_model.material_collection_value(observation, entity)
 		"consumable":
 			return _opportunity_value_model.consumable_pickup_value(
 				observation, entity, health_inventory_value
 			)
 		"tree":
-			return _opportunity_value_model.tree_reward_value(
-				observation, entity, health_inventory_value
+			return (
+				_opportunity_value_model.tree_destruction_value(
+					observation, entity, health_inventory_value
+				)
+				* _target_completion_allocation_model.tree_completion_likelihood(
+					completion_ledger, entity
+				)
 			)
 	return 0.0
 

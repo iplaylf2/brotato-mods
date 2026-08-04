@@ -74,12 +74,20 @@ func accumulate_outcome(observation: Dictionary, action: Dictionary, outcome: Di
 		0.0, observation.player_state.health.maximum - observation.player_state.health.current
 	)
 	outcome.expected_recovery = min(missing_health, outcome.expected_recovery)
-	var incoming_hit_event: Dictionary = _first_incoming_hit_event(observation, action.samples)
-	if not incoming_hit_event.empty():
-		incoming_hit_event.event_weight = incoming_hit_event.damage_probability
-		_apply_event_rules(observation, "damage_taken", incoming_hit_event, outcome)
-		incoming_hit_event.event_weight = incoming_hit_event.dodge_probability
-		_apply_event_rules(observation, "attack_dodged", incoming_hit_event, outcome)
+	if _has_incoming_hit_rules(observation.player_state.effect_rules):
+		var incoming_hit_event: Dictionary = _first_incoming_hit_event(observation, action.samples)
+		if not incoming_hit_event.empty():
+			incoming_hit_event.event_weight = incoming_hit_event.damage_probability
+			_apply_event_rules(observation, "damage_taken", incoming_hit_event, outcome)
+			incoming_hit_event.event_weight = incoming_hit_event.dodge_probability
+			_apply_event_rules(observation, "attack_dodged", incoming_hit_event, outcome)
+
+
+func _has_incoming_hit_rules(rules: Array) -> bool:
+	for rule in rules:
+		if rule.event == "damage_taken" or rule.event == "attack_dodged":
+			return true
+	return false
 
 
 func _apply_consumable_event(

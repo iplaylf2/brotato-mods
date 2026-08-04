@@ -16,9 +16,13 @@ func _init() -> void:
 	_check_target_response()
 	_check_swept_enemy_contact()
 	_check_pickup_interaction_geometry()
+	_check_visible_material_quantity_estimate()
 	_check_spatial_target_control()
 	_check_weapon_outcome_contracts()
+	_check_local_enemy_interaction_projection()
+	_check_target_completion_allocation()
 	_check_health_inventory_loss()
+	_check_immediate_hit_reserve_reachability()
 	quit(1 if _failed else 0)
 
 
@@ -108,6 +112,7 @@ func _check_pickup_interaction_geometry() -> void:
 		"relative_position": Vector2(100.0, 0.0),
 		"visual_radius": 36.0,
 		"existence_confidence": 1.0,
+		"material_quantity_estimate": {"minimum_units": 1.0},
 	}
 	var observation := {
 		"physics_frame": 3,
@@ -133,7 +138,12 @@ func _check_pickup_interaction_geometry() -> void:
 		"localization": {"map_bounds": _unknown_bounds()},
 	}
 	var value: Dictionary = spatial.stationary_value(
-		observation, {"state_factors": {"health_inventory_value": {}}}, 0.0
+		observation,
+		{
+			"state_factors": {"health_inventory_value": {}},
+			"target_completion_ledger": _completion_ledger({}),
+		},
+		0.0
 	)
 	_expect(
 		value.material_opportunity > 0.0 and value.material_opportunity < 1.0,
@@ -176,6 +186,7 @@ func _check_spatial_target_control() -> void:
 	var context := {
 		"enemy_removal_value_ledger": {"removal_value_by_track_id": {1: 1.0, 2: 100.0}},
 		"state_factors": {"health_inventory_value": {}},
+		"target_completion_ledger": _completion_ledger({1: 1.0, 2: 1.0}),
 	}
 	var spatial: Reference = spatial_script.new()
 	var enemy_delta: Dictionary = spatial.value_delta(
@@ -190,6 +201,7 @@ func _check_spatial_target_control() -> void:
 	observation.enemy_tracks = []
 	observation.remembered_entities = [
 		{
+			"memory_record_id": 1,
 			"kind": "tree",
 			"relative_position": Vector2(200.0, 0.0),
 			"existence_confidence": 1.0,
@@ -205,12 +217,37 @@ func _check_spatial_target_control() -> void:
 			},
 		}
 	]
+	context.target_completion_ledger = _completion_ledger({}, {1: 1.0})
 	spatial = spatial_script.new()
 	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(100.0, 0.0), 1.0)
 	_expect(
 		tree_delta.tree_opportunity > 0.0,
 		"closing on a positive-value tree must retain a navigation gradient"
 	)
+
+
+func _check_visible_material_quantity_estimate() -> void:
+	var estimator_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/pickups/material_quantity_estimator.gd"
+	)
+	var estimator: Reference = estimator_script.new()
+	var material := Node2D.new()
+	material.scale = Vector2(1.25, 1.25)
+	_expect(
+		is_equal_approx(estimator.estimate(material).minimum_units, 2.0),
+		"bonus-sized material must expose only its appearance-proven minimum value"
+	)
+	material.scale = Vector2(1.5, 1.5)
+	_expect(
+		is_equal_approx(estimator.estimate(material).minimum_units, 7.0),
+		"material growth beyond bonus scale must preserve the pooled-unit lower bound"
+	)
+	material.scale = Vector2(1.49, 1.49)
+	_expect(
+		is_equal_approx(estimator.estimate(material).minimum_units, 6.0),
+		"a noncanonical rendered scale must not be rounded up beyond its visible lower bound"
+	)
+	material.free()
 
 
 func _check_weapon_outcome_contracts() -> void:
@@ -335,9 +372,7 @@ func _check_weapon_outcome_contracts() -> void:
 
 
 func _check_health_inventory_loss() -> void:
-	var health_inventory_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_inventory_value_model.gd"
-	)
+	var health_inventory_script: Script = _load_health_inventory_script()
 	var health_inventory_model: Reference = health_inventory_script.new()
 	var abundant_supply_value := {
 		"immediate_survival_buffer": 4.0,
@@ -375,6 +410,184 @@ func _check_health_inventory_loss() -> void:
 	)
 
 
+func _check_local_enemy_interaction_projection() -> void:
+	var projector_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/local_enemy_interaction_projector.gd"
+	)
+	var projector: Reference = projector_script.new()
+	var nearby_memory := _enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
+	nearby_memory.visible = false
+	var remote_memory := _enemy_track(Vector2(5000.0, 0.0), Vector2.ZERO, false)
+	remote_memory.track_id = 2
+	remote_memory.visible = false
+	var remote_visible := _enemy_track(Vector2(5000.0, 0.0), Vector2.ZERO, false)
+	remote_visible.track_id = 3
+	var visible_weapon_target := _enemy_track(Vector2(250.0, 0.0), Vector2.ZERO, false)
+	visible_weapon_target.track_id = 4
+	var observation := _planning_observation(
+		[nearby_memory, remote_memory, remote_visible, visible_weapon_target]
+	)
+	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
+	var result: Dictionary = projector.project(observation, 0.4)
+	var retained_ids := []
+	for track in result.observation.enemy_tracks:
+		retained_ids.push_back(track.track_id)
+	_expect(
+		(
+			1 in retained_ids
+			and 4 in retained_ids
+			and not (2 in retained_ids)
+			and not (3 in retained_ids)
+			and result.relevant_enemy_track_count == 2
+			and result.excluded_enemy_track_count == 2
+		),
+		(
+			"local enemy interaction must retain reachable threats and weapon targets "
+			+ "without retaining remote tracks merely because they are visible"
+		)
+	)
+
+
+func _check_target_completion_allocation() -> void:
+	var allocation_script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
+	)
+	var allocation_model: Reference = allocation_script.new()
+	var first := _enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
+	first.behavior_profile.durability = {"maximum_health": 100.0}
+	var observation := _planning_observation([first])
+	observation.wave_state.seconds_remaining = 5.0
+	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
+	observation.remembered_entities = [
+		{
+			"kind": "tree",
+			"memory_record_id": 1,
+			"existence_confidence": 1.0,
+			"destructible_profile": {"destruction": {"required_hits": 10.0}},
+		}
+	]
+	var ledger: Dictionary = allocation_model.allocate(observation)
+	_expect(
+		(
+			ledger.allocated_hits <= ledger.primary_hit_capacity + 0.001
+			and ledger.enemy_allocated_hits > 0.0
+			and ledger.tree_allocated_hits > 0.0
+		),
+		(
+			"enemy and tree completion must draw from one attack-capacity ledger "
+			+ "without allocating the same future hits twice"
+		)
+	)
+	_expect(
+		ledger.competition_scale < 1.0,
+		"crowded completion forecasts must expose attack-capacity competition"
+	)
+	observation.player_state.weapons = []
+	ledger = allocation_model.allocate(observation)
+	_expect(
+		ledger.competition_scale == 1.0 and ledger.allocated_hits == 0.0,
+		"zero attack supply must report zero allocation without fabricating competition"
+	)
+
+
+func _check_immediate_hit_reserve_reachability() -> void:
+	var inventory_script: Script = _load_health_inventory_script()
+	var inventory: Reference = inventory_script.new()
+	var nearby_memory := _enemy_track(Vector2(20.0, 0.0), Vector2.ZERO, false)
+	nearby_memory.visible = false
+	nearby_memory.behavior_profile.contact_damage = 10.0
+	var remote_memory := _enemy_track(Vector2(5000.0, 0.0), Vector2.ZERO, false)
+	remote_memory.track_id = 2
+	remote_memory.visible = false
+	remote_memory.behavior_profile.contact_damage = 100.0
+	var remote_visible := _enemy_track(Vector2(5000.0, 0.0), Vector2.ZERO, false)
+	remote_visible.track_id = 3
+	remote_visible.behavior_profile.contact_damage = 1000.0
+	var observation := _planning_observation([nearby_memory, remote_memory, remote_visible])
+	var result: Dictionary = inventory.estimate(
+		observation,
+		{
+			"recovery": {"maximum_consumable_recovery": 0.0},
+			"survival": {"health_rate": 0.0, "recovery_rate": 0.0},
+		},
+		_completion_ledger({})
+	)
+	_expect(
+		is_equal_approx(result.immediate_hit_reserve, 10.0),
+		"the next-hit reserve must include reachable memory and exclude unreachable tracks"
+	)
+	observation.physics_frame += 1
+	observation.enemy_tracks = []
+	result = inventory.estimate(
+		observation,
+		{
+			"recovery": {"maximum_consumable_recovery": 0.0},
+			"survival": {"health_rate": 0.0, "recovery_rate": 0.0},
+		},
+		_completion_ledger({})
+	)
+	_expect(
+		is_equal_approx(result.immediate_hit_reserve, 0.0),
+		"the next-hit reserve must be zero when no threat can arrive before replanning"
+	)
+
+
+func _completion_ledger(enemy_likelihoods: Dictionary, tree_likelihoods := {}) -> Dictionary:
+	return {
+		"enemy_completion_likelihood_by_track_id": enemy_likelihoods,
+		"tree_completion_likelihood_by_memory_record_id": tree_likelihoods,
+	}
+
+
+func _planning_observation(enemy_tracks: Array) -> Dictionary:
+	for track in enemy_tracks:
+		track.behavior_profile.durability = track.behavior_profile.get(
+			"durability", {"maximum_health": 10.0}
+		)
+		track.behavior_profile.kill_rewards = track.behavior_profile.get(
+			"kill_rewards",
+			{
+				"base_materials": 1.0,
+				"base_consumable_drop_chance": 0.0,
+				"item_box_conditional_chance": 0.0,
+			}
+		)
+	return {
+		"physics_frame": 20,
+		"wave_state": {"number": 1, "seconds_remaining": 10.0, "duration_seconds": 10.0},
+		"player_state":
+		{
+			"collision_radius": 10.0,
+			"health": {"current": 20.0, "maximum": 20.0, "ratio": 1.0},
+			"pickup": {"attraction_radius": 100.0, "collection_radius": 20.0},
+			"runtime_stats":
+			{
+				"move_speed": 100.0,
+				"armor": 0.0,
+				"dodge_chance": 0.0,
+				"hit_protection": 0,
+			},
+			"effective_stats": {"luck": 0.0},
+			"movement": {"knockback_velocity": Vector2.ZERO},
+			"effect_rules": [],
+			"weapons": [],
+		},
+		"enemy_tracks": enemy_tracks,
+		"remembered_entities": [],
+		"visible_world":
+		{
+			"materials": [],
+			"consumables": [],
+			"trees": [],
+			"enemy_projectiles": [],
+			"spawn_warnings": [],
+			"structures": [],
+			"allied_agents": [],
+		},
+		"localization": {"map_bounds": _unknown_bounds()},
+	}
+
+
 func _empty_weapon_outcome(field_names: Array) -> Dictionary:
 	var outcome := {}
 	for field_name in field_names:
@@ -382,6 +595,13 @@ func _empty_weapon_outcome(field_names: Array) -> Dictionary:
 	outcome.expected_recovery = 0.0
 	outcome.expected_recovery_events = 0.0
 	return outcome
+
+
+func _load_health_inventory_script() -> Script:
+	var script: Script = load(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_inventory_value_model.gd"
+	)
+	return script
 
 
 func _load_spatial_opportunity_script() -> Script:

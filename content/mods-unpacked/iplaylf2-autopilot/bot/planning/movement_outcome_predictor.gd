@@ -190,7 +190,7 @@ func _material_acquisition_value(observation: Dictionary, samples: Array) -> flo
 				closest_distance, (entity.relative_position - sample.displacement).length()
 			)
 		if closest_distance <= observation.player_state.pickup.collection_radius:
-			value += _opportunity_value_model.material_collection_value(observation)
+			value += _opportunity_value_model.material_collection_value(observation, entity)
 	return value
 
 

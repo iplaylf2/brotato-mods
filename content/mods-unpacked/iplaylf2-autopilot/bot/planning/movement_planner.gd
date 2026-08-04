@@ -36,6 +36,9 @@ const MovementTimingModel := preload(
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
 )
+const LocalEnemyInteractionProjector := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/local_enemy_interaction_projector.gd"
+)
 var _action_generator: Reference = MovementActionGenerator.new()
 var _compute_budget_policy: Reference = PlanningComputeBudgetPolicy.new()
 var _search_fidelity_allocator: Reference = PlanningSearchFidelityAllocator.new()
@@ -46,6 +49,7 @@ var _utility_model: Reference = MovementUtilityModel.new()
 var _action_selector: Reference = MovementActionSelector.new()
 var _navigation_intent_planner: Reference = NavigationIntentPlanner.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
+var _local_enemy_interaction_projector: Reference = LocalEnemyInteractionProjector.new()
 
 
 func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
@@ -83,9 +87,13 @@ func plan(observation: Dictionary) -> Dictionary:
 	var actions: Array = _action_generator.generate(
 		planning_observation, navigation_intent, search_fidelity
 	)
+	var local_domain: Dictionary = _local_enemy_interaction_projector.project(
+		planning_observation, actions[0].forecast_seconds
+	)
+	var local_observation: Dictionary = local_domain.observation
 	var scored_actions := []
 	for action in actions:
-		scored_actions.push_back(_score_action(planning_observation, action, context))
+		scored_actions.push_back(_score_action(local_observation, action, context))
 	phase_duration_usec.action_evaluation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
 
@@ -106,7 +114,7 @@ func plan(observation: Dictionary) -> Dictionary:
 		)
 		refined_action_count += 1
 		actions.push_back(refined_action)
-		var scored_action: Dictionary = _score_action(planning_observation, refined_action, context)
+		var scored_action: Dictionary = _score_action(local_observation, refined_action, context)
 		scored_actions.push_back(scored_action)
 		direction_scores.push_back(scored_action)
 		_compute_budget_policy.observe_work_duration(
@@ -135,10 +143,16 @@ func plan(observation: Dictionary) -> Dictionary:
 	# a sampled decision is serialized.
 	plan.context = context.duplicate(false)
 	plan.context.erase("enemy_removal_value_ledger")
+	plan.context.erase("target_completion_ledger")
+	plan.target_completion_allocation = context.target_completion_ledger.duplicate(false)
+	plan.target_completion_allocation.erase("enemy_completion_likelihood_by_track_id")
+	plan.target_completion_allocation.erase("tree_completion_likelihood_by_memory_record_id")
 	plan.compute_budget = compute_budget.duplicate(true)
 	plan.search_fidelity = search_fidelity.duplicate(true)
 	plan.projectile_filter = projectile_filter.duplicate(false)
 	plan.projectile_filter.erase("filtered_observation")
+	plan.local_enemy_interaction_domain = local_domain.duplicate(false)
+	plan.local_enemy_interaction_domain.erase("observation")
 	plan.navigation_intent = navigation_intent.duplicate(true)
 	plan.action_count = actions.size()
 	plan.refined_action_count = refined_action_count

@@ -111,7 +111,7 @@ func _prepare_targets(observation: Dictionary, planning_context: Dictionary) -> 
 		negative_removal_value += min(0.0, removal_value)
 	var total_tree_harvest_value := 0.0
 	for tree in observation.visible_world.trees:
-		var harvest_value: float = _opportunity_value_model.tree_reward_value(
+		var harvest_value: float = _opportunity_value_model.tree_destruction_value(
 			observation, tree, planning_context.state_factors.health_inventory_value
 		)
 		_prepared_targets.push_back(
