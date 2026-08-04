@@ -2,7 +2,7 @@ extends Reference
 
 # Owns target-independent automatic-weapon capacity: expected attack cadence,
 # damage per delivered hit, and primary-path hit, damage, and lifesteal rates.
-# Spatial delivery belongs to WeaponOutcomeFieldModel.
+# Spatial delivery belongs to WeaponOutcomeForecastModel.
 
 
 func expected_damage_per_hit(attack_model: Dictionary) -> float:

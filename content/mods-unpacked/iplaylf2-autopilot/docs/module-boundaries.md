@@ -35,9 +35,11 @@
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
 - `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”和“当前生命、即时威胁与清场前补充 →
   生命库存及单位价值”两段协议，结果供导航风险和动作效用共同消费。
+- `engagement` 拥有“敌人完成状态转移 → 奖励变化、存活负担解除与死亡后果”、“本波共享主路径容量 →
+  目标完成份额”，以及“候选终点的预计敌群几何与武器额外容量 → 武器聚群结果”的协议。
 
-`WeaponOutcomeFieldModel` 需要组合运动学、敌人运动、机会定价和动作结果账本，因此与其他动作结果协作者
-一起留在规划根目录。
+根目录只保留组合多个稳定子协议的规划协作者；`engagement` 子目录不拥有候选生成、行为模式或敌人身份
+优先级。
 
 ## 关键所有权
 
@@ -96,12 +98,14 @@
   导航终点，并公开胜出导航方向与可达机会价值上界最高的方向。
   `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
 - `bot/planning/weapons/weapon_attack_capacity_model.gd` 定义与目标无关的期望主路径攻击率、单次命中伤害和
-  生命偷取率；`bot/planning/weapon_outcome_field_model.gd` 把这些容量与可见目标投影为下一决策状态的局部
-  期望结果场。
-- `bot/planning/target_completion_allocation_model.gd` 分配共享攻击容量，并建立敌人击杀与树木摧毁完成
-  账本；`bot/planning/enemy_health_model.gd` 统一把敌人最后可见生命测量与稳定最大生命先验解析为剩余
-  生命；`bot/planning/opportunity_pricing_model.gd` 换算材料、消耗品、树木和敌人移除机会的边际价值，并
-  组合存活期间的战场负担与移除触发的战场后果；
+  生命偷取率；`bot/planning/engagement/weapon_outcome_forecast_model.gd` 把这些容量与动作路径上的可见
+  目标投影为局部完成份额，并保持奖励变化、存活负担解除和死亡后果三个结果通道。
+- `bot/planning/engagement/wave_completion_forecast_model.gd` 在敌人与树木之间分配本波共享主路径容量；
+  `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
+  `bot/planning/engagement/weapon_cluster_outcome_model.gd` 只计算贯穿、弹射和范围机制可利用的额外目标
+  容量，并按候选终点时刻的预计敌群几何计价。`bot/planning/enemy_health_model.gd` 统一把敌人最后可见
+  生命测量与稳定最大生命先验解析为剩余生命；`bot/planning/opportunity_pricing_model.gd` 只换算材料、
+  消耗品、树木和击杀掉落，不再拥有敌人威胁或死亡转移；
   `bot/planning/consumable_drop_probability_model.gd` 把稳定掉落画像与当前幸运组合为消耗品及箱子概率；
   `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
 - `bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何；

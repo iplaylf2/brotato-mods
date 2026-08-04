@@ -27,11 +27,11 @@ var _enemy_reach_envelope_model: Reference = EnemyReachEnvelopeModel.new()
 
 
 func estimate(
-	observation: Dictionary, rule_projection: Dictionary, completion_ledger: Dictionary
+	observation: Dictionary, rule_projection: Dictionary, wave_completion_forecast: Dictionary
 ) -> Dictionary:
 	var current_health: float = observation.player_state.health.current
 	var replenishment_forecast: Dictionary = _health_replenishment_forecast_model.forecast(
-		observation, rule_projection, completion_ledger
+		observation, rule_projection, wave_completion_forecast
 	)
 	var immediate_hit_reserve := _immediate_hit_reserve(observation)
 	var immediate_survival_buffer := max(1.0, current_health - immediate_hit_reserve)
@@ -62,7 +62,9 @@ func estimate(
 	return result
 
 
-func health_loss_value(expected_health_loss: float, inventory_value: Dictionary) -> float:
+func health_loss_value(
+	expected_health_loss: float, inventory_value: Dictionary, continuation_horizon_ratio := 1.0
+) -> float:
 	var loss := max(0.0, expected_health_loss)
 	if loss <= 0.0:
 		return 0.0
@@ -73,9 +75,15 @@ func health_loss_value(expected_health_loss: float, inventory_value: Dictionary)
 	# rolling planner repeatedly borrow against the same future supply.
 	var immediate_buffer: float = max(1.0, inventory_value.immediate_survival_buffer)
 	var survivable_loss := min(loss, max(0.0, immediate_buffer - 1.0))
+	# Liquid health has no terminal value after vanilla creates the next-wave player
+	# at full health. Preserve only the fraction needed to survive threats after this
+	# forecast; loss beyond the immediate buffer remains terminal at every horizon.
 	var value := (
-		HEALTH_INVENTORY_VALUE_SCALE
-		* log(immediate_buffer / max(1.0, immediate_buffer - survivable_loss))
+		clamp(float(continuation_horizon_ratio), 0.0, 1.0)
+		* (
+			HEALTH_INVENTORY_VALUE_SCALE
+			* log(immediate_buffer / max(1.0, immediate_buffer - survivable_loss))
+		)
 	)
 	var terminal_loss := max(0.0, loss - survivable_loss)
 	return value + terminal_loss * inventory_value.terminal_health_loss_unit_value

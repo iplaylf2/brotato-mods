@@ -7,8 +7,8 @@ extends Reference
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
-const TargetCompletionAllocationModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
+const WaveCompletionForecastModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/wave_completion_forecast_model.gd"
 )
 const ConsumableDropProbabilityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
@@ -18,13 +18,13 @@ const WeaponAttackCapacityModel := preload(
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
-var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
+var _wave_completion_forecast_model: Reference = WaveCompletionForecastModel.new()
 var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 
 
 func forecast(
-	observation: Dictionary, rule_projection: Dictionary, completion_ledger: Dictionary
+	observation: Dictionary, rule_projection: Dictionary, wave_completion_forecast: Dictionary
 ) -> Dictionary:
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
 	var maximum_consumable_recovery: float = rule_projection.recovery.maximum_consumable_recovery
@@ -33,7 +33,7 @@ func forecast(
 		observation, remaining_seconds
 	)
 	var expected_drop_replenishment := _expected_drop_replenishment(
-		observation, maximum_consumable_recovery, completion_ledger
+		observation, maximum_consumable_recovery, wave_completion_forecast
 	)
 	var passive_health_rate: float = (
 		rule_projection.survival.health_rate
@@ -110,7 +110,9 @@ func _expected_lifesteal_replenishment(observation: Dictionary, remaining_second
 
 
 func _expected_drop_replenishment(
-	observation: Dictionary, maximum_consumable_recovery: float, completion_ledger: Dictionary
+	observation: Dictionary,
+	maximum_consumable_recovery: float,
+	wave_completion_forecast: Dictionary
 ) -> float:
 	if maximum_consumable_recovery <= 0.0:
 		return 0.0
@@ -123,8 +125,8 @@ func _expected_drop_replenishment(
 		result += (
 			maximum_consumable_recovery
 			* drop_chance
-			* _target_completion_allocation_model.enemy_completion_likelihood(
-				completion_ledger, track
+			* _wave_completion_forecast_model.enemy_completion_fraction(
+				wave_completion_forecast, track
 			)
 		)
 	for tree in observation.get("remembered_entities", []):
@@ -134,8 +136,8 @@ func _expected_drop_replenishment(
 		result += (
 			maximum_consumable_recovery
 			* _consumable_drop_probability_model.any_consumable_drop_chance(observation, rewards)
-			* _target_completion_allocation_model.tree_completion_likelihood(
-				completion_ledger, tree
+			* _wave_completion_forecast_model.tree_completion_fraction(
+				wave_completion_forecast, tree
 			)
 		)
 	return result

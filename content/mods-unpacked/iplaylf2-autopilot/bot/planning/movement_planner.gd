@@ -153,12 +153,12 @@ func plan(observation: Dictionary) -> Dictionary:
 	# of the returned plan avoids duplicating an O(enemy_count) dictionary whenever
 	# a sampled decision is serialized.
 	plan.context = context.duplicate(false)
-	plan.context.erase("enemy_removal_value_ledger")
-	plan.context.erase("target_completion_ledger")
+	plan.context.erase("enemy_completion_value_ledger")
+	plan.context.erase("wave_completion_forecast")
 	plan.context.erase("navigation_directional_value_samples")
-	plan.target_completion_allocation = context.target_completion_ledger.duplicate(false)
-	plan.target_completion_allocation.erase("enemy_completion_likelihood_by_track_id")
-	plan.target_completion_allocation.erase("tree_completion_likelihood_by_memory_record_id")
+	plan.wave_completion_forecast = context.wave_completion_forecast.duplicate(false)
+	plan.wave_completion_forecast.erase("enemy_completion_fraction_by_track_id")
+	plan.wave_completion_forecast.erase("tree_completion_fraction_by_memory_record_id")
 	plan.compute_budget = compute_budget.duplicate(true)
 	plan.search_fidelity = search_fidelity.duplicate(true)
 	plan.projectile_filter = projectile_filter.duplicate(false)

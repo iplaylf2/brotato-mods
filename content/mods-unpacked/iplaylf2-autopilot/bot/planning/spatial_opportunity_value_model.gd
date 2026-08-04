@@ -8,8 +8,14 @@ extends Reference
 const OpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
-const TargetCompletionAllocationModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
+const EnemyCompletionValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/enemy_completion_value_model.gd"
+)
+const WaveCompletionForecastModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/wave_completion_forecast_model.gd"
+)
+const WeaponClusterOutcomeModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/weapon_cluster_outcome_model.gd"
 )
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
@@ -18,7 +24,9 @@ const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
-var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
+var _enemy_completion_value_model: Reference = EnemyCompletionValueModel.new()
+var _wave_completion_forecast_model: Reference = WaveCompletionForecastModel.new()
+var _weapon_cluster_outcome_model: Reference = WeaponClusterOutcomeModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _prepared_physics_frame := -1
@@ -31,6 +39,7 @@ var _prepared_candidate_entries := []
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_enemy_motion_predictor = predictor
+	_weapon_cluster_outcome_model.set_enemy_motion_predictor(predictor)
 
 
 func _evaluate_route(
@@ -45,6 +54,8 @@ func _evaluate_route(
 		"material_opportunity": 0.0,
 		"recovery_opportunity": 0.0,
 		"tree_opportunity": 0.0,
+		"enemy_completion_opportunity": 0.0,
+		"weapon_cluster_outcome": 0.0,
 		"enemy_opportunity": 0.0,
 		"total": 0.0,
 	}
@@ -63,12 +74,16 @@ func _evaluate_route(
 				result.tree_opportunity += contribution
 	for entry in _prepared_enemies:
 		var track: Dictionary = entry.track
-		result.enemy_opportunity += (
+		result.enemy_completion_opportunity += (
 			entry.value
 			* _enemy_route_accessibility(
 				track, player_displacement, forecast_seconds, reach_distance
 			)
 		)
+	result.weapon_cluster_outcome = _weapon_cluster_outcome_model.estimate_value(
+		observation, context, player_displacement, forecast_seconds
+	)
+	result.enemy_opportunity = (result.enemy_completion_opportunity + result.weapon_cluster_outcome)
 	result.total = (
 		result.material_opportunity
 		+ result.recovery_opportunity
@@ -95,6 +110,10 @@ func value_delta(
 		"material_opportunity": candidate.material_opportunity - stationary.material_opportunity,
 		"recovery_opportunity": candidate.recovery_opportunity - stationary.recovery_opportunity,
 		"tree_opportunity": candidate.tree_opportunity - stationary.tree_opportunity,
+		"enemy_completion_opportunity":
+		candidate.enemy_completion_opportunity - stationary.enemy_completion_opportunity,
+		"weapon_cluster_outcome":
+		candidate.weapon_cluster_outcome - stationary.weapon_cluster_outcome,
 		"enemy_opportunity": candidate.enemy_opportunity - stationary.enemy_opportunity,
 		"total": candidate.total - stationary.total,
 	}
@@ -138,12 +157,12 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	_prepared_enemies = []
 	_prepared_candidate_entries = []
 	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
-	var completion_ledger: Dictionary = context.target_completion_ledger
+	var wave_completion_forecast: Dictionary = context.wave_completion_forecast
 	for entity in observation.get("remembered_entities", []):
 		if entity.existence_confidence <= 0.0:
 			continue
 		var value: float = (
-			_entity_value(observation, entity, health_inventory_value, completion_ledger)
+			_entity_value(observation, entity, health_inventory_value, wave_completion_forecast)
 			* entity.existence_confidence
 		)
 		if value <= 0.0:
@@ -162,11 +181,11 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		)
 	for track in observation.enemy_tracks:
 		var value: float = (
-			_opportunity_pricing_model.enemy_removal_value(
-				context.enemy_removal_value_ledger, track
+			_enemy_completion_value_model.net_completion_value(
+				context.enemy_completion_value_ledger, track
 			)
-			* _target_completion_allocation_model.enemy_completion_likelihood(
-				completion_ledger, track
+			* _wave_completion_forecast_model.enemy_completion_fraction(
+				wave_completion_forecast, track
 			)
 		)
 		var enemy_entry := {
@@ -234,7 +253,7 @@ func _entity_value(
 	observation: Dictionary,
 	entity: Dictionary,
 	health_inventory_value: Dictionary,
-	completion_ledger: Dictionary
+	wave_completion_forecast: Dictionary
 ) -> float:
 	match entity.kind:
 		"material":
@@ -248,8 +267,8 @@ func _entity_value(
 				_opportunity_pricing_model.tree_destruction_value(
 					observation, entity, health_inventory_value
 				)
-				* _target_completion_allocation_model.tree_completion_likelihood(
-					completion_ledger, entity
+				* _wave_completion_forecast_model.tree_completion_fraction(
+					wave_completion_forecast, entity
 				)
 			)
 	return 0.0

@@ -11,14 +11,21 @@ const HealthInventoryValueModel := preload(
 const OpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
-const TargetCompletionAllocationModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/target_completion_allocation_model.gd"
+const EnemyCompletionValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/enemy_completion_value_model.gd"
+)
+const WaveCompletionForecastModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/wave_completion_forecast_model.gd"
+)
+const MovementTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _health_inventory_value_model: Reference = HealthInventoryValueModel.new()
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
-var _target_completion_allocation_model: Reference = TargetCompletionAllocationModel.new()
+var _enemy_completion_value_model: Reference = EnemyCompletionValueModel.new()
+var _wave_completion_forecast_model: Reference = WaveCompletionForecastModel.new()
 var _scoring_schema_validated := false
 
 
@@ -30,9 +37,9 @@ func build_context(observation: Dictionary) -> Dictionary:
 	)
 	var player_rule_projection: Dictionary = _rule_projector.project(observation)
 	var recovery_profile: Dictionary = player_rule_projection.recovery
-	var completion_ledger: Dictionary = _target_completion_allocation_model.allocate(observation)
+	var wave_completion_forecast: Dictionary = _wave_completion_forecast_model.forecast(observation)
 	var health_inventory_value: Dictionary = _health_inventory_value_model.estimate(
-		observation, player_rule_projection, completion_ledger
+		observation, player_rule_projection, wave_completion_forecast
 	)
 	var marginal_health_unit_value: float = health_inventory_value.marginal_health_unit_value
 	var terminal_health_loss_unit_value: float = health_inventory_value.terminal_health_loss_unit_value
@@ -42,12 +49,13 @@ func build_context(observation: Dictionary) -> Dictionary:
 		damage_is_terminal_rule
 		and observation.player_state.runtime_stats.hit_protection <= 0
 	)
-	var removal_value_ledger: Dictionary = _opportunity_pricing_model.build_enemy_removal_value_ledger(
+	var completion_value_ledger: Dictionary = _enemy_completion_value_model.build_ledger(
 		observation, marginal_health_unit_value
 	)
 	var information_value_per_viewport := _information_value_per_viewport(
-		observation, removal_value_ledger, health_inventory_value, wave_time_remaining_ratio
+		observation, completion_value_ledger, health_inventory_value, wave_time_remaining_ratio
 	)
+	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var context := {
 		"objective_weights":
 		{
@@ -88,15 +96,19 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"expected_stat_upgrade_equivalents": 1.0,
 				"expected_stat_opportunity_value": 1.0,
 				"expected_material_gain": 1.0,
-				"expected_tree_harvest_value_progress": 1.0,
+				"expected_tree_completion_value": 1.0,
 				"standing_seconds": movement_state_economy_rates.standing,
 				"moving_seconds": movement_state_economy_rates.moving,
 			},
 			"combat":
 			{
-				"expected_enemy_removal_value_progress": 1.0,
-				"expected_rule_damage": removal_value_ledger.mean_removal_value_per_enemy_health,
-				"expected_allied_damage": removal_value_ledger.mean_removal_value_per_enemy_health,
+				"expected_enemy_reward_delta_value": 1.0,
+				"expected_enemy_burden_relief_value": 1.0,
+				"expected_enemy_death_consequence_value": -1.0,
+				"expected_rule_damage":
+				completion_value_ledger.mean_net_completion_value_per_health,
+				"expected_allied_damage":
+				completion_value_ledger.mean_net_completion_value_per_health,
 			},
 			"navigation": {"navigation_terminal_value_gain": 1.0},
 		},
@@ -120,14 +132,17 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"current_unprotected_damage_is_terminal": current_unprotected_damage_is_terminal,
 			"recovery_profile": recovery_profile,
 			"health_inventory_value": health_inventory_value,
-			"mean_removal_value_per_enemy_health":
-			removal_value_ledger.mean_removal_value_per_enemy_health,
-			"living_enemy_preservation_value": removal_value_ledger.living_enemy_preservation_value,
+			"mean_net_completion_value_per_enemy_health":
+			completion_value_ledger.mean_net_completion_value_per_health,
+			"living_enemy_preservation_value":
+			completion_value_ledger.living_enemy_preservation_value,
 			"information_value_per_viewport": information_value_per_viewport,
 			"environmental_exposure_value": marginal_health_unit_value,
+			"wave_seconds_remaining": max(0.0, observation.wave_state.seconds_remaining),
+			"continuation_horizon_seconds": timing.maximum_navigation_horizon_seconds,
 		},
-		"enemy_removal_value_ledger": removal_value_ledger,
-		"target_completion_ledger": completion_ledger,
+		"enemy_completion_value_ledger": completion_value_ledger,
+		"wave_completion_forecast": wave_completion_forecast,
 	}
 	if OS.is_debug_build() and not _scoring_schema_validated:
 		_assert_valid_scoring_schema(context)
@@ -138,8 +153,15 @@ func build_context(observation: Dictionary) -> Dictionary:
 func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	var scored_outcome := outcome.duplicate(false)
 	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
+	var post_forecast_seconds: float = max(
+		0.0, context.state_factors.wave_seconds_remaining - outcome.get("forecast_seconds", 0.0)
+	)
+	var continuation_horizon_ratio: float = (
+		post_forecast_seconds
+		/ max(0.01, context.state_factors.continuation_horizon_seconds)
+	)
 	var health_inventory_loss_value: float = _health_inventory_value_model.health_loss_value(
-		outcome.forecast_expected_health_loss, health_inventory_value
+		outcome.forecast_expected_health_loss, health_inventory_value, continuation_horizon_ratio
 	)
 	scored_outcome.forecast_health_inventory_loss_value = health_inventory_loss_value
 	var field_utility_breakdown := {}
@@ -173,7 +195,7 @@ func _assert_valid_scoring_schema(context: Dictionary) -> void:
 
 func _information_value_per_viewport(
 	observation: Dictionary,
-	removal_value_ledger: Dictionary,
+	completion_value_ledger: Dictionary,
 	health_inventory_value: Dictionary,
 	remaining_ratio: float
 ) -> float:
@@ -196,7 +218,7 @@ func _information_value_per_viewport(
 		observation_count += 1
 	if not observation.enemy_tracks.empty():
 		observed_value += (
-			removal_value_ledger.mean_absolute_removal_value
+			completion_value_ledger.mean_absolute_net_completion_value
 			* observation.enemy_tracks.size()
 		)
 		observation_count += observation.enemy_tracks.size()

@@ -21,6 +21,7 @@ THIS_FILE = Path(__file__).relative_to(REPOSITORY)
 PKG_RESOURCES_WARNING = "ignore:pkg_resources is deprecated as an API:UserWarning"
 GODOT_VALIDATOR = REPOSITORY / "tools" / "validate_godot_scripts.gd"
 AUTOPILOT_MODEL_CHECKS = REPOSITORY / "tools" / "check_autopilot_model_contracts.gd"
+AUTOPILOT_MODEL_FIXTURES = REPOSITORY / "tools" / "autopilot_model_contract_fixtures.gd"
 AUTOPILOT_PLANNING_WORKER_CHECKS = (
     REPOSITORY / "tools" / "check_autopilot_planning_worker.gd"
 )
@@ -262,6 +263,7 @@ def lint_portable() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_MODEL_FIXTURES),
         str(AUTOPILOT_PLANNING_WORKER_CHECKS),
         suppress_pkg_resources_warning=True,
     )
@@ -271,6 +273,7 @@ def lint_portable() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_MODEL_FIXTURES),
         str(AUTOPILOT_PLANNING_WORKER_CHECKS),
         suppress_pkg_resources_warning=True,
     )
@@ -343,6 +346,7 @@ def format_sources() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_MODEL_FIXTURES),
         str(AUTOPILOT_PLANNING_WORKER_CHECKS),
         suppress_pkg_resources_warning=True,
     )

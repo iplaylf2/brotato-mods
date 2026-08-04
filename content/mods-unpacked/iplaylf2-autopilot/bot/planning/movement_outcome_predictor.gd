@@ -5,9 +5,7 @@ extends Reference
 # control interval is retained only as an execution diagnostic for the input
 # that will actually be submitted before replanning.
 
-const WeaponOutcomeFieldModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapon_outcome_field_model.gd"
-)
+const WeaponOutcomeForecastModel := preload("engagement/weapon_outcome_forecast_model.gd")
 const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 )
@@ -33,7 +31,7 @@ const CollisionHealthImpactModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/collision_health_impact_model.gd"
 )
 
-var _weapon_outcome_field_model: Reference = WeaponOutcomeFieldModel.new()
+var _weapon_outcome_forecast_model: Reference = WeaponOutcomeForecastModel.new()
 var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
 var _velocity_obstacle_collision_model: Reference = VelocityObstacleCollisionModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
@@ -45,7 +43,7 @@ var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
-	_weapon_outcome_field_model.set_enemy_motion_predictor(predictor)
+	_weapon_outcome_forecast_model.set_enemy_motion_predictor(predictor)
 	_battlefield_influence_model.set_enemy_motion_predictor(predictor)
 	_velocity_obstacle_collision_model.set_enemy_motion_predictor(predictor)
 	_player_rule_outcome_predictor.set_enemy_motion_predictor(predictor)
@@ -64,14 +62,18 @@ func predict_base(
 	observation: Dictionary, action: Dictionary, planning_context: Dictionary
 ) -> Dictionary:
 	var outcome := {
+		"forecast_seconds": action.forecast_seconds,
 		"material_acquisition_value": 0.0,
 		"wasted_consumable_recovery": 0.0,
 		"consumed_consumable_recovery_supply": 0.0,
 		"consumed_single_use_support_supply": 0.0,
 		"expected_weapon_damage": 0.0,
 		"expected_allied_damage": 0.0,
-		"expected_enemy_removal_value_progress": 0.0,
-		"expected_tree_harvest_value_progress": 0.0,
+		"expected_enemy_completion_equivalents": 0.0,
+		"expected_enemy_reward_delta_value": 0.0,
+		"expected_enemy_burden_relief_value": 0.0,
+		"expected_enemy_death_consequence_value": 0.0,
+		"expected_tree_completion_value": 0.0,
 		"standing_seconds": 0.0,
 		"moving_seconds": 0.0,
 		"navigation_terminal_value_gain": 0.0,
@@ -188,7 +190,9 @@ func complete_prediction(
 	# dictionaries shared instead of recursively copying the whole forecast for
 	# the base forecast and its semantic completion.
 	var outcome: Dictionary = base_outcome.duplicate(false)
-	_weapon_outcome_field_model.accumulate_outcome(observation, action, outcome, planning_context)
+	_weapon_outcome_forecast_model.accumulate_outcome(
+		observation, action, outcome, planning_context
+	)
 	_player_rule_outcome_predictor.accumulate_outcome(observation, action, outcome)
 	return outcome
 
