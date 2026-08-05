@@ -200,12 +200,13 @@ TTC cutoff                    = Tnav_effective
 同一次决策中得到一致尺度。结构时域与有效时域保存在 `decision.model.timing`，空间尺度保存在
 `decision.model.derived.movement_geometry`，便于分别验证时间裁剪和几何派生关系。
 
-### 生命库存定价
+### 生存风险定价
 
 补给库存使用清场时域，即时生存缓冲使用下一控制期。设当前生命为 `H`、玩家完整动作集合、当前击退与
 威胁运动在下一控制期内形成的联合可达域中，最强接触或投射物一击经护甲折算后的伤害储备为 `R`、
 清场前按到达时间、存在置信度和目标完成份额折算的生命补充为 `S`、同期被动流失为 `D`、材料等价风险
-尺度为 `K`，动作预测的预期生命损失为 `L`，则：
+尺度为 `K`，动作预测的预期生命损失为 `L`，当前持有材料与已有道具、武器按公共价格代理形成的对局
+延续价值为 `C`，完整动作预测窗内的单次终止风险为 `p`，则：
 
 ```text
 immediate_survival_buffer       = B  = max(1, H - R)
@@ -215,8 +216,7 @@ terminal_health_loss_unit_value      = K / B
 survivable_action_loss          = Ls = min(L, max(0, B - 1))
 survivable_loss_value                = integral[x=0..Ls] K / max(1, B - x) dx
 terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_unit_value
-terminal_health_reserve_margin  = M  = B - L
-retains_terminal_health_reserve      = M > 0
+run_continuation_value_at_risk        = max(p, clamp(L / B, 0, 1)) × C
 ```
 
 已观察消耗品按到达后仍可利用的波次比例和存在置信度计入 `S`；概率掉落按共享攻击容量约束后的目标完成
@@ -228,11 +228,14 @@ retains_terminal_health_reserve      = M > 0
 导航只提交下一个控制期，整波未来补给不能扩大该控制期的即时生存缓冲。这样同一份未来果实或吸血不能在
 连续重规划中被反复借用来压低眼前的接触风险。
 
-`M` 是执行资格诊断，不进入效用总分。若至少一个候选满足 `M > 0`，选择器只在这些候选中比较效用；若
-没有候选满足，则先保留 `M` 最大的候选，再用公共效用打破并列。`expected_recovery` 没有动作窗内的兑现
-顺序，因此在实际进入下一观察的当前生命前不计入 `M`。`R` 由本轮观察和下一控制期联合可达域计算，不会
-在每个候选的动作预测终点重新求解；`M` 是防止滚动规划提前花掉这份即时储备的终点代理，不应解释为完整
-终端可行核。
+`C` 只使用当前可观察且死亡会清除的对局资产：持有材料按一比一计价，已有道具与武器按已解锁道具池
+各稀有度均价中的最小正值估算统一替代价值。该代理不读取具体道具或武器身份，也不把未来未知收益算作
+已有价值。单次终止风险与生命损失占即时缓冲的比例取较大值，使连续亚致命伤害也会逐步暴露对局延续
+价值；暴露比例最大为 `1`，因此单个动作不会重复损失超过当前可观察总值的延续价值。风险由当前构筑和
+持有材料自然改变，不需要固定的低血行为规则。
+
+选择器只保留一个不可撤销的执行边界：若动作将在下一次重规划前确定终止，且存在非确定终止的替代动作，
+则排除它。预测窗后段的概率风险、生命消耗、击杀减压和树木收益仍在同一效用账本交换。
 
 拾取一单位地面补充时，即时恢复按 `terminal_health_loss_unit_value` 增值、同量地图储备按
 `marginal_health_unit_value` 结清，净值为两者之差；新破坏树木产生的补充尚未被库存计入，则直接按
@@ -261,7 +264,8 @@ retains_terminal_health_reserve      = M > 0
    动作评价的成本应结合 `action_count` 与 `phase_duration_usec.action_evaluation` 比较，不能从额外工作
    次数反推。
 4. `WaveCompletionForecastModel` 的跨敌人与树木命中工作量分配、`OpportunityPricingModel` 的材料兑现
-   价格和掉落机会价值，以及 `HealthInventoryValueModel` 的 `HEALTH_INVENTORY_VALUE_SCALE` 和各类生命
+   价格和掉落机会价值，以及 `HealthInventoryValueModel` 的 `HEALTH_INVENTORY_VALUE_SCALE`、
+   `RunContinuationValueModel` 的道具与武器替代价格代理和各类生命
    补充的实际兑现率，仍需共同校准。风险尺度表达材料收益与概率生命损失的交换偏好，不拥有时间窗或
    执行资格。道具箱的道具部分依据目标版本的共享稀有度随机数分布和当前已解锁奖池平均商店价格代理
    计算数学期望，不再把最低回收值当成整个机会。需要校准的是基础消耗品概率、其中成为箱子的条件
@@ -384,21 +388,18 @@ retains_terminal_health_reserve      = M > 0
 
 ### 生存与碰撞
 
-先同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、
-`terminal_health_reserve_margin`、`retains_terminal_health_reserve`、提交期诊断
-`terminal_collision_risk`、`expected_health_loss` 和
-`field_utility_breakdown.forecast_health_inventory_loss_value`。联合检查
-`selection_diagnostics.excluded_certain_terminal_candidate_count`、
-`terminal_health_reserve_viable_candidate_count`、`terminal_health_reserve_fallback_active`、
-`viable_candidate_count`、`selected_committed_terminal_collision_risk` 与
-`selected_terminal_health_reserve_margin`。确定且可避免的提交期死亡应被排除；若终点生命储备可行域非空，
-未来击杀和导航收益不能购买一个离开该域的动作；若可行域为空，则动作应先最大化储备余量，再由公共效用
-打破并列。
+先同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、提交期诊断
+`terminal_collision_risk`、`expected_health_loss`，以及
+`field_utility_breakdown.forecast_health_inventory_loss_value` 与
+`field_utility_breakdown.forecast_run_continuation_value_at_risk`。联合检查
+`context.state_factors.run_continuation_value`、
+`selection_diagnostics.excluded_certain_terminal_candidate_count`、`viable_candidate_count` 和
+`selected_committed_terminal_collision_risk`。确定且可避免的提交期死亡应被排除；预测窗后段的概率终止
+应按当前对局延续价值连续变贵，但仍能与负担解除、目标完成、生命窃取和恢复在公共效用中交换。
 
-没有窗内先后顺序证据的条件恢复仍可提高公共效用，但
-不能在实际兑现前扩大可行域，否则连续规划会重复借用同一份未来果实或生命偷取。恢复进入下一观察后，增加
-的当前生命会自然恢复执行资格，而不需要“低血找果实”分支。按低生命、敌群密度和剩余波时分层，确认
-可行域内的概率风险仍能保留负担解除、目标完成净价值、生命窃取与其他恢复的交换。
+没有窗内先后顺序证据的条件恢复仍可提高公共效用，但不能在实际兑现前降低同窗碰撞损失；恢复进入下一
+观察后，增加的当前生命会自然改变风险价格，而不需要固定的低血拾取规则。按低生命、对局延续价值、
+敌群密度和剩余波时分层，确认死亡风险成本随可失去价值增长，并避免再次用固定生命常数代表整局损失。
 
 生命库存复盘按本波剩余比例和恢复构筑分层，对照
 `reachable_observed_replenishment`、`expected_drop_replenishment`、`passive_replenishment`、

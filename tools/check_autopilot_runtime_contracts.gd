@@ -33,7 +33,7 @@ func _init() -> void:
 	_check_projectile_motion_bound()
 	_check_action_forecast_domain()
 	_check_immediate_hit_reserve_reachability()
-	_check_terminal_health_reserve_action_selection()
+	_check_run_continuation_risk_and_action_selection()
 	quit(1 if _failed else 0)
 
 
@@ -543,12 +543,12 @@ func _check_enemy_death_product_matching() -> void:
 	)
 
 
-func _check_terminal_health_reserve_action_selection() -> void:
+func _check_run_continuation_risk_and_action_selection() -> void:
 	var selector_script: Script = load(PLANNING_PATH + "movement_action_selector.gd")
 	var selector: Reference = selector_script.new()
-	var safe_low_value := _scored_action(2.0, 0.0, 0.0, 2.0)
-	var safe_high_value := _scored_action(3.0, 0.0, 0.0, 1.0)
-	var certain_terminal := _scored_action(100.0, 1.0, 1.0, -1.0)
+	var safe_low_value := _scored_action(2.0, 0.0, 0.0)
+	var safe_high_value := _scored_action(3.0, 0.0, 0.0)
+	var certain_terminal := _scored_action(100.0, 1.0, 1.0)
 	var selected: Dictionary = selector.select([safe_low_value, certain_terminal, safe_high_value])
 	_expect(
 		selected.score == safe_high_value.score,
@@ -556,14 +556,14 @@ func _check_terminal_health_reserve_action_selection() -> void:
 	)
 	_expect(
 		(
-			selected.selection_diagnostics.mode == "terminal_health_reserve_then_maximum_utility"
+			selected.selection_diagnostics.mode == "committed_viability_then_maximum_utility"
 			and selected.selection_diagnostics.viable_candidate_count == 2
 			and selected.selection_diagnostics.excluded_certain_terminal_candidate_count == 1
 		),
 		"selection diagnostics must expose the committed viability boundary"
 	)
-	var safe_passive := _scored_action(1.0, 0.0, 0.0, 2.0)
-	var uncertain_engagement := _scored_action(10.0, 0.05, 0.4, 0.5)
+	var safe_passive := _scored_action(1.0, 0.0, 0.0)
+	var uncertain_engagement := _scored_action(10.0, 0.05, 0.4)
 	selected = selector.select([safe_passive, uncertain_engagement])
 	_expect(
 		selected.score == uncertain_engagement.score,
@@ -572,43 +572,52 @@ func _check_terminal_health_reserve_action_selection() -> void:
 			+ "and recovery utility"
 		)
 	)
-	var reserve_spending_engagement := _scored_action(100.0, 0.0, 0.0, -2.0)
-	selected = selector.select([safe_passive, reserve_spending_engagement])
-	_expect(
-		selected.score == safe_passive.score,
-		"future value must not purchase an exit from the terminal health reserve domain"
-	)
-	var worse_recovery := _scored_action(100.0, 0.0, 0.0, -4.0)
-	var better_recovery := _scored_action(1.0, 0.0, 0.0, -1.0)
-	selected = selector.select([worse_recovery, better_recovery])
+
+	var continuation_path := PLANNING_PATH + "run_continuation_value_model.gd"
+	var continuation_model: Reference = load(continuation_path).new()
+	var observation: Dictionary = _fixtures.planning_observation([])
+	observation.player_state.resources = {"materials": 10.0}
+	observation.player_state.inventory = {"item_count": 2}
+	observation.player_state.weapons = [{"slot": 0}]
+	var continuation_value: Dictionary = continuation_model.estimate(observation)
 	_expect(
 		(
-			selected.score == better_recovery.score
-			and selected.selection_diagnostics.terminal_health_reserve_fallback_active
+			continuation_value.equipment_count == 3
+			and is_equal_approx(continuation_value.total_value, 40.0)
 		),
-		"an empty viability domain must recover the greatest terminal reserve margin"
+		"run continuation value must include observable held materials and equipment"
 	)
 
-	var reserve_model_path := PLANNING_PATH + "health/terminal_health_reserve_model.gd"
-	var reserve_model: Reference = load(reserve_model_path).new()
-	var reserve: Dictionary = reserve_model.evaluate(
-		{"forecast_expected_health_loss": 9.7, "expected_recovery": 0.0},
-		{"immediate_survival_buffer": 8.0}
+	var utility_model: Reference = load(PLANNING_PATH + "movement_utility_model.gd").new()
+	var evaluation: Dictionary = utility_model.evaluate(
+		{
+			"forecast_seconds": 0.7,
+			"forecast_expected_health_loss": 5.0,
+			"forecast_terminal_collision_risk": 0.0,
+		},
+		{
+			"objective_weights": {"survival": {"forecast_run_continuation_value_at_risk": -1.0}},
+			"state_factors":
+			{
+				"wave_seconds_remaining": 10.0,
+				"continuation_horizon_seconds": 1.0,
+				"health_inventory_value":
+				{
+					"immediate_survival_buffer": 20.0,
+					"terminal_health_loss_unit_value": 1.0,
+				},
+				"run_continuation_value": continuation_value,
+			},
+		}
 	)
 	_expect(
 		(
-			not reserve.retains_terminal_health_reserve
-			and is_equal_approx(reserve.terminal_health_reserve_margin, -1.7)
+			is_equal_approx(evaluation.score, -10.0)
+			and is_equal_approx(
+				evaluation.field_utility_breakdown.forecast_run_continuation_value_at_risk, -10.0
+			)
 		),
-		"forecast loss must preserve the next reachable hit reserve, not only current health"
-	)
-	reserve = reserve_model.evaluate(
-		{"forecast_expected_health_loss": 9.7, "expected_recovery": 2.0},
-		{"immediate_survival_buffer": 8.0}
-	)
-	_expect(
-		not reserve.retains_terminal_health_reserve,
-		"unordered forecast recovery must not be borrowed repeatedly as liquid health"
+		"sublethal buffer erosion must expose run capital through the common utility ledger"
 	)
 
 
@@ -659,10 +668,7 @@ func _check_immediate_hit_reserve_reachability() -> void:
 
 
 func _scored_action(
-	score: float,
-	committed_terminal_risk: float,
-	forecast_terminal_risk: float,
-	terminal_health_reserve_margin: float
+	score: float, committed_terminal_risk: float, forecast_terminal_risk: float
 ) -> Dictionary:
 	return {
 		"movement": Vector2.ZERO,
@@ -671,8 +677,6 @@ func _scored_action(
 		{
 			"terminal_collision_risk": committed_terminal_risk,
 			"forecast_terminal_collision_risk": forecast_terminal_risk,
-			"terminal_health_reserve_margin": terminal_health_reserve_margin,
-			"retains_terminal_health_reserve": terminal_health_reserve_margin > 0.0,
 		},
 	}
 

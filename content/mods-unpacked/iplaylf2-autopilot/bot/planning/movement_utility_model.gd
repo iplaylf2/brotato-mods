@@ -20,12 +20,16 @@ const WaveCompletionForecastModel := preload(
 const MovementTimingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
 )
+const RunContinuationValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/run_continuation_value_model.gd"
+)
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _health_inventory_value_model: Reference = HealthInventoryValueModel.new()
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _enemy_completion_value_model: Reference = EnemyCompletionValueModel.new()
 var _wave_completion_forecast_model: Reference = WaveCompletionForecastModel.new()
+var _run_continuation_value_model: Reference = RunContinuationValueModel.new()
 var _scoring_schema_validated := false
 
 
@@ -56,6 +60,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 		observation, completion_value_ledger, health_inventory_value, wave_time_remaining_ratio
 	)
 	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var run_continuation_value: Dictionary = _run_continuation_value_model.estimate(observation)
 	var context := {
 		"objective_weights":
 		{
@@ -63,6 +68,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			{
 				"integrated_environmental_exposure": -local_exposure_unit_value,
 				"forecast_health_inventory_loss_value": -1.0,
+				"forecast_run_continuation_value_at_risk": -1.0,
 				"movement_damage_exposure_reduction": local_exposure_unit_value,
 			},
 			# Recovery first becomes liquid health. A consumable pickup also spends
@@ -124,6 +130,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"positive_damage_is_terminal_rule": damage_is_terminal_rule,
 			"recovery_profile": recovery_profile,
 			"health_inventory_value": health_inventory_value,
+			"run_continuation_value": run_continuation_value,
 			"living_enemy_preservation_value":
 			completion_value_ledger.living_enemy_preservation_value,
 			"information_value_per_viewport": information_value_per_viewport,
@@ -154,6 +161,21 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 		outcome.forecast_expected_health_loss, health_inventory_value, continuation_horizon_ratio
 	)
 	scored_outcome.forecast_health_inventory_loss_value = health_inventory_loss_value
+	var immediate_survival_buffer: float = max(
+		1.0, float(health_inventory_value.immediate_survival_buffer)
+	)
+	var continuation_capital_exposure: float = max(
+		clamp(float(outcome.get("forecast_terminal_collision_risk", 0.0)), 0.0, 1.0),
+		clamp(
+			float(outcome.get("forecast_expected_health_loss", 0.0)) / immediate_survival_buffer,
+			0.0,
+			1.0
+		)
+	)
+	scored_outcome.forecast_run_continuation_value_at_risk = (
+		continuation_capital_exposure
+		* context.state_factors.run_continuation_value.total_value
+	)
 	var field_utility_breakdown := {}
 	var objective_utility_breakdown := {}
 	var score := 0.0
