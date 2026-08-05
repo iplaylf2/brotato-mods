@@ -176,6 +176,23 @@ func _check_death_reward_profile() -> void:
 		is_equal_approx(pricing.death_reward_value(observation, profile), 150.7),
 		"deterministic death stat changes must enter the generic completion value"
 	)
+	observation.wave_state.endless = false
+	observation.wave_state.number = 5
+	observation.wave_state.duration_seconds = 40.0
+	observation.wave_state.seconds_remaining = 20.0
+	var reward_without_stat: Dictionary = profile.duplicate(true)
+	reward_without_stat.stat_changes = []
+	var recurring_stat_value: float = (
+		pricing.death_reward_value(observation, profile)
+		- pricing.death_reward_value(observation, reward_without_stat)
+	)
+	_expect(
+		is_equal_approx(recurring_stat_value, 10.85),
+		(
+			"a durable stat reward must retain one opportunity contribution for every "
+			+ "remaining wave equivalent"
+		)
+	)
 	unit.stats.always_drop_consumables = true
 	profile = adapter.adapt_enemy(unit)
 	_expect(

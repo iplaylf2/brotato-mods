@@ -96,8 +96,9 @@
   `bot/planning/motion/enemy_reach_envelope_model.gd` 派生敌人的最大位移和接触支撑半径。
 - `bot/planning/local_enemy_interaction_projector.gd` 结合敌人可达包络、压力作用范围与武器锁定距离，构造
   动作预测的敌人空间粗筛。完整观察仍归导航与价值上下文所有。
-- `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、普通敌人与投射物的位置域碰撞证据、战斗支援
-  伤害与消耗、友方减压、治疗和挡弹时序；
+- `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、普通敌人与投射物的位置域碰撞证据、确定性
+  目标定向齐射在弹体生成前的未来射击走廊、边缘压力下的敌对暴露耦合、战斗支援伤害与消耗、友方减压、
+  治疗和挡弹时序；
   `bot/planning/velocity_obstacle_collision_model.gd` 拥有投射物与队友 TTC，以及已知冲撞锁定走廊的速度
   空间交会证据。
 - `bot/planning/health/collision_health_impact_model.gd` 合并位置域和速度空间证据，并按原版当前最短无敌帧
@@ -140,7 +141,8 @@
   材料等价边际价值，并把知识层提供的确定属性变化委托给属性机会定价；它不拥有敌人威胁或死亡转移机制。
 - `bot/planning/death_reward_probability_model.gd` 把死亡奖励画像与当前波次、潮汐波和幸运组合为材料、
   消耗品及箱子的当前概率。
-- `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
+- `bot/planning/stat_opportunity_pricing_model.gd` 按属性机会曲线和剩余机会时域，计算属性变化对未来事件
+  机会的边际价值。
 - `bot/planning/run_continuation_value_model.gd` 用当前持有材料和已有道具、武器的公共价格代理估计死亡会
   清除的对局延续价值。该跨域模型不解释碰撞几何、生命损失或动作风险。
 - `bot/planning/player_rule_outcome_predictor.gd` 负责把拾取收集和受击等事件证据解释为规则后果；
@@ -168,9 +170,10 @@
   `bot/planning/motion/projectile_motion_predictor.gd` 提供；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止
   策略仍归调用方。
-- `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；`MovementPlanner`
-  拥有规划结果及诊断语义。采样器删除重复机制画像并降低同步刷新频率；规划视图省略已确认不存在的永久
-  历史记录，公共观察仍保留它们。两项优化都不改变规划所消费的当前机会或保留字段的语义值。
+- `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、画像压缩、落盘和分片策略；
+  `MovementPlanner` 拥有规划结果及诊断语义。采样器省略重复的机制配置与规则证据，但保留解释路径风险
+  所需的攻击因果字段和当前攻击时间窗，并降低同步刷新频率；规划视图省略已确认不存在的永久历史记录，
+  公共观察仍保留它们。两项优化都不改变规划所消费的当前机会或保留字段的语义值。
 
 ## 组件角色命名
 

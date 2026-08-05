@@ -194,10 +194,9 @@ func _compact_observation(observation: Dictionary) -> Dictionary:
 
 
 func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
-	# The full stable mechanic graph is identical across many samples and is not
-	# needed to calibrate target completion, path risk, or observed health.
-	# Persist the causal scalars that explain those ledgers instead of repeatedly
-	# serializing attack configuration and rule evidence on the main thread.
+	# Most stable attack configuration repeats across samples. Keep the current
+	# timing window and the causal fields needed to explain path risk; omit
+	# unrelated attack configuration and rule evidence from main-thread encoding.
 	var projectile_attack: Dictionary = profile.get("projectile_attack", {})
 	var charge_attack: Dictionary = profile.get("charge_attack", {})
 	var target_response: Dictionary = profile.get("target_position_response", {})
@@ -213,7 +212,13 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 			"creates_projectile_pressure":
 			projectile_attack.get("creates_projectile_pressure", false),
 			"pressure_intensity": projectile_attack.get("pressure_intensity", 0.0),
+			"minimum_range": projectile_attack.get("minimum_range", 0.0),
+			"maximum_range": projectile_attack.get("maximum_range", 0.0),
+			"maximum_projectile_speed": projectile_attack.get("maximum_projectile_speed", 0.0),
+			"delivery_modes": projectile_attack.get("delivery_modes", []).duplicate(),
+			"launch_randomness": projectile_attack.get("launch_randomness", {}).duplicate(false),
 		},
+		"next_volley_window": profile.get("next_volley_window", {}).duplicate(false),
 		"charge_attack":
 		{
 			"active": charge_attack.get("active", false),

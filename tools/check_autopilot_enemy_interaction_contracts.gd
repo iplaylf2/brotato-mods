@@ -9,6 +9,8 @@ func run(fixtures: Reference) -> bool:
 	_fixtures = fixtures
 	_check_bounded_healing_burden()
 	_check_player_healing_opportunity()
+	_check_predictive_targeted_volley_lane()
+	_check_hostile_edge_confinement()
 	return not _failed
 
 
@@ -88,6 +90,90 @@ func _check_player_healing_opportunity() -> void:
 		nearby_burden < distant_burden and distant_burden < full_health_burden,
 		"player-healing opportunity must require missing health and decay with distance"
 	)
+
+
+func _check_predictive_targeted_volley_lane() -> void:
+	var model: Reference = load(PLANNING_PATH + "battlefield_influence_model.gd").new()
+	var shooter: Dictionary = _fixtures.enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
+	shooter.behavior_profile.projectile_attack = {
+		"creates_projectile_pressure": true,
+		"confidence": 1.0,
+		"pressure_intensity": 1.0,
+		"minimum_range": 0.0,
+		"maximum_range": 500.0,
+		"maximum_projectile_speed": 100.0,
+		"delivery_modes": ["source_toward_target"],
+		"launch_randomness": {"has_random_direction": false},
+	}
+	shooter.behavior_profile.next_volley_window = {
+		"is_exact": true,
+		"earliest_seconds": 0.0,
+		"latest_seconds": 0.0,
+	}
+	var observation: Dictionary = _fixtures.planning_observation([shooter])
+	var weights := _influence_weights()
+	var in_lane: Dictionary = model.sample_point(observation, Vector2.ZERO, 1.0, weights)
+	var outside_lane: Dictionary = model.sample_point(
+		observation, Vector2(100.0, 100.0), 1.0, weights
+	)
+	_expect(
+		in_lane.channels.ranged > outside_lane.channels.ranged,
+		(
+			"a ready deterministic targeted volley must create a prospective corridor "
+			+ "that candidate movement can leave"
+		)
+	)
+	var attack: Dictionary = observation.enemy_tracks[0].behavior_profile.projectile_attack
+	attack.launch_randomness.has_random_direction = true
+	observation.physics_frame += 1
+	var random_in_lane: Dictionary = model.sample_point(observation, Vector2.ZERO, 1.0, weights)
+	var random_outside_lane: Dictionary = model.sample_point(
+		observation, Vector2(100.0, 100.0), 1.0, weights
+	)
+	_expect(
+		is_equal_approx(random_in_lane.channels.ranged, random_outside_lane.channels.ranged),
+		"an unresolved random launch direction must not invent a future firing lane"
+	)
+
+
+func _check_hostile_edge_confinement() -> void:
+	var model: Reference = load(PLANNING_PATH + "battlefield_influence_model.gd").new()
+	var enemy: Dictionary = _fixtures.enemy_track(Vector2(20.0, 0.0), Vector2.ZERO, false)
+	var combined: Dictionary = _fixtures.planning_observation([enemy])
+	combined.localization.map_bounds.distance_to_left = 10.0
+	combined.localization.map_bounds.distance_to_top = 10.0
+	var threat_only: Dictionary = _fixtures.planning_observation([enemy])
+	var edge_only: Dictionary = _fixtures.planning_observation([])
+	edge_only.localization.map_bounds.distance_to_left = 10.0
+	edge_only.localization.map_bounds.distance_to_top = 10.0
+	var weights := _influence_weights()
+	var combined_pressure: float = model.sample_point(
+		combined, Vector2.ZERO, 0.0, weights
+	).environmental_pressure
+	var threat_pressure: float = model.sample_point(
+		threat_only, Vector2.ZERO, 0.0, weights
+	).environmental_pressure
+	var edge_pressure: float = model.sample_point(
+		edge_only, Vector2.ZERO, 0.0, weights
+	).environmental_pressure
+	_expect(
+		combined_pressure > threat_pressure + edge_pressure,
+		"hostile pressure near a corner must price the lost escape headings"
+	)
+
+
+func _influence_weights() -> Dictionary:
+	return {
+		"enemy_proximity": 1.0,
+		"enemy_contact": 1.0,
+		"projectile_contact": 1.0,
+		"spawn_warning": 1.0,
+		"ranged_attack": 1.0,
+		"map_edge": 1.0,
+		"allied_body_proximity": 1.0,
+		"allied_pressure_relief": 1.0,
+		"projectile_interception_relief": 1.0,
+	}
 
 
 func _expect(condition: bool, message: String) -> void:

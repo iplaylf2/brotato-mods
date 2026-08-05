@@ -1,7 +1,7 @@
 extends Reference
 
-# Converts player-stat changes into material-equivalent changes in future event
-# opportunities.
+# Converts player-stat changes into material-equivalent changes in recurring
+# future event opportunities.
 
 const REFERENCE_MATERIAL_VALUES := {"curse": 0.7}
 
@@ -44,7 +44,7 @@ func _change_value(observation: Dictionary, change: Dictionary) -> float:
 		reference_material_value
 		* marginal_gain
 		/ reference_gain
-		* _remaining_run_opportunity_fraction(observation)
+		* _remaining_opportunity_wave_equivalents(observation)
 	)
 
 
@@ -60,7 +60,11 @@ func _opportunity_chance(profile: Dictionary, stat_value: float) -> float:
 	return value
 
 
-func _remaining_run_opportunity_fraction(observation: Dictionary) -> float:
+func _remaining_opportunity_wave_equivalents(observation: Dictionary) -> float:
+	# Use remaining wave-equivalents as a bounded proxy for recurring enemy and
+	# shop opportunities. A whole-run fraction would collapse that recurring
+	# stream into one event. Endless mode has no finite horizon, so retain one
+	# wave-equivalent instead of inventing an unbounded future.
 	if observation.wave_state.get("endless", false):
 		return 1.0
 	var final_wave: float = max(1.0, observation.wave_state.get("final_number", 1.0))
@@ -69,4 +73,4 @@ func _remaining_run_opportunity_fraction(observation: Dictionary) -> float:
 	var current_wave_fraction: float = clamp(
 		observation.wave_state.seconds_remaining / duration, 0.0, 1.0
 	)
-	return clamp((final_wave - current_wave + current_wave_fraction) / final_wave, 0.0, 1.0)
+	return max(0.0, final_wave - current_wave + current_wave_fraction)

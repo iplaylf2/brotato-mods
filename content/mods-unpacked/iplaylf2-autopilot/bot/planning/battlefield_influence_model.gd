@@ -243,11 +243,15 @@ func _sample_enemy_pressure(
 			channels.contact_damage = max(
 				channels.contact_damage, track.behavior_profile.contact_damage
 			)
-		_accumulate_ranged_pressure(track, position, sample.time, channels)
+		_accumulate_ranged_pressure(track, position, sample, channels, geometry)
 
 
 func _accumulate_ranged_pressure(
-	track: Dictionary, position: Vector2, sample_time: float, channels: Dictionary
+	track: Dictionary,
+	position: Vector2,
+	sample: Dictionary,
+	channels: Dictionary,
+	geometry: Dictionary
 ) -> void:
 	var projectile_attack: Dictionary = track.behavior_profile.projectile_attack
 	if not projectile_attack.get("creates_projectile_pressure", false):
@@ -267,7 +271,7 @@ func _accumulate_ranged_pressure(
 	var volley_pressure_factor := 1.0
 	var volley_window: Dictionary = track.behavior_profile.get("next_volley_window", {})
 	if volley_window.get("is_exact", false):
-		volley_pressure_factor = (0.0 if sample_time < volley_window.earliest_seconds else 1.0)
+		volley_pressure_factor = (0.0 if sample.time < volley_window.earliest_seconds else 1.0)
 	channels.ranged += (
 		proximity
 		* proximity
@@ -275,6 +279,74 @@ func _accumulate_ranged_pressure(
 		* projectile_attack.confidence
 		* projectile_attack.pressure_intensity
 		* volley_pressure_factor
+	)
+	channels.ranged += _prospective_projectile_lane_pressure(
+		track, projectile_attack, sample, geometry
+	)
+
+
+func _prospective_projectile_lane_pressure(
+	track: Dictionary, projectile_attack: Dictionary, sample: Dictionary, geometry: Dictionary
+) -> float:
+	# A deterministic, target-directed volley already has a causal future
+	# corridor before its projectile node exists. Project the observed exact ready
+	# time and stable delivery equation so candidate motion can leave that corridor.
+	# Random launch outcomes remain radial ambient pressure until a projectile is
+	# visible and its resolved trajectory can be observed.
+	var volley_window: Dictionary = track.behavior_profile.get("next_volley_window", {})
+	if not volley_window.get("is_exact", false):
+		return 0.0
+	var launch_time: float = max(0.0, float(volley_window.get("earliest_seconds", INF)))
+	if launch_time > sample.time:
+		return 0.0
+	var launch_randomness: Dictionary = projectile_attack.get("launch_randomness", {})
+	if (
+		launch_randomness.get("has_random_direction", false)
+		or launch_randomness.get("has_random_speed", false)
+		or launch_randomness.get("has_random_origin", false)
+	):
+		return 0.0
+	var delivery_modes: Array = projectile_attack.get("delivery_modes", [])
+	if (
+		not delivery_modes.has("source_toward_target")
+		and not delivery_modes.has("source_area_toward_target")
+	):
+		return 0.0
+	var projectile_speed: float = max(
+		0.0, float(projectile_attack.get("maximum_projectile_speed", 0.0))
+	)
+	if projectile_speed <= 0.0:
+		return 0.0
+	var launch_fraction: float = launch_time / max(0.0001, float(sample.time))
+	var player_position_at_launch: Vector2 = sample.displacement * launch_fraction
+	var source_position_at_launch: Vector2 = _enemy_motion_predictor.predict_position(
+		track, launch_time, player_position_at_launch
+	)
+	var source_to_player: Vector2 = player_position_at_launch - source_position_at_launch
+	var launch_distance: float = source_to_player.length()
+	if launch_distance <= 0.0:
+		return 0.0
+	var minimum_range: float = max(0.0, float(projectile_attack.get("minimum_range", 0.0)))
+	var maximum_range: float = max(
+		minimum_range, float(projectile_attack.get("maximum_range", INF))
+	)
+	if launch_distance < minimum_range or launch_distance > maximum_range:
+		return 0.0
+	var projectile_position: Vector2 = (
+		source_position_at_launch
+		+ source_to_player.normalized() * projectile_speed * (sample.time - launch_time)
+	)
+	var player_relative_position: Vector2 = projectile_position - sample.displacement
+	var pressure_distance: float = max(1.0, float(geometry.projectile_pressure_distance))
+	var proximity: float = clamp(
+		(pressure_distance - player_relative_position.length()) / pressure_distance, 0.0, 1.0
+	)
+	return (
+		proximity
+		* proximity
+		* track.recency_confidence
+		* projectile_attack.confidence
+		* projectile_attack.pressure_intensity
 	)
 
 
@@ -652,18 +724,25 @@ func _evaluate_channels(channels: Dictionary, weights: Dictionary) -> Dictionary
 		channels.projectile_contact * weights.projectile_contact,
 		channels.projectile_contact_interception * weights.projectile_interception_relief
 	)
+	# Boundaries remove escape headings. Under hostile pressure that lost control
+	# authority is more costly than an independent edge penalty, especially at a
+	# corner. This coupling is a local viability constraint derived from the same
+	# continuous fields; it does not prescribe a route or orbit direction.
+	var hostile_confinement_multiplier := 1.0 + max(0.0, channels.edge)
 	# Contact channels are already normalized geometric likelihoods. Applying the
 	# ambient-pressure saturation transform again capped even a center crossing at
 	# 1 - exp(-1), which then understated both hit probability and lethal risk.
 	var collision: float = clamp(collision_hostile - interception_relief, 0.0, 1.0)
-	var environmental: float = max(
-		0.0, suppressible_enemy_ambient + spawn_exposure + positional - ambient_relief
+	var environmental: float = (
+		max(0.0, suppressible_enemy_ambient - ambient_relief) * hostile_confinement_multiplier
+		+ spawn_exposure * hostile_confinement_multiplier
+		+ positional
 	)
-	var relief: float = ambient_relief + interception_relief
+	var relief: float = ambient_relief * hostile_confinement_multiplier + interception_relief
 	var hostile: float = (
 		collision_hostile
-		+ suppressible_enemy_ambient
-		+ spawn_exposure
+		+ suppressible_enemy_ambient * hostile_confinement_multiplier
+		+ spawn_exposure * hostile_confinement_multiplier
 		+ positional
 	)
 	return {
