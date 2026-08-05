@@ -19,7 +19,7 @@ func _init() -> void:
 	_check_swept_enemy_contact()
 	_check_projectile_hitbox_ttc()
 	_check_navigation_horizon_consistency()
-	_check_navigation_opportunity_retention()
+	_check_trajectory_value_field()
 	_check_pickup_interaction_geometry()
 	_check_visible_material_quantity_estimate()
 	_check_spatial_target_control()
@@ -182,23 +182,21 @@ func _check_navigation_horizon_consistency() -> void:
 		"environmental_pressure_weights": _influence_weights(),
 		"state_factors": {"positive_damage_is_terminal_rule": false},
 		"enemy_completion_value_ledger": _completion_value_ledger({}),
-		"navigation_directional_value_samples":
+		"navigation_trajectory_value_samples":
 		[
 			{
 				"direction": Vector2.RIGHT,
-				"terminal_distance": 100.0,
-				"terminal_value_delta": 1.0,
+				"value_rate": 0.01,
 			},
 			{
 				"direction": Vector2.LEFT,
-				"terminal_distance": 100.0,
-				"terminal_value_delta": 0.0,
+				"value_rate": 0.0,
 			},
 		],
 	}
 	var outcome: Dictionary = predictor.predict_base(observation, action, context)
 	_expect(
-		is_equal_approx(outcome.navigation_terminal_value_gain, 0.4),
+		is_equal_approx(outcome.navigation_trajectory_value_gain, 0.4),
 		(
 			"navigation and local consequences must realize the same sustained-action "
 			+ "forecast horizon"
@@ -206,80 +204,64 @@ func _check_navigation_horizon_consistency() -> void:
 	)
 
 
-func _check_navigation_opportunity_retention() -> void:
-	var planner_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_intent_planner.gd"
-	)
-	var planner: Reference = planner_script.new()
-	var diagonal := Vector2(1.0, 1.0).normalized()
-	var tree := {
-		"kind": "tree",
-		"memory_record_id": 1,
-		"relative_position": diagonal * 500.0,
-		"last_observed_relative_position": diagonal * 500.0,
-		"visual_radius": 10.0,
-		"existence_confidence": 1.0,
-		"destructible_profile": _fixtures.tree_destructible_profile(1.0, 10.0, 10.0),
-	}
-	var observation := _planning_observation([])
-	observation.remembered_entities = [tree]
-	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
+func _check_trajectory_value_field() -> void:
+	var enemy: Dictionary = _enemy_track(Vector2(60.0, 0.0), Vector2.ZERO, false)
+	var observation: Dictionary = _planning_observation([enemy])
+	var attack: Dictionary = _weapon_attack_model()
+	attack.delivery.maximum_targeting_distance = 5.0
+	attack.delivery.paths.maximum_travel_distance = 5.0
+	observation.player_state.weapons = [{"slot": 0, "attack_model": attack}]
 	var context := {
 		"environmental_pressure_weights": _influence_weights(),
+		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0}),
 		"state_factors":
 		{
 			"health_inventory_value":
 			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0},
 			"information_value_per_viewport": 0.0,
-			"environmental_exposure_value": 1.0,
+			"environmental_exposure_value": 0.0,
 			"continuation_horizon_seconds": 1.0,
 		},
-		"wave_completion_forecast": _fixtures.wave_completion_forecast({}, {1: 1.0}),
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 1.0}),
 	}
-	var compute_budget := {"has_deadline": false}
-	var compute_policy_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_compute_budget_policy.gd"
-	)
-	var result: Dictionary = planner.plan(
+	var compute_policy: Reference = load(PLANNING_PATH + "planning_compute_budget_policy.gd").new()
+	var result: Dictionary = load(PLANNING_PATH + "navigation_intent_planner.gd").new().plan(
 		observation,
 		context,
-		compute_budget,
+		{"has_deadline": false},
 		{"navigation_baseline_direction_count": 4, "navigation_extra_evaluation_limit": 0},
-		compute_policy_script.new()
+		compute_policy
+	)
+	var spatial: Reference = load(PLANNING_PATH + "spatial_opportunity_value_model.gd").new()
+	var timing: Dictionary = load(PLANNING_PATH + "movement_timing_model.gd").derive(observation)
+	var endpoint_delta: Dictionary = spatial.point_value_delta(
+		observation,
+		context,
+		Vector2.RIGHT * result.sampling_radius,
+		timing.effective_navigation_horizon_seconds
+	)
+	var right_sample: Dictionary = _nearest_trajectory_sample(
+		result.trajectory_value_samples, Vector2.RIGHT
 	)
 	_expect(
-		result.movement_preference.dot(diagonal) > 0.99,
-		"an off-lattice opportunity must remain distinguishable at the search floor"
+		(
+			result.movement_preference.dot(Vector2.RIGHT) > 0.99
+			and abs(endpoint_delta.weapon_completion_opportunity) < 0.0001
+			and right_sample.value_breakdown.weapon_completion_opportunity > 0.0
+		),
+		"a trajectory must retain opportunity crossed before its endpoint"
 	)
 
-	var near_enemy := _enemy_track(Vector2(45.0, 0.0), Vector2.ZERO, false)
-	var valuable_enemy := _enemy_track(diagonal * 100.0, Vector2.ZERO, false)
-	valuable_enemy.track_id = 2
-	observation = _planning_observation([near_enemy, valuable_enemy])
-	observation.player_state.weapons = [{"slot": 0, "attack_model": _weapon_attack_model()}]
-	observation.player_state.movement.input_vector = Vector2.ZERO
-	context.enemy_completion_value_ledger = _completion_value_ledger({1: 1.0, 2: 100.0})
-	context.wave_completion_forecast = _fixtures.wave_completion_forecast({1: 1.0, 2: 1.0})
-	context.state_factors.continuation_horizon_seconds = 1.0
-	result = planner_script.new().plan(
-		observation,
-		context,
-		compute_budget,
-		{"navigation_baseline_direction_count": 4, "navigation_extra_evaluation_limit": 0},
-		compute_policy_script.new()
-	)
-	var actions: Array = load(PLANNING_PATH + "movement_action_generator.gd").new().generate(
-		observation, result
-	)
-	var retained_opportunity_action := false
-	for action in actions:
-		if action.movement.dot(diagonal) > 0.99:
-			retained_opportunity_action = true
-			break
-	_expect(
-		retained_opportunity_action,
-		"an in-range opportunity must reach local scoring without duplicate strategic value"
-	)
+
+func _nearest_trajectory_sample(samples: Array, direction: Vector2) -> Dictionary:
+	var nearest := {}
+	var nearest_alignment := -INF
+	for sample in samples:
+		var alignment: float = sample.direction.dot(direction)
+		if alignment > nearest_alignment:
+			nearest = sample
+			nearest_alignment = alignment
+	return nearest
 
 
 func _check_pickup_interaction_geometry() -> void:
@@ -315,18 +297,25 @@ func _check_pickup_interaction_geometry() -> void:
 		"enemy_tracks": [],
 		"localization": {"map_bounds": _unknown_bounds()},
 	}
-	var value: Dictionary = spatial.value_delta(
-		observation,
-		{
-			"state_factors": {"health_inventory_value": {}},
-			"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
-		},
-		Vector2(50.0, 0.0),
-		0.5
-	)
+	var context := {
+		"state_factors": {"health_inventory_value": {}},
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
+	}
+	var value: Dictionary = spatial.point_value_delta(observation, context, Vector2(50.0, 0.0), 0.5)
 	_expect(
 		value.material_opportunity > 0.0 and value.material_opportunity < 1.0,
 		"pickup opportunity must persist until the material center reaches the collection circle"
+	)
+	var realized_material: Dictionary = material.duplicate(true)
+	realized_material.relative_position = Vector2(10.0, 0.0)
+	observation.physics_frame += 1
+	observation.remembered_entities = [realized_material]
+	var realized_value: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2.LEFT * 50.0, 0.5
+	)
+	_expect(
+		abs(realized_value.material_opportunity) < 0.0001,
+		"a pickup inside the collection circle must not be repriced by navigation"
 	)
 	var collection_geometry_script: Script = load(
 		PLANNING_PATH + "pickups/pickup_collection_geometry_model.gd"
@@ -388,7 +377,7 @@ func _check_spatial_target_control() -> void:
 		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 1.0, 2: 1.0}),
 	}
 	var spatial: Reference = spatial_script.new()
-	var enemy_delta: Dictionary = spatial.value_delta(
+	var enemy_delta: Dictionary = spatial.point_value_delta(
 		observation, context, Vector2(250.0, 0.0), 1.0
 	)
 	_expect(
@@ -398,7 +387,7 @@ func _check_spatial_target_control() -> void:
 	observation.physics_frame += 1
 	observation.enemy_tracks[1].relative_position = Vector2(100.0, 0.0)
 	spatial = spatial_script.new()
-	var in_range_delta: Dictionary = spatial.value_delta(
+	var in_range_delta: Dictionary = spatial.point_value_delta(
 		observation, context, Vector2(50.0, 0.0), 0.5
 	)
 	_expect(
@@ -425,7 +414,9 @@ func _check_spatial_target_control() -> void:
 	context.enemy_completion_value_ledger = _completion_value_ledger({1: 0.0})
 	context.wave_completion_forecast = _fixtures.wave_completion_forecast({1: 1.0}, {1: 1.0})
 	spatial = spatial_script.new()
-	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(350.0, 0.0), 1.0)
+	var tree_delta: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(350.0, 0.0), 1.0
+	)
 	_expect(
 		tree_delta.weapon_completion_opportunity > 0.0,
 		(

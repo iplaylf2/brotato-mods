@@ -103,7 +103,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"expected_rule_completion_value": 1.0,
 				"expected_allied_completion_value": 1.0,
 			},
-			"navigation": {"navigation_terminal_value_gain": 1.0},
+			"navigation": {"navigation_trajectory_value_gain": 1.0},
 		},
 		"environmental_pressure_weights":
 		{

@@ -36,10 +36,10 @@
 - `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”、“当前生命、即时威胁与清场前补充 →
   生命库存、即时单位价值及补给库存价值”和“候选结果 → 终点生命储备可行性”三段协议，结果供导航风险、
   动作效用与候选执行资格共同消费；
-- `pickups` 拥有“玩家路径与已观察拾取物运动 → 连续收集几何”的协议，供导航机会、直接材料收益与
-  拾取事件规则共同消费；
+- `pickups` 拥有“已观察拾取物运动与玩家未来状态或路径 → 收集圈间隙或连续收集事件”的协议，供导航
+  机会、直接材料收益与拾取事件规则共同消费；
 - `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、动作条件
-  武器结果预测与容量守恒，以及候选终点的导航武器完成价值。
+  武器结果预测与容量守恒，以及候选轨迹采样状态的导航武器完成价值。
 
 根目录只保留组合多个稳定子协议的规划协作者；`engagement` 子目录不拥有候选生成、行为模式或敌人身份
 优先级。
@@ -108,11 +108,11 @@
 
 ### 机会、规则与动作结果
 
-- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会沿候选路径的条件完成进度、
-  候选终点的导航武器完成价值差和按统一价值上界聚合的机会候选方向；它不按目标身份解释自动选靶。
-  `bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，比较
-  导航终点，并公开胜出导航方向与可达机会价值上界最高的方向。
-  `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
+- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会及导航武器完成价值在未来玩家状态
+  相对同刻零输入反事实的差，并按统一价值上界提出预算内搜索方向；它不按目标身份解释自动选靶。
+- `bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，沿每个可达候选
+  轨迹采样时空价值场，并只公开经过完整轨迹评价后胜出的导航方向。
+- `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
 - `bot/planning/engagement/engagement_target_projector.gd` 把敌人轨迹与树木投影为统一的可交战
   目标契约；契约公开移动、完成状态、收益、负担、死亡后果与武器响应，不指定目标优先级。
 - `bot/planning/weapons/weapon_attack_capacity_model.gd` 定义与目标无关的期望主路径攻击率、单次命中伤害和
@@ -125,10 +125,10 @@
   玩家的一击完成状态统一解释为有效攻击工作量，供波次容量与局部武器结果共享。
 - `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
   `bot/planning/enemy_health_model.gd` 把敌人最后可见生命测量与稳定最大生命先验统一解析为剩余生命。
-- `bot/planning/engagement/navigation_weapon_completion_value_model.gd` 按候选终点时刻的预计几何统一计算
+- `bot/planning/engagement/navigation_weapon_completion_value_model.gd` 按候选轨迹采样状态的预计几何统一计算
   最近主目标与贯穿、弹射、范围机制的后续完成价值，并以同一物理帧缓存目标投影。
-- `bot/planning/pickups/pickup_collection_geometry_model.gd` 统一计算移动拾取物与玩家分段路径的连续收集
-  几何；导航、直接收益和事件规则共同使用该契约。
+- `bot/planning/pickups/pickup_collection_geometry_model.gd` 统一拥有收集圈边界、未来点位间隙，以及移动
+  拾取物与玩家分段路径的连续交会；导航查询点位间隙，直接收益和事件规则查询连续收集事件。
 - `bot/planning/opportunity_pricing_model.gd` 只换算材料、消耗品、树木和击杀掉落，不再拥有敌人威胁或
   死亡转移；
   `bot/knowledge/pickups/item_box_item_value_profile_adapter.gd` 从原版波次稀有度规则、已解锁道具池和当前
@@ -142,7 +142,7 @@
   为效用，其中局部与导航环境暴露使用即时单位价值，补给储备和波次尺度敌人负担使用补给库存价值。
   预测和评分是两个边界，选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
-  方向和可达机会价值上界最高的方向，并按规划器提出的细分方向构造新候选；
+  方向，并按规划器提出的细分方向构造新候选；
   `bot/planning/movement_action_selector.gd` 从终点生命储备可行的已评分候选中选择总效用最高者，并在可行域
   为空时执行储备余量回退；
   `MovementPlanner` 协调生成、预测、评分、细分与选择，不把新行为政策藏进选择器。

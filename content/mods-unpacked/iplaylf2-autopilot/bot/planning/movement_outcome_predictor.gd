@@ -83,7 +83,7 @@ func predict_base(
 		"expected_tree_completion_value": 0.0,
 		"standing_seconds": 0.0,
 		"moving_seconds": 0.0,
-		"navigation_terminal_value_gain": 0.0,
+		"navigation_trajectory_value_gain": 0.0,
 		"expected_attack_hits": 0.0,
 		"expected_enemy_hits": 0.0,
 		"expected_rule_completion_value": 0.0,
@@ -153,7 +153,7 @@ func predict_base(
 	# The controller still commits only one control interval before replanning;
 	# shortening this field alone made local combat receive several times the
 	# horizon of strategic movement in the same utility comparison.
-	outcome.navigation_terminal_value_gain = _navigation_value_progress(
+	outcome.navigation_trajectory_value_gain = _navigation_trajectory_progress(
 		observation, action, planning_context
 	)
 	return outcome
@@ -232,10 +232,10 @@ func _material_acquisition_value(observation: Dictionary, samples: Array) -> flo
 	return value
 
 
-func _navigation_value_progress(
+func _navigation_trajectory_progress(
 	observation: Dictionary, action: Dictionary, planning_context: Dictionary
 ) -> float:
-	# Realize the terminal value field at this action's direction using only the
+	# Realize the trajectory value field at this action's direction using only the
 	# displacement caused by the candidate movement input.
 	var terminal_sample: Dictionary = action.samples.back()
 	var terminal_displacement: Vector2 = terminal_sample.displacement
@@ -245,7 +245,7 @@ func _navigation_value_progress(
 	var controlled_displacement: Vector2 = terminal_displacement - zero_input_displacement
 	if controlled_displacement.length_squared() <= 0.0:
 		return 0.0
-	var directional_samples: Array = planning_context.navigation_directional_value_samples
+	var directional_samples: Array = planning_context.navigation_trajectory_value_samples
 	if directional_samples.empty():
 		return 0.0
 	var value_rate: float = _interpolated_navigation_value_rate(
@@ -270,10 +270,10 @@ func _interpolated_navigation_value_rate(direction: Vector2, directional_samples
 		if counterclockwise_distance < after_distance:
 			after_distance = counterclockwise_distance
 			after = sample
-	var before_rate: float = before.terminal_value_delta / before.terminal_distance
+	var before_rate: float = before.value_rate
 	if before_distance <= 0.000001:
 		return before_rate
-	var after_rate: float = after.terminal_value_delta / after.terminal_distance
+	var after_rate: float = after.value_rate
 	var angular_span: float = before_distance + after_distance
 	return lerp(before_rate, after_rate, before_distance / angular_span)
 

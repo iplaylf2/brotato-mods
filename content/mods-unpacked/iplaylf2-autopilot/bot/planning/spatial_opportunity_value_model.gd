@@ -1,9 +1,8 @@
 extends Reference
 
-# Owns route-conditioned pickup progress and navigation weapon completion value in
-# material-equivalent utility. Moving candidates and the zero-input baseline use
-# the same future time, so only player-caused access and target-selection changes
-# receive action value.
+# Samples the material-equivalent opportunity field at one future player state.
+# Moving candidates and the zero-input counterfactual use the same time, so only
+# player-caused access and target-selection changes receive value.
 
 const OpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
@@ -42,6 +41,7 @@ var _prepared_physics_frame := -1
 var _prepared_geometry := {}
 var _prepared_pickups := []
 var _prepared_candidate_entries := []
+var _stationary_weapon_value_by_time := {}
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
@@ -49,7 +49,7 @@ func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_navigation_weapon_completion_value_model.set_enemy_motion_predictor(predictor)
 
 
-func _evaluate_route(
+func _evaluate_point(
 	observation: Dictionary,
 	context: Dictionary,
 	player_displacement: Vector2,
@@ -66,21 +66,26 @@ func _evaluate_route(
 	var reach_distance: float = _prepared_geometry.opportunity_reach_distance
 	for entry in _prepared_pickups:
 		var pickup: Dictionary = entry.pickup
-		var initial_gap: float = _pickup_initial_collection_gap(observation, pickup)
-		var route_gap: float = _pickup_minimum_collection_gap(
-			observation, pickup, player_displacement, forecast_seconds
+		var stationary_gap: float = _pickup_collection_geometry_model.collection_gap_at(
+			pickup, Vector2.ZERO, forecast_seconds, _pickup_collection_radius(observation)
+		)
+		var candidate_gap: float = _pickup_collection_geometry_model.collection_gap_at(
+			pickup, player_displacement, forecast_seconds, _pickup_collection_radius(observation)
 		)
 		var contribution: float = (
 			entry.value
-			* _pickup_collection_progress(initial_gap, route_gap, reach_distance)
+			* _accessibility_delta(stationary_gap, candidate_gap, reach_distance)
 		)
 		match pickup.kind:
 			"material":
 				result.material_opportunity += contribution
 			"consumable":
 				result.recovery_opportunity += contribution
-	result.weapon_completion_opportunity = _navigation_weapon_completion_value_model.value_at(
-		observation, context, player_displacement, forecast_seconds
+	result.weapon_completion_opportunity = (
+		_navigation_weapon_completion_value_model.value_at(
+			observation, context, player_displacement, forecast_seconds
+		)
+		- _stationary_weapon_value(observation, context, forecast_seconds)
 	)
 	result.total = (
 		result.material_opportunity
@@ -90,33 +95,21 @@ func _evaluate_route(
 	return result
 
 
-func value_delta(
+func point_value_delta(
 	observation: Dictionary,
 	context: Dictionary,
 	player_displacement: Vector2,
-	forecast_seconds: float,
-	stationary := {}
+	forecast_seconds: float
 ) -> Dictionary:
-	_prepare_inputs(observation, context)
-	if stationary.empty():
-		stationary = _evaluate_route(observation, context, Vector2.ZERO, forecast_seconds)
-	var candidate: Dictionary = _evaluate_route(
+	var candidate: Dictionary = _evaluate_point(
 		observation, context, player_displacement, forecast_seconds
 	)
 	return {
-		"material_opportunity": candidate.material_opportunity - stationary.material_opportunity,
-		"recovery_opportunity": candidate.recovery_opportunity - stationary.recovery_opportunity,
-		"weapon_completion_opportunity":
-		candidate.weapon_completion_opportunity - stationary.weapon_completion_opportunity,
-		"total": candidate.total - stationary.total,
+		"material_opportunity": candidate.material_opportunity,
+		"recovery_opportunity": candidate.recovery_opportunity,
+		"weapon_completion_opportunity": candidate.weapon_completion_opportunity,
+		"total": candidate.total,
 	}
-
-
-func stationary_value(
-	observation: Dictionary, context: Dictionary, forecast_seconds: float
-) -> Dictionary:
-	_prepare_inputs(observation, context)
-	return _evaluate_route(observation, context, Vector2.ZERO, forecast_seconds)
 
 
 func candidate_directions(observation: Dictionary, context: Dictionary) -> Array:
@@ -145,11 +138,15 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	_prepared_geometry = _movement_geometry.derive(observation)
 	_prepared_pickups = []
 	_prepared_candidate_entries = []
+	_stationary_weapon_value_by_time = {}
 	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
 	for pickup in observation.get("remembered_entities", []):
 		if pickup.kind == "tree":
 			continue
 		if pickup.existence_confidence <= 0.0:
+			continue
+		var gap: float = _pickup_initial_collection_gap(observation, pickup)
+		if gap <= 0.0:
 			continue
 		var value: float = (
 			_pickup_value(observation, pickup, health_inventory_value)
@@ -162,7 +159,6 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 			"value": value,
 		}
 		_prepared_pickups.push_back(pickup_entry)
-		var gap: float = _pickup_initial_collection_gap(observation, pickup)
 		_prepared_candidate_entries.push_back(
 			{
 				"position": pickup.relative_position,
@@ -180,6 +176,17 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 				"value": value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance),
 			}
 		)
+
+
+func _stationary_weapon_value(
+	observation: Dictionary, context: Dictionary, forecast_seconds: float
+) -> float:
+	if not _stationary_weapon_value_by_time.has(forecast_seconds):
+		var stationary_value: float = _navigation_weapon_completion_value_model.value_at(
+			observation, context, Vector2.ZERO, forecast_seconds
+		)
+		_stationary_weapon_value_by_time[forecast_seconds] = stationary_value
+	return _stationary_weapon_value_by_time[forecast_seconds]
 
 
 func _pickup_value(
@@ -201,17 +208,6 @@ func _pickup_initial_collection_gap(observation: Dictionary, pickup: Dictionary)
 	)
 
 
-func _pickup_minimum_collection_gap(
-	observation: Dictionary,
-	pickup: Dictionary,
-	player_displacement: Vector2,
-	forecast_seconds: float
-) -> float:
-	return _pickup_collection_geometry_model.minimum_collection_gap(
-		pickup, player_displacement, forecast_seconds, _pickup_collection_radius(observation)
-	)
-
-
 func _pickup_collection_radius(observation: Dictionary) -> float:
 	# Entering the attraction area starts motion but does not realize a pickup.
 	# Navigation keeps the opportunity until the observed center can reach the
@@ -220,18 +216,18 @@ func _pickup_collection_radius(observation: Dictionary) -> float:
 
 
 func _accessibility(gap: float, reach_distance: float) -> float:
-	return exp(-max(0.0, gap) / max(1.0, reach_distance))
+	return exp(-gap / reach_distance)
 
 
-func _pickup_collection_progress(
-	initial_gap: float, route_gap: float, reach_distance: float
+func _accessibility_delta(
+	stationary_gap: float, candidate_gap: float, reach_distance: float
 ) -> float:
-	if initial_gap <= 0.0:
-		return 0.0
-	var initial_accessibility: float = _accessibility(initial_gap, reach_distance)
-	var route_accessibility: float = _accessibility(route_gap, reach_distance)
+	if stationary_gap <= 0.0:
+		return 0.0 if candidate_gap <= 0.0 else -1.0
+	var stationary_accessibility: float = _accessibility(stationary_gap, reach_distance)
+	var candidate_accessibility: float = _accessibility(candidate_gap, reach_distance)
 	return clamp(
-		(route_accessibility - initial_accessibility) / max(0.0001, 1.0 - initial_accessibility),
+		(candidate_accessibility - stationary_accessibility) / (1.0 - stationary_accessibility),
 		-1.0,
 		1.0
 	)

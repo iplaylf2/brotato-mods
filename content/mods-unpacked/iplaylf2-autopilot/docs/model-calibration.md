@@ -40,9 +40,9 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 为控制体积，敌人轨迹的采样投影只保留解释已记录账本所需的稳定画像标量，省略重复的行为证据与测量内
 稳定画像；规划过程不生成或持久化逐采样点暴露轨迹，所选动作与高分备选只保留聚合通道、动作路径与
 效用账本。
-导航意图记录候选位置数、胜出导航方向、可达机会价值上界最高的方向、各方向终点价值样本、胜出终点
-价值分解和派生空间尺度；单次规划共享的逐敌人价值缓存不进入采样。动作候选来自统一方向格点、上述两个
-方向和角区间细分，并按自身方向的插值边际价值进入完整效用账本。
+导航意图记录方向与场采样评价次数、胜出导航方向、各方向轨迹价值样本、胜出轨迹价值分解和派生空间
+尺度；单次规划共享的逐敌人价值缓存不进入采样。动作候选来自统一方向格点、胜出导航方向和角区间细分，
+并按自身方向的插值边际价值进入完整效用账本。
 `Vector2` 写成 `{ "x": ..., "y": ... }`，非有限浮点数写成可识别字符串。
 复盘工具应先按 `session_id + player_index + sample_index` 排序，再用
 `decision_index` 和 `physics_frame` 检查缺口。
@@ -66,7 +66,7 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 - 新选动作的提交期终点通常落在下一条定期样本之前，不能假定采样记录了该终点；
 - 更长预测窗的环境暴露、碰撞、拾取、规则和武器结果都是“持续采用该候选动作”时的同窗条件预测；碰撞由
   `forecast_expected_health_loss` 形成条件生命成本，本次提交期子集以 `expected_health_loss` 保留为执行
-  诊断；控制器仍只提交一个控制期，动作窗外的机会由导航路径和终端值表达；
+  诊断；控制器仍只提交一个控制期，动作窗外的机会由导航轨迹价值表达；
 - 不可见实体的真实位置仍然未知。原版持续血条公开的存活与当前生命属于直接观察；首次看到的必掉产物
   只有在其机制支持域内已追踪来源唯一时，才能结清对应轨迹，存在多个合法来源时仍保持未知。两类观察
   都不能充当位置测量：持续血条不刷新视觉位置，必掉产物也不把产物位置写回敌人轨迹。
@@ -94,14 +94,14 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 但尚无规划耗时估计时，压力同样为 `0`；余量为正且已有估计时，压力由此前规划耗时 EMA 相对本轮余量
 的比例平方得到。`decision.search_work_allocation` 记录固定的导航覆盖，以及可变的细分保真度和离散工作
 额度；几何动作方向基线另见 `decision.model.derived.geometry_direction_count`。这些字段只解释搜索覆盖和
-可选工作，不代表碰撞采样精度、动作结果优劣或目标价值。导航基线除均匀方向外，至多再评价一个
-不与格点重合、可达机会价值上界最高的方向；该方向属于 `baseline_position_evaluation_count`，不属于截止
-准入控制的额外评价。动作基线还会保留这个机会方向；它不因候选身份获得额外效用，仍由局部结果模型与
-其他候选按同一语义完整评价。
+可选工作，不代表碰撞采样精度、动作结果优劣或目标价值。导航基线只包含均匀方向；机会聚合方向和角区间
+细分均受截止准入控制。只有经过完整轨迹评价并胜出的方向才会补入动作基线，未经评价的搜索提案不影响
+行为。
 
 `planning_duration_budget_utilization` 使用本轮实测耗时除以本轮预算。大于 `1` 表示本轮超出预算；单次
 超出可能来自基线工作、工作量突变、单项耗时低估、系统调度或性能监视延迟。连续超出时，应比较
-`action_count`、`refined_action_count`、导航的 `extra_position_evaluation_count`、
+`action_count`、`refined_action_count`、导航的 `extra_direction_evaluation_count` 与
+`extra_field_sample_evaluation_count`、
 `planning_turnaround_usec`、`estimated_work_unit_duration_usec`、`budget_pressure` 与
 `decision.search_work_allocation`。
 导航额外评价和移动角度细分均为零、局部方向数保持几何派生基线，且压力饱和后仍然超预算时，应再检查
@@ -136,10 +136,10 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 边界和启用范围必须独立验证，不能让预算状态改变候选间的比较口径。
 
 为解释导航阶段成本，导航武器完成价值每次只排序一次预计目标，再为每件武器选择最近主目标并扫描其余
-目标，因此每次位置评价为 `O(N log N + WN)`；统一目标投影按物理帧缓存，并复用敌人位置响应缓存。它
-不展开第二段移动候选或逐发命中图。该结果随导航位置评价次数线性增加，已经计入同一个导航工作单元和
-截止策略。性能退化时应先核对
-位置评价数、武器数与导航目标数，不应切换为会改变候选语义的随机退火质量档。
+目标，因此每次场采样评价为 `O(N log N + WN)`；统一目标投影按物理帧缓存，并复用敌人位置响应缓存。
+它不展开第二段移动候选或逐发命中图。该结果随导航场采样次数线性增加，已经计入同一个导航工作单元和
+截止策略。性能退化时应先核对 `baseline_field_sample_evaluation_count`、
+`extra_field_sample_evaluation_count`、武器数与导航目标数，不应切换为会改变候选语义的随机退火质量档。
 
 #### 计量边界
 
@@ -190,7 +190,7 @@ TTC cutoff                    = Tnav_effective
 ```
 
 动作方向数取满足相邻控制期端点弦长不超过 `r` 的最小偶数，并完整保留为每轮局部动作基线。全局导航
-保留八个均匀方向和可达机会价值上界最高的方向，后者也会进入局部候选。
+保留八个均匀方向；机会聚合方向只作为预算内搜索提案，经过轨迹评价并胜出后才会进入局部候选。
 时间采样数同时满足相邻玩家位移不超过 `2r`、每个控制期至少一个样本、
 确定性曲线弹相位步长不超过 `π/2`，并且不随预算压力降低。由几何派生的方向基线数和时间采样数会随角色
 尺寸、速度、物理频率与可见弹道变化；细分保真度曲线和离散工作额度仍属于需要用样本校准的计算策略。
@@ -303,15 +303,15 @@ retains_terminal_health_reserve      = M > 0
 ### 导航与材料
 
 材料复盘按本波剩余比例分段，比较可见材料数、实际材料增长和 `material_acquisition_value`。导航候选间
-的材料机会差读取 `directional_value_samples[].value_breakdown.material_opportunity`，胜出终点则读取
-`selected_value_breakdown.material_opportunity`。再按材料密度比较条件完成进度、吸附触发与实际拾取率，
-并按 `material_quantity_estimate.minimum_units` 区分普通材料、合并材料与奖励材料，确认节点数达到原版
+的材料机会差读取 `trajectory_value_samples[].value_breakdown.material_opportunity`，胜出轨迹则读取
+`selected_trajectory.value_breakdown.material_opportunity`。再按材料密度比较条件完成进度、吸附触发与实际
+拾取率，并按 `material_quantity_estimate.minimum_units` 区分普通材料、合并材料与奖励材料，确认节点数达到原版
 上限后，合并价值不会退化为单个材料，同时也不把外观尺寸封顶后的隐藏差额提前计入。进入吸附范围但
-尚未进入收集圈时，机会价值必须继续存在；未扫近任何材料时，路径机会不应继续提供正收益。波末样本
-还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。动作预测窗内的拾取是持续采用
-该候选输入时的条件结果，不是已经执行的事实。另行区分导航意图中的终点总增益
-`terminal_value_gain` 与动作结果中的预测窗兑现值 `navigation_terminal_value_gain`：后者应先将相邻
-`directional_value_samples` 的终点单位距离价值作环形线性插值，再乘以输入相对零输入在动作预测窗内
+尚未进入收集圈时，机会价值必须继续存在；轨迹采样没有改善任何材料可达性时，路径机会不应提供正收益。
+波末样本还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。动作预测窗内的拾取是
+持续采用该候选输入时的条件结果，不是已经执行的事实。另行区分导航意图中的轨迹聚合价值增益
+`trajectory_value_gain` 与动作结果中的预测窗兑现值 `navigation_trajectory_value_gain`：后者应先将相邻
+`trajectory_value_samples` 的单位距离聚合价值作环形线性插值，再乘以输入相对零输入在动作预测窗内
 造成的位移。它与输出、暴露和条件承伤使用同一持续动作时域，不能缩短为提交期后再与完整动作窗收益比较。
 材料密集或路线穿过多个材料簇时，重点比较逐控制期反转率。出现 `material_assimilation.active` 的敌人时，
 还应比较材料与玩家、敌人的预计到达次序、后续实际材料消失及候选排序；没有可争夺材料时，该画像本身
@@ -332,10 +332,10 @@ retains_terminal_health_reserve      = M > 0
 
 #### 树木机会与兑现
 
-树木复盘同时比较 `directional_value_samples[].value_breakdown.weapon_completion_opportunity`、胜出终点的
-`selected_value_breakdown.weapon_completion_opportunity`、`expected_tree_completion_value` 及当时的
-武器期望攻击率，不能把进入射程直接当作已经命中或摧毁。
-射程外应先检查接近树木是否因后续可形成锁定窗口而产生连续正梯度；进入射程后，再比较候选终点和局部
+树木复盘同时比较 `trajectory_value_samples[].value_breakdown.weapon_completion_opportunity`、胜出轨迹的
+`selected_trajectory.value_breakdown.weapon_completion_opportunity`、`expected_tree_completion_value` 及
+当时的武器期望攻击率，不能把进入射程直接当作已经命中或摧毁。
+射程外应先检查接近树木是否因后续可形成锁定窗口而产生连续正梯度；进入射程后，再比较候选轨迹和局部
 动作窗的武器结果是否因最近目标次序而改变。价值变化必须来自接近距离、射程、完成工作量与目标竞争几何，
 不能来自树木身份或波末专用规则。
 局部武器结果应受动作预测窗攻击容量和可见目标库存约束；导航武器完成价值应受续行时域攻击容量约束，
@@ -363,13 +363,13 @@ retains_terminal_health_reserve      = M > 0
 #### 导航武器完成价值
 
 复盘导航武器完成价值时，通过
-`directional_value_samples[].value_breakdown.weapon_completion_opportunity` 比较候选差异，并用
-`selected_value_breakdown.weapon_completion_opportunity` 核对胜出终点。该字段同时包含预计最近主目标，
-以及当前武器贯穿、弹射或范围机制可利用的额外容量；单体武器仍应保留主目标完成价值，但不能
-因目标密度凭空增值。已确认追踪玩家的敌人按候选终点与时刻投影，因此“改变位置后让高价值目标成为最近
+`trajectory_value_samples[].value_breakdown.weapon_completion_opportunity` 比较候选差异，并用
+`selected_trajectory.value_breakdown.weapon_completion_opportunity` 核对胜出轨迹。该字段同时包含各采样
+时刻的预计最近主目标，以及当前武器贯穿、弹射或范围机制可利用的额外容量；单体武器仍应保留主目标完成
+价值，但不能因目标密度凭空增值。敌人按候选轨迹位置与时刻投影，因此“改变位置后让高价值目标成为最近
 目标”或“让追踪群进入有效走廊”都可从几何与容量中产生，不能由宝箱怪、树木或诅咒怪标签直接产生。
 `weapon_completion_opportunity` 是有符号机会差：主目标或次要目标的净完成价值为负时，不利结果也必须保留。
-若候选终点已经到达或越过波末，后续结果必须为零。
+若轨迹采样时刻已经到达或越过波末，后续结果必须为零。
 
 ### 生存与碰撞
 

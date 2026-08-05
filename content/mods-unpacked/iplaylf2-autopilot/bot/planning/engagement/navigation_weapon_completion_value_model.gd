@@ -1,8 +1,8 @@
 extends Reference
 
-# Values the target completion enabled after reaching a navigation endpoint.
+# Values the target completion enabled at a sampled future player state.
 # Primary nearest-target selection and additional delivery paths share this
-# contract so every endpoint uses the same target selection and valuation.
+# contract so every trajectory sample uses the same selection and valuation.
 
 const WeaponAttackCapacityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"

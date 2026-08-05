@@ -1,6 +1,9 @@
 extends Reference
 
-# Searches reachable terminal states using observed opportunities.
+# Searches feasible movement headings by sampling the action-conditioned value
+# field along each reachable trajectory. It does not persist a target identity
+# or optimize a terminal waypoint; the returned preference is the heading whose
+# evolving opportunity, information, and exposure have the greatest marginal value.
 
 const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
@@ -42,64 +45,51 @@ func plan(
 	search_work_allocation: Dictionary,
 	compute_budget_policy: Reference
 ) -> Dictionary:
-	var scale: Dictionary = _spatial_scale(observation)
+	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var timing: Dictionary = MovementTimingModel.derive(observation)
-	var navigation_horizon_seconds: float = timing.effective_navigation_horizon_seconds
+	var horizon_seconds: float = timing.effective_navigation_horizon_seconds
 	var map_extent: Dictionary = _map_extent(observation)
-	var sampling_radius: float = min(
-		map_extent.radius, scale.command_speed * navigation_horizon_seconds
+	var trajectory_distance: float = min(
+		map_extent.radius, geometry.command_speed * horizon_seconds
 	)
+	var trajectory_sample_count: int = _trajectory_sample_count(trajectory_distance, geometry)
 	var baseline_direction_count: int = search_work_allocation.navigation_baseline_direction_count
-	var extra_evaluation_limit: int = search_work_allocation.navigation_extra_evaluation_limit
+	var extra_direction_limit: int = search_work_allocation.navigation_extra_evaluation_limit
 	var opportunity_directions: Array = _spatial_opportunity_value_model.candidate_directions(
 		observation, context
 	)
-	var baseline_directions: Array = _baseline_directions(
-		baseline_direction_count, opportunity_directions
-	)
-	# The value field's highest reachable opportunity bound is part of the semantic
-	# baseline, not optional search refinement. Otherwise frame pressure removes
-	# the only heading that can represent an off-lattice tree, pickup, or enemy,
-	# even though every later stage promises to retain the navigation preference.
+	var baseline_directions: Array = _uniform_directions(baseline_direction_count)
 	var stationary_exposure_by_time := {}
-	var stationary_opportunity_by_time := {}
-	var origin: Dictionary = _evaluate_position(
-		observation,
-		context,
-		Vector2.ZERO,
-		0.0,
-		stationary_exposure_by_time,
-		stationary_opportunity_by_time
-	)
-	var best: Dictionary = origin
-	var position_evaluation_count: int = 1
 	var evaluated_directions := []
 	var direction_scores := []
-	var directional_value_samples := []
-	var extra_position_evaluation_count: int = 0
+	var trajectory_value_samples := []
+	var best := _zero_trajectory()
+	var baseline_field_sample_count := 0
+	var extra_field_sample_count := 0
+	var extra_direction_count := 0
+
 	for direction in baseline_directions:
-		var result: Dictionary = _evaluate_direction(
+		var result: Dictionary = _evaluate_trajectory(
 			observation,
 			context,
 			direction,
-			sampling_radius,
+			trajectory_distance,
+			horizon_seconds,
+			trajectory_sample_count,
 			map_extent,
-			scale,
-			navigation_horizon_seconds,
-			stationary_exposure_by_time,
-			stationary_opportunity_by_time
+			stationary_exposure_by_time
 		)
 		if result.empty():
 			continue
-		position_evaluation_count += 1
+		baseline_field_sample_count += result.field_sample_count
 		evaluated_directions.push_back(direction)
 		direction_scores.push_back({"movement": direction, "score": result.value})
-		directional_value_samples.push_back(_directional_value_sample(direction, result, origin))
+		trajectory_value_samples.push_back(_trajectory_value_sample(result.direction, result))
 		if result.value > best.value:
 			best = result
 
 	for candidate in opportunity_directions:
-		if extra_position_evaluation_count >= extra_evaluation_limit:
+		if extra_direction_count >= extra_direction_limit:
 			break
 		var direction: Vector2 = candidate.direction
 		if _has_similar_direction(evaluated_directions, direction):
@@ -109,16 +99,15 @@ func plan(
 		):
 			break
 		var work_started_usec: int = OS.get_ticks_usec()
-		var result: Dictionary = _evaluate_direction(
+		var result: Dictionary = _evaluate_trajectory(
 			observation,
 			context,
 			direction,
-			sampling_radius,
+			trajectory_distance,
+			horizon_seconds,
+			trajectory_sample_count,
 			map_extent,
-			scale,
-			navigation_horizon_seconds,
-			stationary_exposure_by_time,
-			stationary_opportunity_by_time
+			stationary_exposure_by_time
 		)
 		compute_budget_policy.observe_work_duration(
 			compute_budget_policy.WORK_NAVIGATION_EVALUATION,
@@ -126,16 +115,16 @@ func plan(
 		)
 		if result.empty():
 			continue
-		position_evaluation_count += 1
-		extra_position_evaluation_count += 1
+		extra_direction_count += 1
+		extra_field_sample_count += result.field_sample_count
 		evaluated_directions.push_back(direction)
 		direction_scores.push_back({"movement": direction, "score": result.value})
-		directional_value_samples.push_back(_directional_value_sample(direction, result, origin))
+		trajectory_value_samples.push_back(_trajectory_value_sample(result.direction, result))
 		if result.value > best.value:
 			best = result
 
 	while (
-		extra_position_evaluation_count < extra_evaluation_limit
+		extra_direction_count < extra_direction_limit
 		and compute_budget_policy.can_start_budgeted_work(
 			compute_budget, compute_budget_policy.WORK_NAVIGATION_EVALUATION
 		)
@@ -144,16 +133,15 @@ func plan(
 		if direction == Vector2.ZERO:
 			break
 		var work_started_usec: int = OS.get_ticks_usec()
-		var result: Dictionary = _evaluate_direction(
+		var result: Dictionary = _evaluate_trajectory(
 			observation,
 			context,
 			direction,
-			sampling_radius,
+			trajectory_distance,
+			horizon_seconds,
+			trajectory_sample_count,
 			map_extent,
-			scale,
-			navigation_horizon_seconds,
-			stationary_exposure_by_time,
-			stationary_opportunity_by_time
+			stationary_exposure_by_time
 		)
 		compute_budget_policy.observe_work_duration(
 			compute_budget_policy.WORK_NAVIGATION_EVALUATION,
@@ -162,98 +150,89 @@ func plan(
 		if result.empty():
 			direction_scores.push_back({"movement": direction, "score": -INF})
 			continue
-		position_evaluation_count += 1
-		extra_position_evaluation_count += 1
+		extra_direction_count += 1
+		extra_field_sample_count += result.field_sample_count
 		evaluated_directions.push_back(direction)
 		direction_scores.push_back({"movement": direction, "score": result.value})
-		directional_value_samples.push_back(_directional_value_sample(direction, result, origin))
+		trajectory_value_samples.push_back(_trajectory_value_sample(result.direction, result))
 		if result.value > best.value:
 			best = result
 
-	var terminal_value_gain: float = max(0.0, best.value - origin.value)
-	var movement_preference: Vector2 = (
-		best.position.normalized()
-		if best.position != Vector2.ZERO and terminal_value_gain > 0.0
-		else Vector2.ZERO
-	)
-	var opportunity_movement_preference: Vector2 = (
-		opportunity_directions[0].direction
-		if not opportunity_directions.empty()
-		else Vector2.ZERO
-	)
+	var movement_preference: Vector2 = best.direction if best.value > 0.0 else Vector2.ZERO
 	return {
 		"movement_preference": movement_preference,
-		# Preserve the highest reachable opportunity-bound heading for exact local
-		# scoring, including when terminal progress has saturated. It is only a
-		# search candidate, not a reward or target-category policy.
-		"opportunity_movement_preference": opportunity_movement_preference,
-		# The action evaluator interpolates these samples so every retained heading
-		# receives the opportunity and exposure value at its own direction.
-		"directional_value_samples": directional_value_samples,
-		"terminal_value_gain": terminal_value_gain,
-		"position_evaluation_count": position_evaluation_count,
-		"baseline_position_evaluation_count":
-		position_evaluation_count - extra_position_evaluation_count,
-		"extra_position_evaluation_count": extra_position_evaluation_count,
-		"extra_position_evaluation_limit": extra_evaluation_limit,
-		"origin_value": origin.value,
-		"selected_value": best.value,
-		"selected_value_breakdown": best.value_breakdown,
-		"selected_displacement": best.position,
-		"sampling_radius": sampling_radius,
-		"local_prediction_radius": scale.local_prediction_radius,
-		"control_distance": scale.control_distance,
+		"trajectory_value_samples": trajectory_value_samples,
+		"trajectory_value_gain": max(0.0, best.value),
+		"selected_trajectory":
+		{
+			"direction": best.direction,
+			"distance": best.distance,
+			"horizon_seconds": best.horizon_seconds,
+			"sample_count": best.field_sample_count,
+			"value": best.value,
+			"value_breakdown": best.value_breakdown.duplicate(true),
+		},
+		"baseline_direction_evaluation_count": evaluated_directions.size() - extra_direction_count,
+		"extra_direction_evaluation_count": extra_direction_count,
+		"extra_direction_evaluation_limit": extra_direction_limit,
+		"baseline_field_sample_evaluation_count": baseline_field_sample_count,
+		"extra_field_sample_evaluation_count": extra_field_sample_count,
+		"trajectory_sample_count": trajectory_sample_count,
+		"sampling_radius": trajectory_distance,
+		"local_prediction_radius": geometry.local_prediction_radius,
+		"control_distance": geometry.control_distance,
 		"source_scope": "visible_and_remembered",
 	}
 
 
-func _directional_value_sample(
-	direction: Vector2, result: Dictionary, origin: Dictionary
-) -> Dictionary:
-	return {
-		"direction": direction,
-		"terminal_distance": result.position.length(),
-		"terminal_value_delta": result.value - origin.value,
-		"value_breakdown": result.value_breakdown.duplicate(true),
-	}
-
-
-func _evaluate_direction(
+func _evaluate_trajectory(
 	observation: Dictionary,
 	context: Dictionary,
 	direction: Vector2,
-	sampling_radius: float,
+	maximum_distance: float,
+	horizon_seconds: float,
+	sample_count: int,
 	map_extent: Dictionary,
-	scale: Dictionary,
-	navigation_horizon_seconds: float,
-	stationary_exposure_by_time: Dictionary,
-	stationary_opportunity_by_time: Dictionary
+	stationary_exposure_by_time: Dictionary
 ) -> Dictionary:
-	var position: Vector2 = direction * sampling_radius
-	if not _inside_domain(position, map_extent):
-		position = _clip_to_domain(position, map_extent)
-	if position.length() <= scale.control_distance:
+	if maximum_distance <= 0.0 or horizon_seconds <= 0.0 or sample_count <= 0:
 		return {}
-	var forecast_seconds: float = min(
-		navigation_horizon_seconds, position.length() / max(1.0, scale.command_speed)
+	var terminal_position: Vector2 = _clip_to_domain(direction * maximum_distance, map_extent)
+	if terminal_position.length() <= 0.0:
+		return {}
+	var breakdown := _empty_value_breakdown()
+	for sample_index in sample_count:
+		var fraction: float = float(sample_index + 1) / float(sample_count)
+		var time: float = horizon_seconds * fraction
+		var position: Vector2 = terminal_position * fraction
+		var sample_value: Dictionary = _sample_field_delta(
+			observation, context, position, time, stationary_exposure_by_time
+		)
+		for field in breakdown:
+			breakdown[field] += sample_value[field] / float(sample_count)
+	breakdown.map_information = (
+		_map_information_value_model.value_delta_along_path(observation, terminal_position)
+		* context.state_factors.information_value_per_viewport
 	)
-	return _evaluate_position(
-		observation,
-		context,
-		position,
-		forecast_seconds,
-		stationary_exposure_by_time,
-		stationary_opportunity_by_time
-	)
+	var value := 0.0
+	for contribution in breakdown.values():
+		value += contribution
+	return {
+		"direction": terminal_position.normalized(),
+		"distance": terminal_position.length(),
+		"horizon_seconds": horizon_seconds,
+		"field_sample_count": sample_count,
+		"value": value,
+		"value_breakdown": breakdown,
+	}
 
 
-func _evaluate_position(
+func _sample_field_delta(
 	observation: Dictionary,
 	context: Dictionary,
 	position: Vector2,
 	time: float,
-	stationary_exposure_by_time: Dictionary,
-	stationary_opportunity_by_time: Dictionary
+	stationary_exposure_by_time: Dictionary
 ) -> Dictionary:
 	var exposure: Dictionary = _battlefield_influence_model.sample_point(
 		observation, position, time, context.environmental_pressure_weights
@@ -263,33 +242,58 @@ func _evaluate_position(
 			observation, Vector2.ZERO, time, context.environmental_pressure_weights
 		)
 	var stationary_exposure: Dictionary = stationary_exposure_by_time[time]
-	if not stationary_opportunity_by_time.has(time):
-		stationary_opportunity_by_time[time] = _spatial_opportunity_value_model.stationary_value(
-			observation, context, time
-		)
-	var opportunity_delta: Dictionary = _spatial_opportunity_value_model.value_delta(
-		observation, context, position, time, stationary_opportunity_by_time[time]
+	var opportunity: Dictionary = _spatial_opportunity_value_model.point_value_delta(
+		observation, context, position, time
 	)
-	var information_value: float = (
-		_map_information_value_model.value_delta_along_path(observation, position)
-		* context.state_factors.information_value_per_viewport
-	)
-	var exposure_cost_delta: float = (
+	var exposure_delta: float = (
 		(exposure.environmental_pressure - stationary_exposure.environmental_pressure)
 		* context.state_factors.environmental_exposure_value
 	)
 	return {
-		"position": position,
-		"value": opportunity_delta.total + information_value - exposure_cost_delta,
-		"value_breakdown":
-		{
-			"material_opportunity": opportunity_delta.material_opportunity,
-			"recovery_opportunity": opportunity_delta.recovery_opportunity,
-			"weapon_completion_opportunity": opportunity_delta.weapon_completion_opportunity,
-			"map_information": information_value,
-			"environmental_exposure": -exposure_cost_delta,
-		},
+		"material_opportunity": opportunity.material_opportunity,
+		"recovery_opportunity": opportunity.recovery_opportunity,
+		"weapon_completion_opportunity": opportunity.weapon_completion_opportunity,
+		"map_information": 0.0,
+		"environmental_exposure": -exposure_delta,
 	}
+
+
+func _trajectory_value_sample(direction: Vector2, result: Dictionary) -> Dictionary:
+	return {
+		"direction": direction,
+		"trajectory_distance": result.distance,
+		"trajectory_value": result.value,
+		"value_rate": result.value / result.distance,
+		"value_breakdown": result.value_breakdown.duplicate(true),
+	}
+
+
+func _zero_trajectory() -> Dictionary:
+	return {
+		"direction": Vector2.ZERO,
+		"distance": 0.0,
+		"horizon_seconds": 0.0,
+		"field_sample_count": 0,
+		"value": 0.0,
+		"value_breakdown": _empty_value_breakdown(),
+	}
+
+
+func _empty_value_breakdown() -> Dictionary:
+	return {
+		"material_opportunity": 0.0,
+		"recovery_opportunity": 0.0,
+		"weapon_completion_opportunity": 0.0,
+		"map_information": 0.0,
+		"environmental_exposure": 0.0,
+	}
+
+
+func _trajectory_sample_count(distance: float, geometry: Dictionary) -> int:
+	var sample_spacing: float = max(
+		geometry.control_distance, geometry.default_local_horizon_distance
+	)
+	return int(max(1, ceil(distance / max(1.0, sample_spacing))))
 
 
 func _uniform_directions(direction_count: int) -> Array:
@@ -301,31 +305,11 @@ func _uniform_directions(direction_count: int) -> Array:
 	return result
 
 
-func _baseline_directions(direction_count: int, opportunity_directions: Array) -> Array:
-	var result: Array = _uniform_directions(direction_count)
-	if opportunity_directions.empty():
-		return result
-	var opportunity_direction: Vector2 = opportunity_directions[0].direction
-	if not _has_similar_direction(result, opportunity_direction):
-		result.push_back(opportunity_direction)
-	return result
-
-
 func _has_similar_direction(directions: Array, candidate: Vector2) -> bool:
 	for direction in directions:
 		if direction.dot(candidate) > SIMILAR_DIRECTION_DOT:
 			return true
 	return false
-
-
-func _spatial_scale(observation: Dictionary) -> Dictionary:
-	var movement_geometry: Dictionary = _movement_geometry.derive(observation)
-	var command_speed: float = movement_geometry.command_speed
-	return {
-		"command_speed": command_speed,
-		"control_distance": movement_geometry.control_distance,
-		"local_prediction_radius": movement_geometry.local_prediction_radius,
-	}
 
 
 func _map_extent(observation: Dictionary) -> Dictionary:
@@ -347,15 +331,6 @@ func _map_extent(observation: Dictionary) -> Dictionary:
 	]:
 		radius = max(radius, corner.length())
 	return {"left": left, "right": right, "top": top, "bottom": bottom, "radius": radius}
-
-
-func _inside_domain(position: Vector2, domain: Dictionary) -> bool:
-	return (
-		position.x >= domain.left
-		and position.x <= domain.right
-		and position.y >= domain.top
-		and position.y <= domain.bottom
-	)
 
 
 func _clip_to_domain(position: Vector2, domain: Dictionary) -> Vector2:

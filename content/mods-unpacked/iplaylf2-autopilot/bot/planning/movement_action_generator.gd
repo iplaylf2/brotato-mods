@@ -100,19 +100,13 @@ func _candidate_directions(direction_count: int, navigation_intent: Dictionary) 
 		result.push_back(
 			Vector2.RIGHT.rotated(TAU * float(direction_index) / float(direction_count))
 		)
-	# Keep both the selected navigation direction and one highest-bound opportunity
-	# direction at every precision. The latter is deliberately unscored here: local
-	# outcome models decide whether changing position actually improves targeting.
+	# A navigation direction reaches the executable set only after the trajectory
+	# field has scored it. Uniform actions remain the geometry-owned baseline.
 	var movement_preference: Vector2 = navigation_intent.movement_preference
 	if movement_preference != Vector2.ZERO:
 		var preferred_direction := movement_preference.normalized()
 		if not _has_similar_direction(result, preferred_direction):
 			result.push_back(preferred_direction)
-	var opportunity_preference: Vector2 = navigation_intent.opportunity_movement_preference
-	if opportunity_preference != Vector2.ZERO:
-		var opportunity_direction := opportunity_preference.normalized()
-		if not _has_similar_direction(result, opportunity_direction):
-			result.push_back(opportunity_direction)
 	return result
 
 

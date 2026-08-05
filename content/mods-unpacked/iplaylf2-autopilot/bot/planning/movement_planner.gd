@@ -103,7 +103,7 @@ func plan(observation: Dictionary) -> Dictionary:
 		search_work_allocation,
 		_compute_budget_policy
 	)
-	context.navigation_directional_value_samples = navigation_intent.directional_value_samples
+	context.navigation_trajectory_value_samples = navigation_intent.trajectory_value_samples
 	phase_duration_usec.navigation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
 	var actions: Array = _action_generator.generate(planning_observation, navigation_intent)
@@ -166,7 +166,7 @@ func plan(observation: Dictionary) -> Dictionary:
 	plan.context = context.duplicate(false)
 	plan.context.erase("enemy_completion_value_ledger")
 	plan.context.erase("wave_completion_forecast")
-	plan.context.erase("navigation_directional_value_samples")
+	plan.context.erase("navigation_trajectory_value_samples")
 	plan.wave_completion_forecast = context.wave_completion_forecast.duplicate(false)
 	plan.wave_completion_forecast.erase("completion_fraction_by_target_id")
 	plan.compute_budget = compute_budget.duplicate(true)

@@ -40,28 +40,23 @@ func first_collection(pickup: Dictionary, samples: Array, collection_radius: flo
 	return {}
 
 
-func minimum_collection_gap(
+func initial_collection_gap(pickup: Dictionary, collection_radius: float) -> float:
+	return max(0.0, pickup.relative_position.length() - collection_radius)
+
+
+func collection_gap_at(
 	pickup: Dictionary,
 	player_displacement: Vector2,
 	forecast_seconds: float,
 	collection_radius: float
 ) -> float:
-	var initial_relative_position: Vector2 = pickup.relative_position
-	var terminal_relative_position: Vector2 = (
-		_predict_pickup_displacement(pickup, forecast_seconds)
-		- player_displacement
-	)
 	return max(
 		0.0,
 		(
-			_distance_from_origin_to_segment(initial_relative_position, terminal_relative_position)
+			(_predict_pickup_displacement(pickup, forecast_seconds) - player_displacement).length()
 			- collection_radius
 		)
 	)
-
-
-func initial_collection_gap(pickup: Dictionary, collection_radius: float) -> float:
-	return max(0.0, pickup.relative_position.length() - collection_radius)
 
 
 func _predict_pickup_displacement(pickup: Dictionary, time: float) -> Vector2:
@@ -84,12 +79,3 @@ func _first_circle_intersection_fraction(start: Vector2, finish: Vector2, radius
 		return -1.0
 	var root: float = (-b - sqrt(discriminant)) / (2.0 * a)
 	return root if root >= 0.0 and root <= 1.0 else -1.0
-
-
-func _distance_from_origin_to_segment(start: Vector2, finish: Vector2) -> float:
-	var segment: Vector2 = finish - start
-	var length_squared: float = segment.length_squared()
-	if length_squared <= 0.000001:
-		return start.length()
-	var fraction: float = clamp(-start.dot(segment) / length_squared, 0.0, 1.0)
-	return start.linear_interpolate(finish, fraction).length()
