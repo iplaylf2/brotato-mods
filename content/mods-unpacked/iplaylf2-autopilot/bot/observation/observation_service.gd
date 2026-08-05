@@ -114,8 +114,14 @@ func _capture_observations(delta: float) -> void:
 			delta,
 			position_delta,
 			world_observation.visible_edges,
-			world_observation.enemy_observations,
-			world_observation.entity_memory_observations,
+			{
+				"enemy_observations": world_observation.enemy_observations,
+				"persistent_enemy_health_observations":
+				world_observation.persistent_enemy_health_observations,
+				"persistent_enemy_health_snapshot_complete":
+				world_observation.persistent_enemy_health_snapshot_complete,
+				"entity_observations": world_observation.entity_memory_observations,
+			},
 			party_state,
 			world_observation.visible_world.allied_agents,
 			player_state.pickup,

@@ -25,6 +25,8 @@ var _neutral_completion_work_model: Reference = NeutralCompletionWorkModel.new()
 func project_navigation_targets(observation: Dictionary, context: Dictionary) -> Array:
 	var result := []
 	for track in observation.enemy_tracks:
+		if track.recency_confidence <= 0.0:
+			continue
 		result.push_back(_project_enemy(track, context))
 	for entity in observation.remembered_entities:
 		if entity.kind == "tree" and entity.existence_confidence > 0.0:

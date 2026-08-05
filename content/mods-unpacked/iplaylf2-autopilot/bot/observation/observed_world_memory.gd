@@ -1,8 +1,9 @@
 extends Reference
 
-# Battle-local memory of the world observed by one player. Hidden enemies are
-# short-lived motion estimates. Remembered entities are permanent observation
-# records; only the belief that an unobserved entity still exists may change.
+# Battle-local memory of the world observed by one player. Hidden enemy positions
+# are short-lived motion estimates; persistent health observations may preserve
+# life and existence without refreshing position. Remembered entities are permanent
+# observation records; only belief in their current existence may change.
 
 const TRACK_MEMORY_SECONDS := 4.0
 const BASE_UNCERTAINTY := 24.0
@@ -19,6 +20,12 @@ const EnemyBehaviorProfiler := preload(
 const RememberedEntityExistenceEstimator := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/remembered_entity_existence_estimator.gd"
 )
+const VisibilityCoverageModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/visibility_coverage_model.gd"
+)
+const EnemyDeathProductMatcher := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/enemy_death_product_matcher.gd"
+)
 
 var _elapsed_seconds := 0.0
 var _next_track_id := 1
@@ -29,18 +36,20 @@ var _observation_cell_size := 0.0
 var _observation_cell_last_seen := {}
 var _tracks := {}
 var _visible_source_track_ids := {}
+var _persistent_health_source_track_ids := {}
 var _remembered_entities := {}
 var _source_memory_record_ids := {}
 var _enemy_profiler: Reference = EnemyBehaviorProfiler.new()
 var _entity_existence_estimator: Reference = RememberedEntityExistenceEstimator.new()
+var _visibility_coverage_model: Reference = VisibilityCoverageModel.new()
+var _enemy_death_product_matcher: Reference = EnemyDeathProductMatcher.new()
 
 
 func update(
 	delta_seconds: float,
 	position_delta: Vector2,
 	visible_edges: Dictionary,
-	visible_enemies: Array,
-	visible_entities: Array,
+	memory_inputs: Dictionary,
 	party_state: Dictionary,
 	visible_allied_agents: Array,
 	player_pickup: Dictionary,
@@ -50,10 +59,16 @@ func update(
 	_odometry_position += position_delta
 	_record_visible_edges(visible_edges)
 	_update_observation_coverage(visibility.viewport_size, visibility.viewport_offset_from_player)
-	_update_enemy_tracks(visible_enemies)
 	_entity_existence_estimator.update(delta_seconds, position_delta, visible_allied_agents)
-	_update_remembered_entities(
-		delta_seconds, visible_entities, party_state, player_pickup, visibility
+	var death_product_observations: Array = _update_remembered_entities(
+		delta_seconds, memory_inputs.entity_observations, party_state, player_pickup, visibility
+	)
+	_update_enemy_tracks(
+		memory_inputs.enemy_observations,
+		memory_inputs.persistent_enemy_health_observations,
+		memory_inputs.persistent_enemy_health_snapshot_complete,
+		death_product_observations,
+		visibility
 	)
 
 
@@ -136,6 +151,12 @@ func _materialize_enemy_tracks(planning_view: bool) -> Array:
 	for track_id in _tracks:
 		var track: Dictionary = _tracks[track_id]
 		var seconds_since_seen: float = _elapsed_seconds - track.last_seen_at_seconds
+		var visual_recency_confidence := max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS)
+		var existence_confidence := (
+			1.0
+			if track.persistent_health_observation_active
+			else visual_recency_confidence
+		)
 		var estimated_odometry_position: Vector2 = track.last_seen_odometry_position
 		var acceleration_decay := exp(-seconds_since_seen / ACCELERATION_DECAY_SECONDS)
 		var estimated_velocity: Vector2 = (
@@ -175,11 +196,15 @@ func _materialize_enemy_tracks(planning_view: bool) -> Array:
 			"last_observed_acceleration": track.last_observed_acceleration,
 			"estimated_velocity": estimated_velocity,
 			"estimated_acceleration": estimated_acceleration,
-			"motion_confidence":
-			track.motion_confidence * max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS),
+			"motion_confidence": track.motion_confidence * visual_recency_confidence,
 			"seconds_since_seen": seconds_since_seen,
 			"uncertainty_radius": uncertainty,
-			"recency_confidence": max(0.0, 1.0 - seconds_since_seen / TRACK_MEMORY_SECONDS),
+			# Existence and position evidence are deliberately separate. A persistent
+			# health bar proves that the target is alive and exposes current health,
+			# but it does not refresh the last visually measured position.
+			"existence_confidence": existence_confidence,
+			"recency_confidence": visual_recency_confidence,
+			"persistent_health_observation_active": track.persistent_health_observation_active,
 			"behavior_profile": track.behavior_profile.duplicate(not planning_view),
 			# Latest measurement; stale while the enemy is outside the visible world.
 			"last_measurement": track.last_measurement.duplicate(not planning_view),
@@ -270,15 +295,27 @@ func _record_visible_edges(visible_edges: Dictionary) -> void:
 			_observed_edge_coordinates[edge] = _odometry_position.y + visible_edges[edge]
 
 
-func _update_enemy_tracks(visible_enemies: Array) -> void:
+func _update_enemy_tracks(
+	visible_enemies: Array,
+	persistent_health_observations: Array,
+	persistent_health_snapshot_complete: bool,
+	death_product_observations: Array,
+	visibility: Dictionary
+) -> void:
 	for track in _tracks.values():
 		track.visible = false
+		track.persistent_health_observation_active = false
 
 	var observed_track_ids := {}
 	var next_visible_source_track_ids := {}
 	for observation in visible_enemies:
 		var source: Object = observation._source
-		var track_id: int = _visible_source_track_ids.get(source, -1)
+		var source_id: int = source.get_instance_id()
+		var track_id := -1
+		if observation.features.persistent_health_observation:
+			track_id = _persistent_health_source_track_ids.get(source_id, -1)
+		if track_id < 0:
+			track_id = _visible_source_track_ids.get(source_id, -1)
 		if track_id < 0 or not _tracks.has(track_id):
 			track_id = _find_reacquisition(observation, observed_track_ids)
 		if track_id < 0:
@@ -286,10 +323,110 @@ func _update_enemy_tracks(visible_enemies: Array) -> void:
 
 		_update_track(_tracks[track_id], observation)
 		observed_track_ids[track_id] = true
-		next_visible_source_track_ids[source] = track_id
-
+		next_visible_source_track_ids[source_id] = track_id
+		if observation.features.persistent_health_observation:
+			_persistent_health_source_track_ids[source_id] = track_id
 	_visible_source_track_ids = next_visible_source_track_ids
+
+	_apply_persistent_enemy_health_snapshot(
+		persistent_health_observations, persistent_health_snapshot_complete
+	)
+	_retire_tracks_from_death_products(death_product_observations)
+	_remove_tracks_confirmed_absent(visibility)
 	_expire_old_tracks()
+	_prune_persistent_health_source_track_ids()
+
+
+func _apply_persistent_enemy_health_snapshot(
+	health_observations: Array, snapshot_complete: bool
+) -> void:
+	if not snapshot_complete:
+		return
+	var observed_track_ids := {}
+	for observation in health_observations:
+		var source: Object = observation._source
+		var track_id: int = _persistent_health_source_track_ids.get(source.get_instance_id(), -1)
+		if track_id < 0 or not _tracks.has(track_id):
+			continue
+		if not observation.alive or observation.health.current <= 0.0:
+			_tracks.erase(track_id)
+			continue
+		var track: Dictionary = _tracks[track_id]
+		track.persistent_health_observation_active = true
+		track.persistent_health_observation_correlated = true
+		track.last_measurement.health = observation.health.duplicate(true)
+		observed_track_ids[track_id] = true
+	for track_id in _tracks.keys():
+		var track: Dictionary = _tracks[track_id]
+		if track.persistent_health_observation_correlated and not observed_track_ids.has(track_id):
+			# The complete persistent-bar snapshot no longer contains this correlated
+			# target, so it is no longer an active enemy. The cause is not inferred.
+			_tracks.erase(track_id)
+
+
+func _retire_tracks_from_death_products(observations: Array) -> void:
+	if observations.empty():
+		return
+	var candidates := []
+	for track_id in _tracks:
+		var track: Dictionary = _tracks[track_id]
+		if track.visible or track.persistent_health_observation_active:
+			continue
+		var products: Array = track.behavior_profile.kill_rewards.guaranteed_death_products
+		if products.empty():
+			continue
+		var seconds_since_seen: float = _elapsed_seconds - track.last_seen_at_seconds
+		var maximum_speed: float = max(
+			max(
+				track.last_observed_velocity.length(),
+				track.behavior_profile.get("target_position_response", {}).get(
+					"movement_speed", 0.0
+				)
+			),
+			track.behavior_profile.get("charge_attack", {}).get("maximum_charge_speed", 0.0)
+		)
+		candidates.push_back(
+			{
+				"track_id": track_id,
+				"products": products,
+				"relative_position": track.last_seen_odometry_position - _odometry_position,
+				"position_uncertainty_radius": maximum_speed * max(0.0, seconds_since_seen),
+			}
+		)
+	for track_id in _enemy_death_product_matcher.match_track_ids(candidates, observations):
+		_tracks.erase(track_id)
+
+
+func _prune_persistent_health_source_track_ids() -> void:
+	for source_id in _persistent_health_source_track_ids.keys():
+		if not _tracks.has(_persistent_health_source_track_ids[source_id]):
+			_persistent_health_source_track_ids.erase(source_id)
+
+
+func _remove_tracks_confirmed_absent(visibility: Dictionary) -> void:
+	for track_id in _tracks.keys():
+		var track: Dictionary = _tracks[track_id]
+		if track.visible or track.persistent_health_observation_active:
+			continue
+		var seconds_since_seen: float = _elapsed_seconds - track.last_seen_at_seconds
+		var maximum_speed: float = max(
+			max(
+				track.last_observed_velocity.length(),
+				track.behavior_profile.get("target_position_response", {}).get(
+					"movement_speed", 0.0
+				)
+			),
+			track.behavior_profile.get("charge_attack", {}).get("maximum_charge_speed", 0.0)
+		)
+		var last_relative_position: Vector2 = track.last_seen_odometry_position - _odometry_position
+		var visual_radius: float = max(0.0, track.last_measurement.get("visual_radius", 0.0))
+		if _visibility_coverage_model.covers_reachable_circle(
+			last_relative_position,
+			visual_radius,
+			maximum_speed * max(0.0, seconds_since_seen),
+			visibility
+		):
+			_tracks.erase(track_id)
 
 
 func _update_remembered_entities(
@@ -298,7 +435,8 @@ func _update_remembered_entities(
 	party_state: Dictionary,
 	player_pickup: Dictionary,
 	visibility: Dictionary
-) -> void:
+) -> Array:
+	var new_death_product_observations := []
 	for memory_record_id in _remembered_entities:
 		var memory_record: Dictionary = _remembered_entities[memory_record_id]
 		memory_record.visible = false
@@ -322,6 +460,10 @@ func _update_remembered_entities(
 				"disappearance_hazard_per_second": 0.0,
 				"absence_confirmed": false,
 			}
+			for trait in observation.get("pickup_profile", {}).get("traits", []):
+				new_death_product_observations.push_back(
+					{"kind": trait, "relative_position": observation.relative_position}
+				)
 		else:
 			# Visible pickups move while dropping and while being attracted. Refreshing
 			# the existing record keeps navigation aimed at their current position and
@@ -355,6 +497,7 @@ func _update_remembered_entities(
 			else (memory_record.existence_confidence * exp(-disappearance_hazard * delta_seconds))
 		)
 		_remembered_entities[memory_record_id] = memory_record
+	return new_death_product_observations
 
 
 func _source_reused_for_new_entity(memory_record_id: int, observation: Dictionary) -> bool:
@@ -363,6 +506,8 @@ func _source_reused_for_new_entity(memory_record_id: int, observation: Dictionar
 	var memory_record: Dictionary = _remembered_entities[memory_record_id]
 	if memory_record.visible:
 		return false
+	if memory_record.absence_confirmed:
+		return true
 	var observed_position: Vector2 = _odometry_position + observation.relative_position
 	var seconds_since_seen: float = _elapsed_seconds - memory_record.last_seen_at_seconds
 	var remembered_velocity: Vector2 = memory_record.observation.get("velocity", Vector2.ZERO)
@@ -427,7 +572,10 @@ func _update_track(track: Dictionary, observation: Dictionary) -> void:
 	track.last_observed_velocity = observation.velocity
 	track.last_observed_acceleration = observation.acceleration
 	track.motion_confidence = observation.motion_confidence
-	track.last_measurement = observation.features.duplicate(true)
+	var features: Dictionary = observation.features
+	track.last_measurement = features.duplicate(true)
+	track.persistent_health_observation_correlated = features.persistent_health_observation
+	track.persistent_health_observation_active = features.persistent_health_observation
 	var previous_evidence: Dictionary = track.evidence if track.has("evidence") else {}
 	track.evidence = _enemy_profiler.accumulate_evidence(previous_evidence, track.last_measurement)
 	track.behavior_profile = _enemy_profiler.build_profile(track.evidence)
@@ -452,6 +600,8 @@ func _predict_observed_position(
 
 func _expire_old_tracks() -> void:
 	for track_id in _tracks.keys():
+		if _tracks[track_id].persistent_health_observation_active:
+			continue
 		if _elapsed_seconds - _tracks[track_id].last_seen_at_seconds > TRACK_MEMORY_SECONDS:
 			_tracks.erase(track_id)
 

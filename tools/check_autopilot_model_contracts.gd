@@ -95,7 +95,9 @@ func _check_swept_enemy_contact() -> void:
 		"samples": [{"time": 0.2, "displacement": Vector2.ZERO, "movement": Vector2.ZERO}],
 	}
 	var weights := _influence_weights()
-	var outcome: Dictionary = influence.predict(observation, action, weights, 0.1)
+	var outcome: Dictionary = influence.predict(
+		observation, action, weights, 0.1, _completion_value_ledger({1: 0.0})
+	)
 	_expect(
 		is_equal_approx(outcome.peak_path_collision_risk, 1.0),
 		"a swept collision-boundary crossing must be a complete contact opportunity"
@@ -111,7 +113,9 @@ func _check_swept_enemy_contact() -> void:
 	second_track.track_id = 2
 	observation.enemy_tracks.push_back(second_track)
 	observation.physics_frame += 1
-	var swarm_outcome: Dictionary = influence.predict(observation, action, weights, 0.1)
+	var swarm_outcome: Dictionary = influence.predict(
+		observation, action, weights, 0.1, _completion_value_ledger({1: 0.0, 2: 0.0})
+	)
 	var swarm_impact: Dictionary = impact.evaluate(
 		observation, action, _path_collision_evidence(swarm_outcome), false
 	)
@@ -138,6 +142,7 @@ func _check_navigation_horizon_consistency() -> void:
 		"control_interval_seconds": 0.1,
 		"environmental_pressure_weights": _influence_weights(),
 		"state_factors": {"positive_damage_is_terminal_rule": false},
+		"enemy_completion_value_ledger": _completion_value_ledger({}),
 		"navigation_directional_value_samples":
 		[
 			{
@@ -895,7 +900,6 @@ func _completion_value_ledger(net_values: Dictionary) -> Dictionary:
 	return {
 		"entries_by_track_id": entries,
 		"mean_net_completion_value": 0.0,
-		"mean_net_completion_value_per_health": 0.0,
 		"mean_absolute_net_completion_value": 0.0,
 	}
 

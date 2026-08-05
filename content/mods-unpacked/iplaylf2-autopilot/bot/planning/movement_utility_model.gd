@@ -105,10 +105,8 @@ func build_context(observation: Dictionary) -> Dictionary:
 				"expected_enemy_reward_delta_value": 1.0,
 				"expected_enemy_burden_relief_value": 1.0,
 				"expected_enemy_death_consequence_value": -1.0,
-				"expected_rule_damage":
-				completion_value_ledger.mean_net_completion_value_per_health,
-				"expected_allied_damage":
-				completion_value_ledger.mean_net_completion_value_per_health,
+				"expected_rule_completion_value": 1.0,
+				"expected_allied_completion_value": 1.0,
 			},
 			"navigation": {"navigation_terminal_value_gain": 1.0},
 		},
@@ -132,8 +130,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"current_unprotected_damage_is_terminal": current_unprotected_damage_is_terminal,
 			"recovery_profile": recovery_profile,
 			"health_inventory_value": health_inventory_value,
-			"mean_net_completion_value_per_enemy_health":
-			completion_value_ledger.mean_net_completion_value_per_health,
 			"living_enemy_preservation_value":
 			completion_value_ledger.living_enemy_preservation_value,
 			"information_value_per_viewport": information_value_per_viewport,

@@ -21,6 +21,11 @@ func planning_observation(enemy_tracks: Array) -> Dictionary:
 				"minimum_invincibility_seconds": 0.2,
 			},
 			"effective_stats": {"luck": 0.0},
+			"item_box_item_value_profile":
+			{
+				"tier_probabilities": [1.0, 0.0, 0.0, 0.0],
+				"mean_shop_price_by_tier": [10.0, 20.0, 30.0, 40.0],
+			},
 			"movement": {"knockback_velocity": Vector2.ZERO},
 			"neutral_completion": {"instant_on_player_hit": false},
 			"effect_rules": [],
@@ -107,6 +112,7 @@ func enemy_track(position: Vector2, velocity: Vector2, follows_player: bool) -> 
 		"estimated_acceleration": Vector2.ZERO,
 		"motion_confidence": 0.0,
 		"recency_confidence": 1.0,
+		"existence_confidence": 1.0,
 		"uncertainty_radius": 0.0,
 		"last_measurement":
 		{

@@ -16,10 +16,17 @@ const EngagementTargetProjector := preload(
 		+ "engagement_target_projector.gd"
 	)
 )
+const DamageCompletionWorkModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "damage_completion_work_model.gd"
+	)
+)
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _engagement_target_projector: Reference = EngagementTargetProjector.new()
+var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
 var _prepared_physics_frame := -1
 var _prepared_targets := []
 
@@ -302,7 +309,9 @@ func _completion_value_per_hit(
 	if target.weapon_response.health_damage_applies:
 		completion_fraction = max(
 			completion_fraction,
-			damage_per_hit * retained_damage / max(1.0, target.completion.health.remaining)
+			_damage_completion_work_model.completion_fraction_per_hit(
+				target.completion.health.remaining, damage_per_hit * retained_damage
+			)
 		)
 	if target.weapon_response.hit_limit_progress_per_hit > 0.0:
 		completion_fraction = max(

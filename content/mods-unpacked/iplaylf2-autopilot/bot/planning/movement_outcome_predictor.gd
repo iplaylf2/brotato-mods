@@ -75,7 +75,7 @@ func predict_base(
 		"consumed_consumable_recovery_supply": 0.0,
 		"consumed_single_use_support_supply": 0.0,
 		"expected_weapon_damage": 0.0,
-		"expected_allied_damage": 0.0,
+		"expected_allied_completion_value": 0.0,
 		"expected_enemy_completion_equivalents": 0.0,
 		"expected_enemy_reward_delta_value": 0.0,
 		"expected_enemy_burden_relief_value": 0.0,
@@ -86,7 +86,7 @@ func predict_base(
 		"navigation_terminal_value_gain": 0.0,
 		"expected_attack_hits": 0.0,
 		"expected_enemy_hits": 0.0,
-		"expected_rule_damage": 0.0,
+		"expected_rule_completion_value": 0.0,
 		"expected_recovery": 0.0,
 		"expected_recovery_events": 0.0,
 		"expected_stat_upgrade_equivalents": 0.0,
@@ -106,7 +106,8 @@ func predict_base(
 		observation,
 		action,
 		planning_context.environmental_pressure_weights,
-		planning_context.control_interval_seconds
+		planning_context.control_interval_seconds,
+		planning_context.enemy_completion_value_ledger
 	)
 	outcome.merge(battlefield_outcome, true)
 	outcome.merge(
@@ -201,7 +202,9 @@ func complete_prediction(
 	_weapon_outcome_forecast_model.accumulate_outcome(
 		observation, action, outcome, planning_context
 	)
-	_player_rule_outcome_predictor.accumulate_outcome(observation, action, outcome)
+	_player_rule_outcome_predictor.accumulate_outcome(
+		observation, action, outcome, planning_context
+	)
 	return outcome
 
 

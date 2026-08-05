@@ -54,6 +54,8 @@ func _can_interact_with_local_forecast(
 	maximum_weapon_targeting_range: float,
 	geometry: Dictionary
 ) -> bool:
+	if track.recency_confidence <= 0.0:
+		return false
 	if _can_threaten_player(track, forecast_seconds, player_reach, geometry):
 		return true
 	if not track.visible or maximum_weapon_targeting_range <= 0.0:

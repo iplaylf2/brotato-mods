@@ -3,6 +3,15 @@ extends Reference
 # Interprets the two vanilla neutral-completion limits: ordinary health damage
 # and the eligible-hit limit. Either can complete the target first.
 
+const DamageCompletionWorkModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "damage_completion_work_model.gd"
+	)
+)
+
+var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
+
 
 func remaining_hits_to_limit(neutral: Dictionary) -> float:
 	var hit_limit: float = max(1.0, float(neutral.destructible_profile.destruction.hit_limit))
@@ -34,4 +43,7 @@ func expected_hits_to_complete(
 		return 1.0
 	if expected_damage_per_hit <= 0.0:
 		return remaining_hit_limit
-	return min(remaining_hit_limit, health_remaining / expected_damage_per_hit)
+	return min(
+		remaining_hit_limit,
+		_damage_completion_work_model.hits_to_complete(health_remaining, expected_damage_per_hit)
+	)

@@ -44,7 +44,6 @@ func build_ledger(observation: Dictionary, marginal_health_unit_value: float) ->
 	var material_burdens := _material_assimilation_burden_by_track(observation, mean_base_burden)
 	var preservation_value := _living_enemy_preservation_value(observation)
 	var mean_net_completion_value := 0.0
-	var mean_net_completion_value_per_health := 0.0
 	var mean_absolute_net_completion_value := 0.0
 	for track in tracks:
 		var reward_delta_value: float = (
@@ -75,13 +74,10 @@ func build_ledger(observation: Dictionary, marginal_health_unit_value: float) ->
 			"remaining_health": remaining_health,
 		}
 		mean_net_completion_value += net_completion_value
-		mean_net_completion_value_per_health += net_completion_value / remaining_health
 		mean_absolute_net_completion_value += abs(net_completion_value)
 	return {
 		"entries_by_track_id": entries_by_track_id,
 		"mean_net_completion_value": mean_net_completion_value / tracks.size(),
-		"mean_net_completion_value_per_health":
-		mean_net_completion_value_per_health / tracks.size(),
 		"mean_absolute_net_completion_value": mean_absolute_net_completion_value / tracks.size(),
 		"living_enemy_preservation_value": preservation_value,
 	}
@@ -99,7 +95,6 @@ func _empty_ledger(entries_by_track_id: Dictionary) -> Dictionary:
 	return {
 		"entries_by_track_id": entries_by_track_id,
 		"mean_net_completion_value": 0.0,
-		"mean_net_completion_value_per_health": 0.0,
 		"mean_absolute_net_completion_value": 0.0,
 		"living_enemy_preservation_value": 0.0,
 	}

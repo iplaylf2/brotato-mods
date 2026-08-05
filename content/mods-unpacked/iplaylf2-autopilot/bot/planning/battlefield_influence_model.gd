@@ -20,6 +20,12 @@ const ProjectileMotionPredictor := preload(
 const EnemyHealthModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/enemy_health_model.gd"
 )
+const DamageCompletionWorkModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "damage_completion_work_model.gd"
+	)
+)
 
 const RANGED_SOURCE_PRESSURE_DISTANCE := 650.0
 
@@ -28,6 +34,7 @@ var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _enemy_health_model: Reference = EnemyHealthModel.new()
+var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
 var _initial_pressure_physics_frame := -1
 var _initial_environmental_pressure := 0.0
 var _shared_input_physics_frame := -1
@@ -45,7 +52,8 @@ func predict(
 	observation: Dictionary,
 	action_forecast: Dictionary,
 	influence_weights: Dictionary,
-	committed_seconds: float
+	committed_seconds: float,
+	completion_value_ledger: Dictionary
 ) -> Dictionary:
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var result := _empty_result()
@@ -76,7 +84,8 @@ func predict(
 			interception_samples,
 			previous_enemy_positions,
 			previous_projectile_positions,
-			geometry
+			geometry,
+			completion_value_ledger
 		)
 		var exposure := _evaluate_channels(channels, influence_weights)
 		_accumulate_result(result, channels, exposure, step_seconds)
@@ -120,7 +129,7 @@ func sample_point(
 	_sample_spawn_pressure(observation.visible_world.spawn_warnings, sample, channels, geometry)
 	_sample_edge_pressure(observation.localization.map_bounds, displacement, channels, geometry)
 	_sample_combat_support(
-		observation, _get_influence_sources(observation), sample, 0, {}, channels, geometry
+		observation, _get_influence_sources(observation), sample, 0, {}, channels, geometry, null
 	)
 	_sample_projectile_point_pressure(
 		observation.visible_world.enemy_projectiles, sample, channels, geometry
@@ -146,7 +155,8 @@ func _sample_channels(
 	interception_samples: Dictionary,
 	previous_enemy_positions: Array,
 	previous_projectile_positions: Array,
-	geometry: Dictionary
+	geometry: Dictionary,
+	completion_value_ledger: Dictionary
 ) -> Dictionary:
 	var channels := _empty_channels()
 	_sample_enemy_pressure(
@@ -157,7 +167,14 @@ func _sample_channels(
 		observation.localization.map_bounds, sample.displacement, channels, geometry
 	)
 	_sample_combat_support(
-		observation, sources, sample, sample_index, consumed_single_use_sources, channels, geometry
+		observation,
+		sources,
+		sample,
+		sample_index,
+		consumed_single_use_sources,
+		channels,
+		geometry,
+		completion_value_ledger
 	)
 	_sample_projectile_pressure(
 		observation.visible_world.enemy_projectiles,
@@ -302,7 +319,8 @@ func _sample_combat_support(
 	sample_index: int,
 	consumed_single_use_sources: Dictionary,
 	channels: Dictionary,
-	geometry: Dictionary
+	geometry: Dictionary,
+	completion_value_ledger
 ) -> void:
 	for source_index in sources.size():
 		var source: Dictionary = sources[source_index]
@@ -319,9 +337,12 @@ func _sample_combat_support(
 				channels.allied_suppression += _source_suppression(
 					observation.enemy_tracks, source, support, sample, geometry, true
 				)
-				channels.expected_allied_damage += _single_use_damage(
-					observation.enemy_tracks, source, support, sample
-				)
+				# Point exposure queries do not own action-outcome valuation and pass
+				# `null`; swept action forecasts provide the required completion ledger.
+				if completion_value_ledger != null:
+					channels.expected_allied_completion_value += _single_use_completion_value(
+						observation.enemy_tracks, source, support, sample, completion_value_ledger
+					)
 				channels.consumed_single_use_support_supply += (
 					support.intensity
 					* source.get("existence_confidence", 1.0)
@@ -410,8 +431,12 @@ func _has_single_use_trigger(
 	return false
 
 
-func _single_use_damage(
-	tracks: Array, source: Dictionary, support: Dictionary, sample: Dictionary
+func _single_use_completion_value(
+	tracks: Array,
+	source: Dictionary,
+	support: Dictionary,
+	sample: Dictionary,
+	completion_value_ledger: Dictionary
 ) -> float:
 	var damage: float = max(0.0, support.get("damage", 0.0))
 	if damage <= 0.0:
@@ -425,8 +450,12 @@ func _single_use_damage(
 		var blast_radius: float = support.radius + track.last_measurement.visual_radius
 		if (enemy_position - source_position).length() > blast_radius:
 			continue
+		var ledger_entry: Dictionary = completion_value_ledger.entries_by_track_id[track.track_id]
 		result += (
-			min(damage, _enemy_health_model.remaining_health(track))
+			ledger_entry.net_completion_value
+			* _damage_completion_work_model.completion_fraction_per_hit(
+				_enemy_health_model.remaining_health(track), damage
+			)
 			* track.recency_confidence
 		)
 	return result * source.get("existence_confidence", 1.0)
@@ -659,7 +688,7 @@ func _accumulate_result(
 	result.integrated_allied_body_pressure += channels.ally_body * step_seconds
 	result.peak_enemy_contact_risk = max(result.peak_enemy_contact_risk, channels.contact)
 	result.integrated_allied_pressure_relief += channels.allied_suppression * step_seconds
-	result.expected_allied_damage += channels.expected_allied_damage
+	result.expected_allied_completion_value += channels.expected_allied_completion_value
 	result.consumed_single_use_support_supply += channels.consumed_single_use_support_supply
 	result.integrated_allied_healing_support += channels.healing_support * step_seconds
 	result.integrated_projectile_interception_relief += (
@@ -798,7 +827,7 @@ func _empty_result() -> Dictionary:
 		"peak_enemy_contact_risk": 0.0,
 		"integrated_allied_body_pressure": 0.0,
 		"integrated_allied_pressure_relief": 0.0,
-		"expected_allied_damage": 0.0,
+		"expected_allied_completion_value": 0.0,
 		"consumed_single_use_support_supply": 0.0,
 		"integrated_allied_healing_support": 0.0,
 		"integrated_projectile_interception_relief": 0.0,
@@ -834,7 +863,7 @@ func _empty_channels() -> Dictionary:
 		"edge": 0.0,
 		"ally_body": 0.0,
 		"allied_suppression": 0.0,
-		"expected_allied_damage": 0.0,
+		"expected_allied_completion_value": 0.0,
 		"consumed_single_use_support_supply": 0.0,
 		"healing_support": 0.0,
 		"projectile_interception": 0.0,

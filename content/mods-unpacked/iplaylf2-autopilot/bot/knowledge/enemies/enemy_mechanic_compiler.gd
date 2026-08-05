@@ -171,6 +171,7 @@ func _compile_kill_rewards(enemy: Node, archetype: String) -> Dictionary:
 		"base_consumable_drop_chance": 0.0,
 		"item_box_conditional_chance": 0.0,
 		"guaranteed_consumable": false,
+		"guaranteed_death_products": [],
 		"player_stat_changes": [],
 	}
 	if "stats" in enemy and enemy.stats != null:
@@ -178,6 +179,21 @@ func _compile_kill_rewards(enemy: Node, archetype: String) -> Dictionary:
 		rewards.base_consumable_drop_chance = clamp(float(enemy.stats.base_drop_chance), 0.0, 1.0)
 		rewards.item_box_conditional_chance = clamp(float(enemy.stats.item_drop_chance), 0.0, 1.0)
 		rewards.guaranteed_consumable = bool(enemy.stats.always_drop_consumables)
+		if (
+			enemy.can_drop_loot
+			and enemy.stats.can_drop_consumables
+			and rewards.guaranteed_consumable
+			and rewards.item_box_conditional_chance >= 1.0
+			and RunData.current_wave <= RunData.nb_of_waves
+		):
+			# Vanilla selects the box destination inside a radius of
+			# `100 + gold_spread` from the unit's death position.
+			rewards.guaranteed_death_products.push_back(
+				{
+					"kind": "item_box",
+					"maximum_spawn_displacement": max(50.0, 100.0 + float(enemy.stats.gold_spread)),
+				}
+			)
 	if archetype == "evil_mob":
 		rewards.player_stat_changes.push_back({"stat": "curse", "operation": "add", "value": 1.0})
 	return rewards

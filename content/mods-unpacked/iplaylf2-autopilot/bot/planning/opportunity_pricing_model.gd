@@ -5,12 +5,10 @@ extends Reference
 # accessibility and event realization remain in their owning predictors.
 
 # Generating an item box creates a wave-end item choice that did not previously
-# exist. Price that creation by the minimum recyclable item value. Once a box is
-# already on the ground, vanilla collects it at wave end, so moving toward it
-# earns only its immediate healing and pickup-event effects.
-const MINIMUM_COMMON_ITEM_BASE_VALUE := 8.0
-const BASE_RECYCLING_SHARE := 0.25
-const BASE_ITEM_INFLATION_PER_WAVE := 0.1
+# exist. Its item-value profile uses the expected shop-price proxy under the exact
+# wave-tier distribution and current unlocked item pools. Once a box is on the ground,
+# vanilla collects it at wave end, so moving toward it earns only its immediate
+# healing and pickup-event effects.
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
@@ -92,22 +90,24 @@ func consumable_pickup_value(
 	)
 
 
-func _generated_item_box_value(observation: Dictionary) -> float:
-	var wave: float = max(1.0, float(observation.wave_state.number))
-	var inflated_minimum_value := (
-		MINIMUM_COMMON_ITEM_BASE_VALUE
-		+ wave
-		+ MINIMUM_COMMON_ITEM_BASE_VALUE * wave * BASE_ITEM_INFLATION_PER_WAVE
-	)
-	return max(1.0, floor(inflated_minimum_value * BASE_RECYCLING_SHARE))
+func expected_item_box_item_value(observation: Dictionary) -> float:
+	var profile: Dictionary = observation.player_state.item_box_item_value_profile
+	var probabilities: Array = profile.tier_probabilities
+	var values: Array = profile.mean_shop_price_by_tier
+	assert(probabilities.size() == values.size())
+	var result := 0.0
+	for tier in probabilities.size():
+		result += probabilities[tier] * values[tier]
+	return result
 
 
 func kill_reward_value(observation: Dictionary, rewards: Dictionary) -> float:
 	var value: float = max(0.0, rewards.get("base_materials", 0.0))
-	value += (
-		_consumable_drop_probability_model.item_box_drop_chance(observation, rewards)
-		* _generated_item_box_value(observation)
+	var item_box_chance: float = _consumable_drop_probability_model.item_box_drop_chance(
+		observation, rewards
 	)
+	if item_box_chance > 0.0:
+		value += item_box_chance * expected_item_box_item_value(observation)
 	value += _stat_opportunity_pricing_model.value(
 		observation, rewards.get("player_stat_changes", [])
 	)

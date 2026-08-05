@@ -7,10 +7,14 @@ extends Reference
 const NEARBY_PICKUP_HAZARD_PER_SECOND := 1.5
 const OBSERVED_MOTION_SECONDS := 1.0
 const PICKUP_INFLUENCE_DISTANCE := 300.0
+const VisibilityCoverageModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/visibility_coverage_model.gd"
+)
 
 var _elapsed_seconds := 0.0
 var _odometry_position := Vector2.ZERO
 var _teammate_observations := {}
+var _visibility_coverage_model: Reference = VisibilityCoverageModel.new()
 
 
 func update(delta_seconds: float, position_delta: Vector2, visible_allies: Array) -> void:
@@ -87,20 +91,11 @@ func estimate(
 
 
 func _tree_last_position_is_covered(memory_record: Dictionary, visibility: Dictionary) -> bool:
-	# Fog lights do not form one rectangular legal sensor domain. In ordinary
-	# waves the same camera rectangle used by VisibleWorldObserver is sufficient
-	# negative evidence for a stationary tree at its last measured position.
-	if visibility.get("fog_active", false):
-		return false
-	var viewport_size: Vector2 = visibility.get("viewport_size", Vector2.ZERO)
-	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
-		return false
-	var viewport_offset: Vector2 = visibility.get(
-		"viewport_offset_from_player", -viewport_size * 0.5
-	)
 	var entity_position: Vector2 = memory_record.odometry_position - _odometry_position
 	var visual_radius: float = max(0.0, memory_record.observation.get("visual_radius", 0.0))
-	return Rect2(viewport_offset, viewport_size).grow(visual_radius).has_point(entity_position)
+	return _visibility_coverage_model.covers_reachable_circle(
+		entity_position, visual_radius, 0.0, visibility
+	)
 
 
 func _unchanged_estimate() -> Dictionary:

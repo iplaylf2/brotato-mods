@@ -17,4 +17,6 @@ func adapt(consumable: Node) -> Dictionary:
 			result.base_recovery += effect.value
 	if data.my_id_hash in [Keys.consumable_fruit_hash, Keys.consumable_poisoned_fruit_hash]:
 		result.traits.push_back("fruit")
+	if data.my_id_hash in [Keys.consumable_item_box_hash, Keys.consumable_legendary_item_box_hash]:
+		result.traits.push_back("item_box")
 	return result

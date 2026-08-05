@@ -22,11 +22,18 @@ const NeutralCompletionWorkModel := preload(
 		+ "neutral_completion_work_model.gd"
 	)
 )
+const DamageCompletionWorkModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "damage_completion_work_model.gd"
+	)
+)
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _enemy_health_model: Reference = EnemyHealthModel.new()
 var _neutral_completion_work_model: Reference = NeutralCompletionWorkModel.new()
+var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
 
 
 func forecast(observation: Dictionary) -> Dictionary:
@@ -76,12 +83,14 @@ func _completion_demands(observation: Dictionary, mean_damage_per_primary_hit: f
 	var result := []
 	if mean_damage_per_primary_hit > 0.0:
 		for track in observation.enemy_tracks:
+			var demand_hits: float = _damage_completion_work_model.hits_to_complete(
+				_enemy_health_model.remaining_health(track), mean_damage_per_primary_hit
+			)
 			result.push_back(
 				{
 					"target_id": _engagement_target_projector.enemy_target_id(track),
-					"demand_hits":
-					_enemy_health_model.remaining_health(track) / mean_damage_per_primary_hit,
-					"confidence": track.recency_confidence,
+					"demand_hits": demand_hits,
+					"confidence": track.existence_confidence,
 				}
 			)
 	for tree in observation.remembered_entities:

@@ -64,11 +64,14 @@
 ### 观察与记忆
 
 - `bot/observation/observed_world_memory.gd` 聚合每位玩家的实体、敌人轨迹与视野覆盖记忆；
-  `bot/observation/remembered_entity_existence_estimator.gd` 估计实体存在性。
+  `bot/observation/visibility_coverage_model.gd` 统一解释无雾矩形视口的保守负可见性证据，
+  `bot/observation/enemy_death_product_matcher.gd` 只在机制支持域内已追踪来源候选唯一时，将首次观察的
+  必掉产物与失视敌人关联，
+  `bot/observation/remembered_entity_existence_estimator.gd` 在该几何事实之上估计实体存在性。
 - `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量；
   `bot/observation/enemy_attack_timing_observer.gd` 只拥有当前可见敌人的下一轮齐射与冲撞时间窗；
-  `bot/observation/visible_world_observer.gd` 从原版统一敌人域观察普通敌人、精英与 Boss，并读取可见敌人的
-  当前生命，以及当前敌方投射物和友方角色的碰撞形状。
+  `bot/observation/visible_world_observer.gd` 单次扫描原版统一敌人域，观察普通敌人、精英与 Boss 的视觉状态，
+  并单独输出原版持续血条提供的视野外存活和当前生命，以及当前敌方投射物和友方角色的碰撞形状。
 - 观察层只输出语义画像。它不读取规划结果，规划层也不读取观察层的场景节点或内部实现细节。
 
 ### 运动、碰撞与生命
@@ -106,6 +109,7 @@
   目标投影为局部命中、伤害与完成容量；
   `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样的有限目标容量守恒。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
+  `bot/planning/engagement/damage_completion_work_model.gd` 统一把剩余生命和单次伤害换算为离散击打工作量；
   `bot/planning/engagement/neutral_completion_work_model.gd` 把树木最后一次观测的剩余生命、命中状态和
   玩家的一击完成状态统一解释为有效攻击工作量，供波次容量与局部武器结果共享。
 - `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
@@ -116,6 +120,8 @@
   几何；导航、直接收益和事件规则共同使用该契约。
 - `bot/planning/opportunity_pricing_model.gd` 只换算材料、消耗品、树木和击杀掉落，不再拥有敌人威胁或
   死亡转移；
+  `bot/knowledge/pickups/item_box_item_value_profile_adapter.gd` 从原版波次稀有度规则、已解锁道具池和当前
+  玩家价格修正生成无随机抽样的箱子道具价值画像；
   `bot/planning/consumable_drop_probability_model.gd` 把稳定掉落画像与当前幸运组合为消耗品及箱子概率；
   `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
 - `bot/planning/player_rule_outcome_predictor.gd` 负责把拾取收集和受击等事件证据解释为规则后果；
@@ -164,6 +170,7 @@
 | `Worker` | 在受同步协议保护的后台拥有任务执行生命周期，不拥有任务语义或结果应用 | `start`、`submit`、`poll`、`shutdown` |
 | `Monitor` | 读取运行时监视值，维护平滑状态并公开上下文 | `observe_*`、`build_context` |
 | `Filter` | 按明确判据产生输入子集，并公开过滤诊断 | `filter` |
+| `Matcher` | 按明确支持关系关联两个已观察集合，不补造来源归属 | `match_*` |
 | `Refiner` | 根据已评价候选提出更细的搜索候选，不拥有评价或停止策略 | `propose_*` |
 | `Allocator` | 把既有资源信号映射为某一计算维度的本轮额度，不拥有资源测量或行为价值 | `allocate` |
 | `Policy` | 根据资源上下文形成计算预算或其他可调策略 | 领域动词，或 `set_frame_budget_context`、`allocate`、`observe_*` |

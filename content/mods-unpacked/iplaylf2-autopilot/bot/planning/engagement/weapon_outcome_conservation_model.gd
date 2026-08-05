@@ -6,6 +6,15 @@ extends Reference
 # most once, and every completion-derived value channel represents the same
 # completion equivalents across weapons and path samples.
 
+const DamageCompletionWorkModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "damage_completion_work_model.gd"
+	)
+)
+
+var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
+
 
 func accumulate_enemy_completion(
 	outcome: Dictionary,
@@ -14,12 +23,17 @@ func accumulate_enemy_completion(
 	expected_enemy_damage: float,
 	critical_chance: float
 ) -> void:
+	var damage_per_hit := (
+		max(0.0, expected_enemy_damage) / expected_enemy_hits
+		if expected_enemy_hits > 0.0
+		else 0.0
+	)
+	var completion_fraction_per_hit: float = _damage_completion_work_model.completion_fraction_per_hit(
+		coverage.mean_enemy_remaining_health, damage_per_hit
+	)
 	var completion_equivalents: float = min(
 		max(0.0, coverage.covered_enemy_mass),
-		min(
-			max(0.0, expected_enemy_hits),
-			max(0.0, expected_enemy_damage) / max(1.0, coverage.mean_enemy_remaining_health)
-		)
+		max(0.0, expected_enemy_hits) * completion_fraction_per_hit
 	)
 	outcome.expected_enemy_completion_equivalents += completion_equivalents
 	outcome.expected_enemy_reward_delta_value += (
