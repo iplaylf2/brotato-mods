@@ -1,6 +1,6 @@
 extends Reference
 
-# Prices observed materials, consumables, destructibles, and enemy kill rewards in
+# Prices observed materials, consumables, destructibles, and death rewards in
 # material-equivalent marginal value using only current public state. Route
 # accessibility and event realization remain in their owning predictors.
 
@@ -12,16 +12,12 @@ extends Reference
 const PlayerRuleProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_projector.gd"
 )
-const StatOpportunityPricingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_pricing_model.gd"
-)
-const ConsumableDropProbabilityModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
+const DeathRewardProbabilityModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/death_reward_probability_model.gd"
 )
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
-var _stat_opportunity_pricing_model: Reference = StatOpportunityPricingModel.new()
-var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
+var _death_reward_probability_model: Reference = DeathRewardProbabilityModel.new()
 
 
 func material_unit_collection_value(observation: Dictionary) -> float:
@@ -37,32 +33,33 @@ func material_unit_collection_value(observation: Dictionary) -> float:
 
 
 func material_collection_value(observation: Dictionary, material: Dictionary) -> float:
-	var minimum_units: float = material.material_quantity_estimate.minimum_units
-	return minimum_units * material_unit_collection_value(observation)
+	var material_quantity: float = max(0.0, material.material_quantity)
+	return material_quantity * material_unit_collection_value(observation)
 
 
 func tree_destruction_value(
 	observation: Dictionary, tree: Dictionary, health_inventory_value: Dictionary
 ) -> float:
-	var rewards: Dictionary = tree.destructible_profile.kill_rewards
-	var kill_value := kill_reward_value(observation, rewards)
+	var death_rewards: Dictionary = tree.destructible_profile.death_rewards
+	var destruction_value := death_reward_value(observation, death_rewards)
 	# Tree materials are still wave pickups, so their timing value must use the
 	# same price as already visible materials. A tree's base consumable chance is
 	# 100%; its high conditional item-box chance creates item value. Every possible
 	# consumable also carries healing, including an item box, so recovery uses the
 	# full consumable chance rather than only the complementary fruit outcome.
-	kill_value += (
-		max(0.0, rewards.get("base_materials", 0.0))
+	destruction_value += (
+		max(0.0, death_rewards.get("material_quantity", 0.0))
+		* _death_reward_probability_model.material_drop_probability(observation, death_rewards)
 		* (material_unit_collection_value(observation) - 1.0)
 	)
-	kill_value += (
-		_consumable_drop_probability_model.any_consumable_drop_chance(observation, rewards)
+	destruction_value += (
+		_death_reward_probability_model.any_consumable_drop_probability(observation, death_rewards)
 		* health_inventory_value.maximum_consumable_recovery
 		# Destroying the tree creates replenishment supply; it does not merely
 		# convert supply already on the floor into liquid health.
 		* health_inventory_value.replenishment_unit_value
 	)
-	return max(0.0, kill_value - _living_tree_preservation_value(observation))
+	return max(0.0, destruction_value - _living_tree_preservation_value(observation))
 
 
 func consumable_recovery_value(observation: Dictionary, consumable: Dictionary) -> float:
@@ -101,16 +98,16 @@ func expected_item_box_item_value(observation: Dictionary) -> float:
 	return result
 
 
-func kill_reward_value(observation: Dictionary, rewards: Dictionary) -> float:
-	var value: float = max(0.0, rewards.get("base_materials", 0.0))
-	var item_box_chance: float = _consumable_drop_probability_model.item_box_drop_chance(
-		observation, rewards
+func death_reward_value(observation: Dictionary, death_rewards: Dictionary) -> float:
+	var value: float = (
+		max(0.0, death_rewards.get("material_quantity", 0.0))
+		* _death_reward_probability_model.material_drop_probability(observation, death_rewards)
 	)
-	if item_box_chance > 0.0:
-		value += item_box_chance * expected_item_box_item_value(observation)
-	value += _stat_opportunity_pricing_model.value(
-		observation, rewards.get("player_stat_changes", [])
+	var item_box_probability: float = _death_reward_probability_model.item_box_drop_probability(
+		observation, death_rewards
 	)
+	if item_box_probability > 0.0:
+		value += item_box_probability * expected_item_box_item_value(observation)
 	return value
 
 

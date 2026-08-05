@@ -1,12 +1,15 @@
 extends Reference
 
 # Compiles versioned enemy mechanics after an enemy becomes visible. Possible
-# boss phases are aggregated; mutable state such as the active phase, current
-# cooldown, target, current health, and random rolls is not part of the profile.
+# boss phases are aggregated; mutable attack state, targets, health, and random
+# rolls are excluded. Visible reward state is adapted separately on each call.
 
 const MINIMUM_PROJECTILE_PRESSURE_INTENSITY := 0.5
 const MAX_PRESSURE_INTENSITY := 4.0
 const DEATH_SPAWN_COUNT_BY_ARCHETYPE := {"spawner": 3.0, "bloated_spawner": 5.0}
+const DeathRewardProfileAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/rewards/death_reward_profile_adapter.gd"
+)
 const EnemyMotionMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd"
 )
@@ -17,6 +20,7 @@ const CollisionShapeRadiusAdapter := preload(
 var _mechanics_by_archetype := {}
 var _motion_mechanic_compiler: Reference = EnemyMotionMechanicCompiler.new()
 var _collision_shape_radius_adapter: Reference = CollisionShapeRadiusAdapter.new()
+var _death_reward_profile_adapter: Reference = DeathRewardProfileAdapter.new()
 
 
 func compile(enemy: Node) -> Dictionary:
@@ -48,7 +52,7 @@ func compile(enemy: Node) -> Dictionary:
 		"contact_damage": _get_contact_damage(enemy),
 		"contact_radius":
 		_collision_shape_radius_adapter.adapt_owner_centered_radius(enemy, "Hitbox/Collision"),
-		"kill_rewards": _compile_kill_rewards(enemy, archetype),
+		"death_rewards": _death_reward_profile_adapter.adapt_enemy(enemy),
 		"battlefield_effects": mechanics.battlefield_effects,
 		"removal_effects": mechanics.removal_effects,
 	}
@@ -158,40 +162,6 @@ func _compile_removal_effects(archetype: String) -> Dictionary:
 	return {
 		"spawned_hostile_population": DEATH_SPAWN_COUNT_BY_ARCHETYPE.get(archetype, 0.0),
 	}
-
-
-func _compile_kill_rewards(enemy: Node, archetype: String) -> Dictionary:
-	var rewards := {
-		"base_materials": 0.0,
-		"base_consumable_drop_chance": 0.0,
-		"item_box_conditional_chance": 0.0,
-		"guaranteed_consumable": false,
-		"guaranteed_death_products": [],
-		"player_stat_changes": [],
-	}
-	if "stats" in enemy and enemy.stats != null:
-		rewards.base_materials = max(0.0, float(enemy.stats.value))
-		rewards.base_consumable_drop_chance = clamp(float(enemy.stats.base_drop_chance), 0.0, 1.0)
-		rewards.item_box_conditional_chance = clamp(float(enemy.stats.item_drop_chance), 0.0, 1.0)
-		rewards.guaranteed_consumable = bool(enemy.stats.always_drop_consumables)
-		if (
-			enemy.can_drop_loot
-			and enemy.stats.can_drop_consumables
-			and rewards.guaranteed_consumable
-			and rewards.item_box_conditional_chance >= 1.0
-			and RunData.current_wave <= RunData.nb_of_waves
-		):
-			# Vanilla selects the box destination inside a radius of
-			# `100 + gold_spread` from the unit's death position.
-			rewards.guaranteed_death_products.push_back(
-				{
-					"kind": "item_box",
-					"maximum_spawn_displacement": max(50.0, 100.0 + float(enemy.stats.gold_spread)),
-				}
-			)
-	if archetype == "evil_mob":
-		rewards.player_stat_changes.push_back({"stat": "curse", "operation": "add", "value": 1.0})
-	return rewards
 
 
 func _compile_projectile_attack(enemy: Node) -> Dictionary:

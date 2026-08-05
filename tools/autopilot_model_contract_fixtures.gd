@@ -89,16 +89,17 @@ func wave_completion_forecast(enemy_fractions: Dictionary, tree_fractions := {})
 
 
 func tree_destructible_profile(
-	hit_limit: float, maximum_health: float, base_materials := 0.0
+	hit_limit: float, maximum_health: float, material_quantity := 0.0
 ) -> Dictionary:
 	return {
 		"destruction": {"hit_limit": hit_limit, "maximum_health": maximum_health},
-		"kill_rewards":
+		"death_rewards":
 		{
-			"base_materials": base_materials,
+			"material_quantity": material_quantity,
+			"material_drop_guaranteed": true,
 			"base_consumable_drop_chance": 0.0,
 			"item_box_conditional_chance": 0.0,
-			"guaranteed_consumable": false,
+			"consumable_drop_guaranteed": false,
 		},
 	}
 
@@ -122,9 +123,10 @@ func enemy_track(position: Vector2, velocity: Vector2, follows_player: bool) -> 
 		"behavior_profile":
 		{
 			"durability": {"maximum_health": 10.0},
-			"kill_rewards":
+			"death_rewards":
 			{
-				"base_materials": 1.0,
+				"material_quantity": 1.0,
+				"material_drop_guaranteed": false,
 				"base_consumable_drop_chance": 0.0,
 				"item_box_conditional_chance": 0.0,
 			},

@@ -6,9 +6,8 @@ var _fixtures: Reference
 
 
 func _init() -> void:
-	var fixtures_path: String = get_script().resource_path.get_base_dir().plus_file(
-		"autopilot_model_contract_fixtures.gd"
-	)
+	var tools_dir: String = get_script().resource_path.get_base_dir()
+	var fixtures_path: String = tools_dir.plus_file("autopilot_model_contract_fixtures.gd")
 	_fixtures = load(fixtures_path).new()
 	var archive_path := _get_archive_path()
 	if archive_path.empty() or not ProjectSettings.load_resource_pack(archive_path, false):
@@ -20,13 +19,20 @@ func _init() -> void:
 	_check_projectile_hitbox_ttc()
 	_check_navigation_horizon_consistency()
 	_check_trajectory_value_field()
-	var deadline_checks_path: String = get_script().resource_path.get_base_dir().plus_file(
+	var deadline_checks_path: String = tools_dir.plus_file(
 		"check_autopilot_wave_deadline_contracts.gd"
 	)
 	if not load(deadline_checks_path).new().run(_fixtures):
 		_failed = true
 	_check_pickup_interaction_geometry()
-	_check_visible_material_quantity_estimate()
+	var material_checks_path: String = tools_dir.plus_file(
+		"check_autopilot_material_value_contracts.gd"
+	)
+	if not load(material_checks_path).new().run(_fixtures):
+		_failed = true
+	var reward_check_path: String = tools_dir.plus_file("check_autopilot_death_reward_contracts.gd")
+	if not load(reward_check_path).new().run():
+		_failed = true
 	_check_spatial_target_control()
 	_check_weapon_outcome_contracts()
 	_check_navigation_weapon_completion_value()
@@ -277,7 +283,7 @@ func _check_pickup_interaction_geometry() -> void:
 		"relative_position": Vector2(100.0, 0.0),
 		"visual_radius": 36.0,
 		"existence_confidence": 1.0,
-		"material_quantity_estimate": {"minimum_units": 1.0},
+		"material_quantity": 1.0,
 	}
 	var observation := {
 		"physics_frame": 3,
@@ -429,30 +435,6 @@ func _check_spatial_target_control() -> void:
 			+ "navigation weapon completion value owns target competition after lock becomes possible"
 		)
 	)
-
-
-func _check_visible_material_quantity_estimate() -> void:
-	var estimator_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/pickups/material_quantity_estimator.gd"
-	)
-	var estimator: Reference = estimator_script.new()
-	var material := Node2D.new()
-	material.scale = Vector2(1.25, 1.25)
-	_expect(
-		is_equal_approx(estimator.estimate(material).minimum_units, 2.0),
-		"bonus-sized material must expose only its appearance-proven minimum value"
-	)
-	material.scale = Vector2(1.5, 1.5)
-	_expect(
-		is_equal_approx(estimator.estimate(material).minimum_units, 7.0),
-		"material growth beyond bonus scale must preserve the pooled-unit lower bound"
-	)
-	material.scale = Vector2(1.49, 1.49)
-	_expect(
-		is_equal_approx(estimator.estimate(material).minimum_units, 6.0),
-		"a noncanonical rendered scale must not be rounded up beyond its visible lower bound"
-	)
-	material.free()
 
 
 func _check_weapon_outcome_contracts() -> void:
@@ -727,12 +709,13 @@ func _check_recovery_liquidity_pricing() -> void:
 	var tree := {
 		"destructible_profile":
 		{
-			"kill_rewards":
+			"death_rewards":
 			{
-				"base_materials": 0.0,
+				"material_quantity": 0.0,
+				"material_drop_guaranteed": true,
 				"base_consumable_drop_chance": 1.0,
 				"item_box_conditional_chance": 0.0,
-				"guaranteed_consumable": true,
+				"consumable_drop_guaranteed": true,
 			}
 		}
 	}
@@ -741,8 +724,8 @@ func _check_recovery_liquidity_pricing() -> void:
 	)
 	var opportunity: Reference = opportunity_script.new()
 	var no_drop_tree: Dictionary = tree.duplicate(true)
-	no_drop_tree.destructible_profile.kill_rewards.base_consumable_drop_chance = 0.0
-	no_drop_tree.destructible_profile.kill_rewards.guaranteed_consumable = false
+	no_drop_tree.destructible_profile.death_rewards.base_consumable_drop_chance = 0.0
+	no_drop_tree.destructible_profile.death_rewards.consumable_drop_guaranteed = false
 	_expect(
 		(
 			opportunity.tree_destruction_value(

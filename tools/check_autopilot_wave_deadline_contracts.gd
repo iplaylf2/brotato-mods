@@ -68,7 +68,7 @@ func _check_pickup_deadline() -> void:
 		"relative_position": Vector2(100.0, 0.0),
 		"visual_radius": 36.0,
 		"existence_confidence": 1.0,
-		"material_quantity_estimate": {"minimum_units": 1.0},
+		"material_quantity": 1.0,
 	}
 	var observation: Dictionary = _fixtures.planning_observation([])
 	observation.wave_state.seconds_remaining = 0.5

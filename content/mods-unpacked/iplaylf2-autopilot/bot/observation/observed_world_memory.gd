@@ -372,7 +372,7 @@ func _retire_tracks_from_death_products(observations: Array) -> void:
 		var track: Dictionary = _tracks[track_id]
 		if track.visible or track.persistent_health_observation_active:
 			continue
-		var products: Array = track.behavior_profile.kill_rewards.guaranteed_death_products
+		var products: Array = track.behavior_profile.death_rewards.guaranteed_death_products
 		if products.empty():
 			continue
 		var seconds_since_seen: float = _elapsed_seconds - track.last_seen_at_seconds

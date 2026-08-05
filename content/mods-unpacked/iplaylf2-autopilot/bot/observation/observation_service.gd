@@ -158,6 +158,7 @@ func _get_wave_state() -> Dictionary:
 		"number": RunData.current_wave,
 		"final_number": RunData.nb_of_waves,
 		"endless": RunData.is_endless_run,
+		"is_horde": bool(_main._is_horde_wave),
 		"seconds_remaining": timer.time_left,
 		"duration_seconds": timer.wait_time,
 	}

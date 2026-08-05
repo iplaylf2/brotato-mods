@@ -219,8 +219,12 @@ func _apply_consequence(
 			)
 		"multiply":
 			if consequence.target == "picked_material_value":
+				var material_quantity: float = max(
+					0.0, event.get("entity", {}).get("material_quantity", 0.0)
+				)
 				outcome.material_acquisition_value += (
-					max(0.0, consequence.get("value", 1.0) - 1.0)
+					material_quantity
+					* max(0.0, consequence.get("value", 1.0) - 1.0)
 					* expected_occurrences
 				)
 

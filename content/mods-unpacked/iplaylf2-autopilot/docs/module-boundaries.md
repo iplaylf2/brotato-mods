@@ -28,7 +28,7 @@
 ## 规划包的子目录边界
 
 `bot/planning` 根目录是主要协作包。大多数组件共同服务规划入口 `MovementPlanner`，并存在密集的包内
-依赖；只有可单独消费的稳定子协议进入子目录：
+依赖。由多个组件共同定义、且可被不同规划流程单独消费的稳定协议进入子目录：
 
 - `motion` 拥有“规范运动观察与稳定响应 → 未来位置和可达包络”的协议，供暴露、交会、事件与动作采样
   共同消费；
@@ -41,8 +41,8 @@
 - `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、动作条件
   武器结果预测与容量守恒，以及候选轨迹采样状态的导航武器完成价值。
 
-根目录只保留组合多个稳定子协议的规划协作者；`engagement` 子目录不拥有候选生成、行为模式或敌人身份
-优先级。
+根目录保留跨域协调者，以及尚未形成独立组件族的小型共享模型；不能只为单个文件建立目录。
+`engagement` 子目录不拥有候选生成、行为模式或敌人身份优先级。
 
 ## 关键所有权
 
@@ -50,10 +50,10 @@
 
 - `bot/knowledge/allies/ally_mechanic_compiler.gd` 与
   `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
-- `bot/knowledge/pickups/material_quantity_estimator.gd` 只把可见材料缩放估算为目标版本机制保证的单位下界；
+- `bot/observation/visible_world_observer.gd` 从可见材料读取原版拾取和波末转换直接消费的确定数量；
   `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定恢复与处理画像。二者都不读取
   不可见实体或未来随机结果。
-- `bot/knowledge/neutrals/neutral_mechanic_compiler.gd` 拥有可见树木的稳定生命、命中上限与掉落画像；
+- `bot/knowledge/neutrals/neutral_mechanic_compiler.gd` 拥有可见树木的稳定生命、命中上限与死亡奖励画像；
   `bot/knowledge/projectiles/projectile_motion_compiler.gd` 把可见投射物的稳定运动配置编译为解析运动模型。
 - `bot/knowledge/collision_shape_radius_adapter.gd` 把原版圆形和矩形 `CollisionShape2D` 及其完整世界变换
   适配为规范碰撞半径。它提供以实体或碰撞节点为中心的两种包围圆；观察器选择中心并形成当帧测量，
@@ -61,7 +61,13 @@
 - `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
   `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量；
   `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线。
-- `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 拥有稳定攻击、接触形状、收益、战场影响与移除后果；
+- `bot/knowledge/pickups/item_box_item_value_profile_adapter.gd` 从原版波次稀有度规则、已解锁道具池和当前
+  玩家价格修正生成不消耗随机数的箱子道具价值画像。
+- `bot/knowledge/rewards/death_reward_profile_adapter.gd` 从可见单位编译材料数量、可见机制倍率、消耗品
+  条件和必掉产物。材料数量使用目标版本的规范 `get_stats_value()` 结算入口；适配器不保留场景节点，也不
+  解释目标优先级。
+- `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 聚合稳定攻击、接触形状、战场影响与移除后果，并委托
+  `bot/knowledge/rewards` 形成当次死亡奖励画像；
   `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 拥有稳定目标位置响应与冲撞配置。两类缓存都不得
   混入战斗期状态。
 
@@ -130,12 +136,11 @@
   截止统一计算最近主目标与贯穿、弹射、范围机制的后续完成价值，并以同一物理帧缓存目标投影。
 - `bot/planning/pickups/pickup_collection_geometry_model.gd` 统一拥有收集圈边界、未来点位间隙，以及移动
   拾取物与玩家分段路径的连续交会；导航查询点位间隙，直接收益和事件规则查询连续收集事件。
-- `bot/planning/opportunity_pricing_model.gd` 只换算材料、消耗品、树木和击杀掉落，不再拥有敌人威胁或
-  死亡转移；
-  `bot/knowledge/pickups/item_box_item_value_profile_adapter.gd` 从原版波次稀有度规则、已解锁道具池和当前
-  玩家价格修正生成无随机抽样的箱子道具价值画像；
-  `bot/planning/consumable_drop_probability_model.gd` 把稳定掉落画像与当前幸运组合为消耗品及箱子概率；
-  `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
+- `bot/planning/opportunity_pricing_model.gd` 把地面材料、地面消耗品、实体死亡奖励与树木保留后果换算为
+  材料等价边际价值；它不拥有敌人威胁或死亡转移。
+- `bot/planning/death_reward_probability_model.gd` 把死亡奖励画像与当前波次、潮汐波和幸运组合为材料、
+  消耗品及箱子的当前概率。
+- `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
 - `bot/planning/player_rule_outcome_predictor.gd` 负责把拾取收集和受击等事件证据解释为规则后果；
   `bot/planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量；
   `bot/planning/player_rule_projector.gd` 将规则归约为正交状态。这些模块都不能读取场景节点。

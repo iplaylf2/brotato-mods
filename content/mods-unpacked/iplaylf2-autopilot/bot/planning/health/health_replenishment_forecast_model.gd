@@ -10,8 +10,8 @@ const PlayerRuleProjector := preload(
 const WaveCompletionForecastModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/wave_completion_forecast_model.gd"
 )
-const ConsumableDropProbabilityModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/consumable_drop_probability_model.gd"
+const DeathRewardProbabilityModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/death_reward_probability_model.gd"
 )
 const WeaponAttackCapacityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
@@ -19,7 +19,7 @@ const WeaponAttackCapacityModel := preload(
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _wave_completion_forecast_model: Reference = WaveCompletionForecastModel.new()
-var _consumable_drop_probability_model: Reference = ConsumableDropProbabilityModel.new()
+var _death_reward_probability_model: Reference = DeathRewardProbabilityModel.new()
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 
 
@@ -118,13 +118,13 @@ func _expected_drop_replenishment(
 		return 0.0
 	var result := 0.0
 	for track in observation.enemy_tracks:
-		var rewards: Dictionary = track.behavior_profile.get("kill_rewards", {})
-		var drop_chance: float = _consumable_drop_probability_model.any_consumable_drop_chance(
-			observation, rewards
+		var death_rewards: Dictionary = track.behavior_profile.get("death_rewards", {})
+		var drop_probability: float = _death_reward_probability_model.any_consumable_drop_probability(
+			observation, death_rewards
 		)
 		result += (
 			maximum_consumable_recovery
-			* drop_chance
+			* drop_probability
 			* _wave_completion_forecast_model.enemy_completion_fraction(
 				wave_completion_forecast, track
 			)
@@ -132,10 +132,14 @@ func _expected_drop_replenishment(
 	for tree in observation.get("remembered_entities", []):
 		if tree.kind != "tree":
 			continue
-		var rewards: Dictionary = tree.get("destructible_profile", {}).get("kill_rewards", {})
+		var death_rewards: Dictionary = tree.get("destructible_profile", {}).get(
+			"death_rewards", {}
+		)
 		result += (
 			maximum_consumable_recovery
-			* _consumable_drop_probability_model.any_consumable_drop_chance(observation, rewards)
+			* _death_reward_probability_model.any_consumable_drop_probability(
+				observation, death_rewards
+			)
 			* _wave_completion_forecast_model.tree_completion_fraction(
 				wave_completion_forecast, tree
 			)

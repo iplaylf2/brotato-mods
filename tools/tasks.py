@@ -23,6 +23,12 @@ GODOT_VALIDATOR = REPOSITORY / "tools" / "validate_godot_scripts.gd"
 AUTOPILOT_MODEL_CHECKS = REPOSITORY / "tools" / "check_autopilot_model_contracts.gd"
 AUTOPILOT_RUNTIME_CHECKS = REPOSITORY / "tools" / "check_autopilot_runtime_contracts.gd"
 AUTOPILOT_MODEL_FIXTURES = REPOSITORY / "tools" / "autopilot_model_contract_fixtures.gd"
+AUTOPILOT_DEATH_REWARD_CHECKS = (
+    REPOSITORY / "tools" / "check_autopilot_death_reward_contracts.gd"
+)
+AUTOPILOT_MATERIAL_VALUE_CHECKS = (
+    REPOSITORY / "tools" / "check_autopilot_material_value_contracts.gd"
+)
 AUTOPILOT_WAVE_DEADLINE_CHECKS = (
     REPOSITORY / "tools" / "check_autopilot_wave_deadline_contracts.gd"
 )
@@ -286,6 +292,8 @@ def lint_portable() -> None:
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
         str(AUTOPILOT_RUNTIME_CHECKS),
+        str(AUTOPILOT_DEATH_REWARD_CHECKS),
+        str(AUTOPILOT_MATERIAL_VALUE_CHECKS),
         str(AUTOPILOT_MODEL_FIXTURES),
         str(AUTOPILOT_WAVE_DEADLINE_CHECKS),
         str(AUTOPILOT_PLANNING_WORKER_CHECKS),
@@ -298,6 +306,8 @@ def lint_portable() -> None:
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
         str(AUTOPILOT_RUNTIME_CHECKS),
+        str(AUTOPILOT_DEATH_REWARD_CHECKS),
+        str(AUTOPILOT_MATERIAL_VALUE_CHECKS),
         str(AUTOPILOT_MODEL_FIXTURES),
         str(AUTOPILOT_WAVE_DEADLINE_CHECKS),
         str(AUTOPILOT_PLANNING_WORKER_CHECKS),
@@ -373,6 +383,8 @@ def format_sources() -> None:
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
         str(AUTOPILOT_RUNTIME_CHECKS),
+        str(AUTOPILOT_DEATH_REWARD_CHECKS),
+        str(AUTOPILOT_MATERIAL_VALUE_CHECKS),
         str(AUTOPILOT_MODEL_FIXTURES),
         str(AUTOPILOT_WAVE_DEADLINE_CHECKS),
         str(AUTOPILOT_PLANNING_WORKER_CHECKS),

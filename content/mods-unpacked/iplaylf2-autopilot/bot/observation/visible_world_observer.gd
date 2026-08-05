@@ -24,9 +24,6 @@ const AllyMechanicCompiler := preload(
 const ConsumableProfileAdapter := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/pickups/consumable_profile_adapter.gd"
 )
-const MaterialQuantityEstimator := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/pickups/material_quantity_estimator.gd"
-)
 const NeutralMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/neutrals/neutral_mechanic_compiler.gd"
 )
@@ -45,7 +42,6 @@ var _enemy_attack_timing_observer: Reference = EnemyAttackTimingObserver.new()
 var _structure_mechanic_compiler: Reference = StructureMechanicCompiler.new()
 var _ally_mechanic_compiler: Reference = AllyMechanicCompiler.new()
 var _consumable_profile_adapter: Reference = ConsumableProfileAdapter.new()
-var _material_quantity_estimator: Reference = MaterialQuantityEstimator.new()
 var _neutral_mechanic_compiler: Reference = NeutralMechanicCompiler.new()
 var _projectile_motion_compiler: Reference = ProjectileMotionCompiler.new()
 var _collision_shape_radius_adapter: Reference = CollisionShapeRadiusAdapter.new()
@@ -393,7 +389,9 @@ func _observe_materials(origin: Vector2, visible_rect: Rect2) -> Array:
 		var observation := _make_entity_observation(material, origin, "material")
 		observation._source = material
 		observation._world_position = material.global_position
-		observation.material_quantity_estimate = _material_quantity_estimator.estimate(material)
+		# Gold.value is the exact quantity consumed by vanilla pickup and wave-end
+		# settlement. It is already determined when the visible material exists.
+		observation.material_quantity = max(0.0, float(material.value))
 		observations.push_back(observation)
 	return observations
 

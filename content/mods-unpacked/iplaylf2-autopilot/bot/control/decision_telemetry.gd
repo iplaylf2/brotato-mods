@@ -204,7 +204,7 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 		"durability": profile.get("durability", {}),
 		"contact_damage": profile.get("contact_damage", 0.0),
 		"contact_radius": profile.get("contact_radius", 0.0),
-		"kill_rewards": profile.get("kill_rewards", {}),
+		"death_rewards": profile.get("death_rewards", {}),
 		"projectile_attack":
 		{
 			"kind": projectile_attack.get("kind", "unconfirmed"),

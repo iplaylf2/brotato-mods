@@ -405,7 +405,7 @@ func _check_enemy_death_product_matching() -> void:
 	var memory: Reference = _observed_world_memory_script.new()
 	var source := Reference.new()
 	var enemy: Dictionary = _enemy_memory_observation(source)
-	enemy.features.stable_mechanic_profile.kill_rewards = {
+	enemy.features.stable_mechanic_profile.death_rewards = {
 		"guaranteed_death_products": [{"kind": "item_box", "maximum_spawn_displacement": 100.0}]
 	}
 	var party_state := {"living_teammate_player_indices": []}
@@ -444,8 +444,8 @@ func _check_enemy_death_product_matching() -> void:
 		"res://mods-unpacked/iplaylf2-autopilot/bot/observation/" + "enemy_death_product_matcher.gd"
 	)
 	var matcher: Reference = matcher_script.new()
-	var guaranteed_rewards: Dictionary = enemy.features.stable_mechanic_profile.kill_rewards
-	var product_contracts: Array = guaranteed_rewards.guaranteed_death_products
+	var death_rewards: Dictionary = enemy.features.stable_mechanic_profile.death_rewards
+	var product_contracts: Array = death_rewards.guaranteed_death_products
 	var ambiguous_matches: Array = matcher.match_track_ids(
 		[
 			{
@@ -628,7 +628,7 @@ func _enemy_memory_observation(source: Object) -> Dictionary:
 				"durability": {"maximum_health": 10.0},
 				"contact_damage": 1.0,
 				"contact_radius": 10.0,
-				"kill_rewards": {"guaranteed_death_products": []},
+				"death_rewards": {"guaranteed_death_products": []},
 				"battlefield_effects": {},
 				"removal_effects": {},
 			},

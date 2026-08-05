@@ -47,8 +47,8 @@ func build_ledger(observation: Dictionary, marginal_health_unit_value: float) ->
 	var mean_absolute_net_completion_value := 0.0
 	for track in tracks:
 		var reward_delta_value: float = (
-			_opportunity_pricing_model.kill_reward_value(
-				observation, track.behavior_profile.get("kill_rewards", {})
+			_opportunity_pricing_model.death_reward_value(
+				observation, track.behavior_profile.get("death_rewards", {})
 			)
 			- preservation_value
 		)
