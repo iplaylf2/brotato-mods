@@ -28,6 +28,8 @@ func _init() -> void:
 	_check_enemy_negative_visibility_evidence()
 	_check_persistent_enemy_health_observation()
 	_check_enemy_death_product_matching()
+	_check_immediate_hit_reserve_reachability()
+	_check_committed_viability_action_selection()
 	quit(1 if _failed else 0)
 
 
@@ -427,6 +429,97 @@ func _check_enemy_death_product_matching() -> void:
 		ambiguous_matches.empty(),
 		"a death product in multiple mechanic support domains must not claim a source"
 	)
+
+
+func _check_committed_viability_action_selection() -> void:
+	var selector_script: Script = load(PLANNING_PATH + "movement_action_selector.gd")
+	var selector: Reference = selector_script.new()
+	var safe_low_value := _scored_action(2.0, 0.0, 0.0)
+	var safe_high_value := _scored_action(3.0, 0.0, 0.0)
+	var certain_terminal := _scored_action(100.0, 1.0, 1.0)
+	var selected: Dictionary = selector.select([safe_low_value, certain_terminal, safe_high_value])
+	_expect(
+		selected.score == safe_high_value.score,
+		"a certain committed terminal collision must not be purchasable with utility"
+	)
+	_expect(
+		(
+			selected.selection_diagnostics.mode == "committed_viability_then_maximum_utility"
+			and selected.selection_diagnostics.viable_candidate_count == 2
+			and selected.selection_diagnostics.excluded_certain_terminal_candidate_count == 1
+		),
+		"selection diagnostics must expose the committed viability boundary"
+	)
+	var safe_passive := _scored_action(1.0, 0.0, 0.0)
+	var uncertain_engagement := _scored_action(10.0, 0.05, 0.4)
+	selected = selector.select([safe_passive, uncertain_engagement])
+	_expect(
+		selected.score == uncertain_engagement.score,
+		(
+			"probabilistic engagement must remain eligible for attack, pressure relief, "
+			+ "and recovery utility"
+		)
+	)
+
+
+func _check_immediate_hit_reserve_reachability() -> void:
+	var inventory_script: Script = load(PLANNING_PATH + "health/health_inventory_value_model.gd")
+	var inventory: Reference = inventory_script.new()
+	var nearby_memory: Dictionary = _fixtures.enemy_track(Vector2(25.0, 0.0), Vector2.ZERO, false)
+	nearby_memory.visible = false
+	nearby_memory.behavior_profile.contact_damage = 10.0
+	var remote_memory: Dictionary = _fixtures.enemy_track(Vector2(5000.0, 0.0), Vector2.ZERO, false)
+	remote_memory.track_id = 2
+	remote_memory.visible = false
+	remote_memory.behavior_profile.contact_damage = 100.0
+	var remote_visible: Dictionary = _fixtures.enemy_track(
+		Vector2(5000.0, 0.0), Vector2.ZERO, false
+	)
+	remote_visible.track_id = 3
+	remote_visible.behavior_profile.contact_damage = 1000.0
+	var observation: Dictionary = _fixtures.planning_observation(
+		[nearby_memory, remote_memory, remote_visible]
+	)
+	var result: Dictionary = inventory.estimate(
+		observation,
+		{
+			"recovery": {"maximum_consumable_recovery": 0.0},
+			"survival": {"health_rate": 0.0, "recovery_rate": 0.0},
+		},
+		_fixtures.wave_completion_forecast({})
+	)
+	_expect(
+		is_equal_approx(result.immediate_hit_reserve, 10.0),
+		"reserve must cover joint player-threat reach"
+	)
+	observation.physics_frame += 1
+	observation.enemy_tracks = []
+	result = inventory.estimate(
+		observation,
+		{
+			"recovery": {"maximum_consumable_recovery": 0.0},
+			"survival": {"health_rate": 0.0, "recovery_rate": 0.0},
+		},
+		_fixtures.wave_completion_forecast({})
+	)
+	_expect(
+		is_equal_approx(result.immediate_hit_reserve, 0.0),
+		"the next-hit reserve must be zero when no threat can arrive before replanning"
+	)
+
+
+func _scored_action(
+	score: float, committed_terminal_risk: float, forecast_terminal_risk: float
+) -> Dictionary:
+	return {
+		"movement": Vector2.ZERO,
+		"score": score,
+		"outcome":
+		{
+			"terminal_collision_risk": committed_terminal_risk,
+			"forecast_terminal_collision_risk": forecast_terminal_risk,
+		},
+	}
 
 
 func _enemy_memory_observation(source: Object) -> Dictionary:

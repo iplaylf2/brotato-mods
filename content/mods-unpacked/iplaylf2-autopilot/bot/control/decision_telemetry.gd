@@ -101,7 +101,7 @@ func record_decision(
 		_rotate(control_interval_seconds)
 
 
-func close() -> void:
+func close(final_player_states := []) -> void:
 	if not _active:
 		return
 	_write_record(
@@ -110,6 +110,7 @@ func close() -> void:
 			"session_id": _session_id,
 			"decision_counts": _decision_counts,
 			"sample_counts": _sample_counts,
+			"final_player_states": final_player_states,
 		}
 	)
 	_file.flush()

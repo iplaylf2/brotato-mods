@@ -81,7 +81,7 @@ func shutdown() -> void:
 		return
 	_shut_down = true
 	_planning_worker.shutdown()
-	_decision_telemetry.close()
+	_decision_telemetry.close(_final_player_states())
 	for player_index in _players.size():
 		var player: Node = _players[player_index]
 		var actuator: Node = _actuators[player_index]
@@ -102,6 +102,26 @@ func get_current_plan(player_index: int) -> Dictionary:
 
 func get_decision_sample_path() -> String:
 	return _decision_telemetry.get_current_path()
+
+
+func _final_player_states() -> Array:
+	var result := []
+	for player in _players:
+		if not is_instance_valid(player):
+			result.push_back({"available": false})
+			continue
+		result.push_back(
+			{
+				"available": true,
+				"dead": player.dead,
+				"health":
+				{
+					"current": player.current_stats.health,
+					"maximum": player.max_stats.health,
+				},
+			}
+		)
+	return result
 
 
 func _start_replan() -> void:

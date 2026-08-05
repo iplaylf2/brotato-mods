@@ -110,7 +110,9 @@ func plan(observation: Dictionary) -> Dictionary:
 	phase_duration_usec.action_evaluation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
 
-	var direction_scores: Array = scored_actions.duplicate()
+	# Optional refinement follows the same committed-viability boundary as final
+	# selection. Probabilistic and later exposure remains eligible for refinement.
+	var direction_scores: Array = _action_selector.retain_committed_viable(scored_actions)
 	var refined_action_count := 0
 	while (
 		refined_action_count < search_work_allocation.movement_refinement_limit
@@ -129,17 +131,17 @@ func plan(observation: Dictionary) -> Dictionary:
 		actions.push_back(refined_action)
 		var scored_action: Dictionary = _score_action(local_observation, refined_action, context)
 		scored_actions.push_back(scored_action)
-		direction_scores.push_back(scored_action)
+		direction_scores = _action_selector.retain_committed_viable(scored_actions)
 		_compute_budget_policy.observe_work_duration(
 			_compute_budget_policy.WORK_MOVEMENT_REFINEMENT,
 			float(OS.get_ticks_usec() - work_started_usec)
 		)
 
 	var ranked_actions := []
-	for scored in scored_actions:
+	for scored in _action_selector.retain_committed_viable(scored_actions):
 		_insert_descending(ranked_actions, scored, scored_actions.size())
 	phase_duration_usec.refinement = OS.get_ticks_usec() - phase_started_usec
-	var plan: Dictionary = _action_selector.select(ranked_actions)
+	var plan: Dictionary = _action_selector.select(scored_actions)
 	var planning_duration_usec := float(OS.get_ticks_usec() - planning_started_usec)
 	compute_budget.merge(
 		_compute_budget_policy.observe_planning_duration(planning_duration_usec), true

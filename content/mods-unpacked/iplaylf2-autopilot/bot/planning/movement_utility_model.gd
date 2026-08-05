@@ -44,15 +44,11 @@ func build_context(observation: Dictionary) -> Dictionary:
 	var marginal_health_unit_value: float = health_inventory_value.marginal_health_unit_value
 	var terminal_health_loss_unit_value: float = health_inventory_value.terminal_health_loss_unit_value
 	# Environmental exposure belongs to the local rolling horizon. Whole-wave
-	# replenishment can replace health later, but cannot make the current reachable
-	# set viable; use the same immediate-buffer price basis as local collision loss.
+	# replenishment can replace health later, but cannot increase the immediate
+	# survival buffer; use the same price basis as local collision loss.
 	var local_exposure_unit_value: float = terminal_health_loss_unit_value
 	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
 	var damage_is_terminal_rule: bool = player_rule_projection.survival.terminal_on_positive_damage
-	var current_unprotected_damage_is_terminal: bool = (
-		damage_is_terminal_rule
-		and observation.player_state.runtime_stats.hit_protection <= 0
-	)
 	var completion_value_ledger: Dictionary = _enemy_completion_value_model.build_ledger(
 		observation, marginal_health_unit_value
 	)
@@ -66,11 +62,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"survival":
 			{
 				"integrated_environmental_exposure": -local_exposure_unit_value,
-				"forecast_terminal_collision_risk":
-				(
-					-terminal_health_loss_unit_value
-					* max(1.0, health_inventory_value.immediate_hit_reserve)
-				),
 				"forecast_health_inventory_loss_value": -1.0,
 				"movement_damage_exposure_reduction": local_exposure_unit_value,
 			},
@@ -131,7 +122,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"health_ratio": health_ratio,
 			"wave_time_remaining_ratio": wave_time_remaining_ratio,
 			"positive_damage_is_terminal_rule": damage_is_terminal_rule,
-			"current_unprotected_damage_is_terminal": current_unprotected_damage_is_terminal,
 			"recovery_profile": recovery_profile,
 			"health_inventory_value": health_inventory_value,
 			"living_enemy_preservation_value":

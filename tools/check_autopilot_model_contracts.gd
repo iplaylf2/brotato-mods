@@ -29,7 +29,6 @@ func _init() -> void:
 	_check_health_inventory_loss()
 	_check_recovery_liquidity_pricing()
 	_check_additive_collision_damage()
-	_check_immediate_hit_reserve_reachability()
 	quit(1 if _failed else 0)
 
 
@@ -848,45 +847,6 @@ func _check_wave_completion_forecast() -> void:
 	_expect(
 		forecast.allocated_hits == 0.0,
 		"wave cleanup must remove all remaining attack capacity from the completion forecast"
-	)
-
-
-func _check_immediate_hit_reserve_reachability() -> void:
-	var inventory_script: Script = load(PLANNING_PATH + "health/health_inventory_value_model.gd")
-	var inventory: Reference = inventory_script.new()
-	var nearby_memory := _enemy_track(Vector2(25.0, 0.0), Vector2.ZERO, false)
-	nearby_memory.visible = false
-	nearby_memory.behavior_profile.contact_damage = 10.0
-	var remote_memory := _enemy_track(Vector2(5000.0, 0.0), Vector2.ZERO, false)
-	remote_memory.track_id = 2
-	remote_memory.visible = false
-	remote_memory.behavior_profile.contact_damage = 100.0
-	var remote_visible := _enemy_track(Vector2(5000.0, 0.0), Vector2.ZERO, false)
-	remote_visible.track_id = 3
-	remote_visible.behavior_profile.contact_damage = 1000.0
-	var observation := _planning_observation([nearby_memory, remote_memory, remote_visible])
-	var result: Dictionary = inventory.estimate(
-		observation,
-		{
-			"recovery": {"maximum_consumable_recovery": 0.0},
-			"survival": {"health_rate": 0.0, "recovery_rate": 0.0},
-		},
-		_fixtures.wave_completion_forecast({})
-	)
-	_expect(is_equal_approx(result.immediate_hit_reserve, 10.0), "reserve must cover joint player-threat reach")
-	observation.physics_frame += 1
-	observation.enemy_tracks = []
-	result = inventory.estimate(
-		observation,
-		{
-			"recovery": {"maximum_consumable_recovery": 0.0},
-			"survival": {"health_rate": 0.0, "recovery_rate": 0.0},
-		},
-		_fixtures.wave_completion_forecast({})
-	)
-	_expect(
-		is_equal_approx(result.immediate_hit_reserve, 0.0),
-		"the next-hit reserve must be zero when no threat can arrive before replanning"
 	)
 
 

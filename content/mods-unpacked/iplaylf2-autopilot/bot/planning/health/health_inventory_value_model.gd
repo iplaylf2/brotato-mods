@@ -75,8 +75,9 @@ func health_loss_value(
 	# rolling planner repeatedly borrow against the same future supply.
 	var immediate_buffer: float = max(1.0, inventory_value.immediate_survival_buffer)
 	var survivable_loss := min(loss, max(0.0, immediate_buffer - 1.0))
-	# Liquid health has no terminal value after vanilla creates the next-wave player
-	# at full health. Preserve only the fraction needed to survive threats after this
+	# Liquid health has no terminal value after vanilla resets next-wave health from
+	# the configured start-wave percentage; the current value does not carry across
+	# that boundary. Preserve only the fraction needed to survive threats after this
 	# forecast; loss beyond the immediate buffer remains terminal at every horizon.
 	var value := (
 		clamp(float(continuation_horizon_ratio), 0.0, 1.0)

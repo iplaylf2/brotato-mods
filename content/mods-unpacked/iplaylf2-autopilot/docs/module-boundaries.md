@@ -11,7 +11,7 @@
 | `mod_main.gd` | 安装主场景扩展，接入 Mod Loader 配置并发布启用状态 | `is_enabled()` 与 `enabled_changed`；不创建战斗期观察或规划对象 |
 | `extensions/main.gd` | 作为组合根响应玩家生成、启用切换和房间清理，按顺序创建或停止观察服务与控制器 | 主场景上的 `autopilot_observation_service` 与 `autopilot_controller` 只提供诊断入口；不承载观察或规划语义 |
 | `bot/control` | 调度重规划、提交与观察状态隔离的规划值快照、估计规划帧预算、以信号量驱动的单一工作线程执行规划、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.initialize()`、`shutdown()` 和计划诊断入口；`AutopilotMovementBehavior` 是唯一控制输出，`PlanningWorker` 是控制包内部协作者 |
-| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价及最大效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
+| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价及提交期执行资格下的效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
 | `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 截取不含场景节点并与观察状态隔离的规划值快照 |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
 
@@ -92,8 +92,10 @@
   间隔换算预期生命损失与直接终止风险；
   `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
   `bot/planning/health/health_inventory_value_model.gd` 负责即时生存缓冲、预计生命库存、单位价值，以及把
-  动作窗内的条件生命损失换算为即时缓冲成本。即时命中储备覆盖下一控制周期内敌人与完整玩家动作集合
+  动作窗内的条件生命损失换算为即时缓冲成本。即时命中储备覆盖下一控制期内敌人与完整玩家动作集合
   的联合可达域，不只覆盖静止玩家。
+- `bot/planning/movement_action_selector.gd` 拥有提交期执行资格：存在替代动作时排除确定终止碰撞，随后
+  最大化公共效用。概率风险和预测窗后段风险的解释仍归结果与效用模型所有。
 - `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 
 ### 机会、规则与动作结果
@@ -133,7 +135,8 @@
   预测和评分是两个边界，选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
   方向和可达机会价值上界最高的方向，并按规划器提出的细分方向构造新候选；
-  `bot/planning/movement_action_selector.gd` 只选择总效用最高的已评分候选；`MovementPlanner` 协调生成、
+  `bot/planning/movement_action_selector.gd` 从具有提交期执行资格的已评分候选中选择总效用最高者；
+  `MovementPlanner` 协调生成、
   预测、评分、细分与选择，不把新行为政策藏进选择器。
 
 ### 计算预算与遥测
