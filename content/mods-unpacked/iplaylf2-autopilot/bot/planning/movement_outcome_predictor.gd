@@ -30,6 +30,12 @@ const OpportunityPricingModel := preload(
 const CollisionHealthImpactModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/collision_health_impact_model.gd"
 )
+const PickupCollectionGeometryModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/pickups/"
+		+ "pickup_collection_geometry_model.gd"
+	)
+)
 
 var _weapon_outcome_forecast_model: Reference = WeaponOutcomeForecastModel.new()
 var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
@@ -40,6 +46,7 @@ var _rule_projector: Reference = PlayerRuleProjector.new()
 var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
+var _pickup_collection_geometry_model: Reference = PickupCollectionGeometryModel.new()
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
@@ -213,14 +220,12 @@ func _predict_action_outcomes(
 
 func _material_acquisition_value(observation: Dictionary, samples: Array) -> float:
 	var value := 0.0
-	for entity in observation.visible_world.materials:
-		var closest_distance: float = entity.relative_position.length()
-		for sample in samples:
-			closest_distance = min(
-				closest_distance, (entity.relative_position - sample.displacement).length()
-			)
-		if closest_distance <= observation.player_state.pickup.collection_radius:
-			value += _opportunity_pricing_model.material_collection_value(observation, entity)
+	for material in observation.visible_world.materials:
+		var collection: Dictionary = _pickup_collection_geometry_model.first_collection(
+			material, samples, observation.player_state.pickup.collection_radius
+		)
+		if not collection.empty():
+			value += _opportunity_pricing_model.material_collection_value(observation, material)
 	return value
 
 

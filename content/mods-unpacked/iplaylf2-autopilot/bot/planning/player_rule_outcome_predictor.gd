@@ -15,10 +15,17 @@ const PlayerRuleProjector := preload(
 const StatOpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_pricing_model.gd"
 )
+const PickupCollectionGeometryModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/pickups/"
+		+ "pickup_collection_geometry_model.gd"
+	)
+)
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_pricing_model: Reference = StatOpportunityPricingModel.new()
+var _pickup_collection_geometry_model: Reference = PickupCollectionGeometryModel.new()
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
@@ -192,22 +199,14 @@ func _apply_consequence(
 				)
 
 
-func _pickup_events(entities: Array, samples: Array, pickup: Dictionary) -> Array:
+func _pickup_events(pickups: Array, samples: Array, pickup_state: Dictionary) -> Array:
 	var result := []
-	for entity in entities:
-		for sample in samples:
-			if (
-				(entity.relative_position - sample.displacement).length()
-				<= pickup.collection_radius
-			):
-				result.push_back(
-					{
-						"entity": entity,
-						"time": sample.time,
-						"player_displacement": sample.displacement,
-					}
-				)
-				break
+	for pickup in pickups:
+		var event: Dictionary = _pickup_collection_geometry_model.first_collection(
+			pickup, samples, pickup_state.collection_radius
+		)
+		if not event.empty():
+			result.push_back(event)
 	return result
 
 

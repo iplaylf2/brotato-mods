@@ -183,9 +183,9 @@ func plan(
 	)
 	return {
 		"movement_preference": movement_preference,
-		# Preserve one unified value-derived heading for exact local scoring even
-		# when strategic access is already saturated. This is a search candidate,
-		# not a navigation reward or a target-category policy.
+		# Preserve the highest reachable opportunity-bound heading for exact local
+		# scoring, including when terminal progress has saturated. It is only a
+		# search candidate, not a reward or target-category policy.
 		"opportunity_movement_preference": opportunity_movement_preference,
 		# The action evaluator interpolates these samples so every retained heading
 		# receives the opportunity and exposure value at its own direction.
@@ -285,10 +285,7 @@ func _evaluate_position(
 		{
 			"material_opportunity": opportunity_delta.material_opportunity,
 			"recovery_opportunity": opportunity_delta.recovery_opportunity,
-			"engagement_completion_opportunity":
-			opportunity_delta.engagement_completion_opportunity,
-			"weapon_cluster_outcome": opportunity_delta.weapon_cluster_outcome,
-			"engagement_opportunity": opportunity_delta.engagement_opportunity,
+			"weapon_completion_opportunity": opportunity_delta.weapon_completion_opportunity,
 			"map_information": information_value,
 			"environmental_exposure": -exposure_cost_delta,
 		},

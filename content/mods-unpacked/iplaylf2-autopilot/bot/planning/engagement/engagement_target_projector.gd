@@ -70,7 +70,6 @@ func _project_enemy(track: Dictionary, context: Dictionary) -> Dictionary:
 			"completed": remaining_health <= 0.0,
 			"health": {"maximum": maximum_health, "remaining": remaining_health},
 			"hit_limit": {"maximum": 0.0, "remaining": 0.0},
-			"forecast_fraction": _completion_fraction(context, enemy_target_id(track)),
 		},
 		"value": value,
 		"weapon_response":
@@ -106,7 +105,6 @@ func _project_tree(observation: Dictionary, tree: Dictionary, context: Dictionar
 			"completed": remaining_health <= 0.0 or remaining_hits_to_limit <= 0.0,
 			"health": {"maximum": maximum_health, "remaining": remaining_health},
 			"hit_limit": {"maximum": hit_limit, "remaining": remaining_hits_to_limit},
-			"forecast_fraction": _completion_fraction(context, target_id),
 		},
 		"value":
 		{
@@ -132,10 +130,6 @@ func _enemy_value(context: Dictionary, track: Dictionary) -> Dictionary:
 	return context.enemy_completion_value_ledger.entries_by_track_id[track.track_id].duplicate(
 		false
 	)
-
-
-func _completion_fraction(context: Dictionary, target_id: String) -> float:
-	return context.wave_completion_forecast.completion_fraction_by_target_id.get(target_id, 0.0)
 
 
 func _stationary_motion_track(tree: Dictionary) -> Dictionary:

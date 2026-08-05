@@ -1,9 +1,8 @@
 extends Reference
 
-# Values the additional future weapon outcomes created by a projected
-# target cluster. Primary-target completion remains in the ordinary strategic
-# opportunity field, so density cannot create value for a single-target build
-# and cannot pay the same completion twice.
+# Values the target completion enabled after reaching a navigation endpoint.
+# Primary nearest-target selection and additional delivery paths share this
+# contract so every endpoint uses the same target selection and valuation.
 
 const WeaponAttackCapacityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
@@ -21,13 +20,15 @@ const EngagementTargetProjector := preload(
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _engagement_target_projector: Reference = EngagementTargetProjector.new()
+var _prepared_physics_frame := -1
+var _prepared_targets := []
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_enemy_motion_predictor = predictor
 
 
-func estimate_value(
+func value_at(
 	observation: Dictionary,
 	context: Dictionary,
 	player_displacement: Vector2,
@@ -35,36 +36,47 @@ func estimate_value(
 ) -> float:
 	if observation.player_state.weapons.empty():
 		return 0.0
-	var post_forecast_seconds: float = max(
+	var seconds_remaining_after_navigation: float = max(
 		0.0, observation.wave_state.seconds_remaining - forecast_seconds
 	)
-	var outcome_horizon_seconds: float = min(
-		post_forecast_seconds, context.state_factors.continuation_horizon_seconds
+	var completion_horizon_seconds: float = min(
+		seconds_remaining_after_navigation, context.state_factors.continuation_horizon_seconds
 	)
-	if outcome_horizon_seconds <= 0.0:
+	if completion_horizon_seconds <= 0.0:
 		return 0.0
-	var targets := _project_visible_targets(
-		observation, context, player_displacement, forecast_seconds
-	)
-	if targets.size() < 2:
+	var targets := _project_targets(observation, context, player_displacement, forecast_seconds)
+	if targets.empty():
 		return 0.0
 	var result := 0.0
+	var range_transition_distance: float = max(
+		1.0, observation.player_state.runtime_stats.move_speed * completion_horizon_seconds
+	)
 	for observed_weapon in observation.player_state.weapons:
-		result += _weapon_cluster_outcome(
-			observed_weapon.attack_model, targets, outcome_horizon_seconds
+		result += _weapon_completion_value(
+			observed_weapon.attack_model,
+			targets,
+			completion_horizon_seconds,
+			range_transition_distance
 		)
-	return result
+	var negative_value_cap := 0.0
+	var positive_value_cap := 0.0
+	for target in targets:
+		var available_value: float = target.confidence * target.net_completion_value
+		negative_value_cap += min(0.0, available_value)
+		positive_value_cap += max(0.0, available_value)
+	return clamp(result, negative_value_cap, positive_value_cap)
 
 
-func _project_visible_targets(
+func _project_targets(
 	observation: Dictionary,
 	context: Dictionary,
 	player_displacement: Vector2,
 	forecast_seconds: float
 ) -> Array:
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
+	_prepare_targets(observation, context)
 	var result := []
-	for target in _engagement_target_projector.project_visible_targets(observation, context):
+	for target in _prepared_targets:
 		var position: Vector2 = _enemy_motion_predictor.predict_position(
 			target.motion_track, forecast_seconds, player_displacement
 		)
@@ -76,7 +88,6 @@ func _project_visible_targets(
 				"distance": relative_position.length(),
 				"radius": target.radius,
 				"confidence": target.confidence,
-				"completion_headroom": 1.0 - target.completion.forecast_fraction,
 				"net_completion_value": target.value.net_completion_value,
 			}
 		)
@@ -84,43 +95,60 @@ func _project_visible_targets(
 	return result
 
 
-func _weapon_cluster_outcome(
-	attack_model: Dictionary, targets: Array, outcome_horizon_seconds: float
+func _prepare_targets(observation: Dictionary, context: Dictionary) -> void:
+	var physics_frame: int = observation.get("physics_frame", -1)
+	if physics_frame >= 0 and physics_frame == _prepared_physics_frame:
+		return
+	_prepared_physics_frame = physics_frame
+	_prepared_targets = []
+	for target in _engagement_target_projector.project_navigation_targets(observation, context):
+		if not target.completion.completed:
+			_prepared_targets.push_back(target)
+
+
+func _weapon_completion_value(
+	attack_model: Dictionary,
+	targets: Array,
+	completion_horizon_seconds: float,
+	range_transition_distance: float
 ) -> float:
 	var delivery: Dictionary = attack_model.delivery
 	var minimum_distance: float = max(0.0, delivery.minimum_targeting_distance)
 	var maximum_distance: float = max(minimum_distance, delivery.maximum_targeting_distance)
-	var primary := {}
-	for target in targets:
-		if target.distance >= minimum_distance and target.distance <= maximum_distance:
-			primary = target
-			break
+	var primary: Dictionary = _nearest_target_inside_range(
+		targets, minimum_distance, maximum_distance
+	)
+	if not primary.empty():
+		primary = primary.duplicate(false)
+		primary.selection_coverage = 1.0
+	else:
+		primary = _nearest_reachable_target(
+			targets, minimum_distance, maximum_distance, range_transition_distance
+		)
 	if primary.empty() or primary.relative_position.length_squared() <= 0.0:
 		return 0.0
 	var paths: Dictionary = delivery.paths
 	var direct_capacity: float = max(0.0, float(paths.hit_capacity) - 1.0)
 	var redirect_capacity: float = max(0.0, float(delivery.redirects.count))
 	var area_capacity := _area_capacity(attack_model)
-	if direct_capacity + redirect_capacity + area_capacity <= 0.0:
-		return 0.0
-
 	var direct_mass := 0.0
 	var redirect_mass := 0.0
 	var area_mass := 0.0
 	var direct_value := 0.0
 	var redirect_value := 0.0
 	var area_value := 0.0
-	var negative_value_cap := 0.0
-	var positive_value_cap := 0.0
 	var damage_per_hit: float = _weapon_attack_capacity_model.expected_damage_per_hit(attack_model)
 	for secondary in targets:
-		if secondary == primary or secondary.distance > maximum_distance:
+		if secondary.target.target_id == primary.target.target_id:
 			continue
-		var available_mass: float = secondary.confidence * secondary.completion_headroom
+		var available_mass: float = (
+			secondary.confidence
+			* _range_coverage(
+				secondary.distance, minimum_distance, maximum_distance, range_transition_distance
+			)
+		)
 		if available_mass <= 0.0:
 			continue
-		negative_value_cap += available_mass * min(0.0, secondary.net_completion_value)
-		positive_value_cap += available_mass * max(0.0, secondary.net_completion_value)
 		var direct_coverage := _direct_path_coverage(primary, secondary, paths)
 		direct_mass += available_mass * direct_coverage
 		direct_value += (
@@ -156,21 +184,67 @@ func _weapon_cluster_outcome(
 		max(1.0, float(paths.count))
 		* clamp(paths.primary_probability_floor, 0.05, 1.0)
 	)
-	var base_hit_capacity: float = primary_path_count * outcome_horizon_seconds / attack_interval
-	var direct_share := min(direct_capacity, direct_mass)
-	var redirect_share := min(redirect_capacity, redirect_mass)
-	var area_share := min(area_capacity, area_mass)
-	var projected_value := (
+	var base_hit_capacity: float = primary_path_count * completion_horizon_seconds / attack_interval
+	var primary_value: float = (
 		base_hit_capacity
-		* (
-			direct_share * _mean_value(direct_value, direct_mass)
-			+ redirect_share * _mean_value(redirect_value, redirect_mass)
-			+ area_share * _mean_value(area_value, area_mass)
+		* primary.confidence
+		* primary.selection_coverage
+		* _completion_value_per_hit(primary.target, damage_per_hit, 1.0)
+	)
+	var direct_share: float = min(direct_capacity, direct_mass)
+	var redirect_share: float = min(redirect_capacity, redirect_mass)
+	var area_share: float = min(area_capacity, area_mass)
+	var projected_value: float = (
+		primary_value
+		+ (
+			base_hit_capacity
+			* (
+				direct_share * _mean_value(direct_value, direct_mass)
+				+ redirect_share * _mean_value(redirect_value, redirect_mass)
+				+ area_share * _mean_value(area_value, area_mass)
+			)
 		)
 	)
-	# Secondary completion can be beneficial or harmful. Bound each sign by the
-	# corresponding visible target value without discarding adverse consequences.
-	return clamp(projected_value, negative_value_cap, positive_value_cap)
+	return projected_value
+
+
+func _nearest_target_inside_range(
+	targets: Array, minimum_distance: float, maximum_distance: float
+) -> Dictionary:
+	for target in targets:
+		if target.distance >= minimum_distance and target.distance <= maximum_distance:
+			return target
+	return {}
+
+
+func _nearest_reachable_target(
+	targets: Array,
+	minimum_distance: float,
+	maximum_distance: float,
+	range_transition_distance: float
+) -> Dictionary:
+	for target in targets:
+		var coverage: float = _range_coverage(
+			target.distance, minimum_distance, maximum_distance, range_transition_distance
+		)
+		if coverage > 0.0:
+			var result: Dictionary = target.duplicate(false)
+			result.selection_coverage = coverage
+			return result
+	return {}
+
+
+func _range_coverage(
+	distance: float,
+	minimum_distance: float,
+	maximum_distance: float,
+	range_transition_distance: float
+) -> float:
+	if distance < minimum_distance:
+		return clamp(1.0 - (minimum_distance - distance) / range_transition_distance, 0.0, 1.0)
+	if distance > maximum_distance:
+		return clamp(1.0 - (distance - maximum_distance) / range_transition_distance, 0.0, 1.0)
+	return 1.0
 
 
 func _direct_path_coverage(primary: Dictionary, secondary: Dictionary, paths: Dictionary) -> float:

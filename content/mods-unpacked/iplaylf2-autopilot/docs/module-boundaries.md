@@ -27,16 +27,18 @@
 
 ## 规划包的子目录边界
 
-`bot/planning` 根目录是主要协作包：其中大多数组件共同服务规划入口 `MovementPlanner`，并存在密集的包内依赖。
-只有可单独消费的稳定子协议进入子目录：
+`bot/planning` 根目录是主要协作包。大多数组件共同服务规划入口 `MovementPlanner`，并存在密集的包内
+依赖；只有可单独消费的稳定子协议进入子目录：
 
 - `motion` 拥有“规范运动观察与稳定响应 → 未来位置和可达包络”的协议，供暴露、交会、事件与动作采样
   共同消费；
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
 - `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”和“当前生命、即时威胁与清场前补充 →
   生命库存及单位价值”两段协议，结果供导航风险和动作效用共同消费；
-- `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、动作条件武器结果
-  预测与容量守恒，以及候选终点的武器聚群结果五项协议。
+- `pickups` 拥有“玩家路径与已观察拾取物运动 → 连续收集几何”的协议，供导航机会、直接材料收益与
+  拾取事件规则共同消费；
+- `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、动作条件
+  武器结果预测与容量守恒，以及候选终点的导航武器完成价值。
 
 根目录只保留组合多个稳定子协议的规划协作者；`engagement` 子目录不拥有候选生成、行为模式或敌人身份
 优先级。
@@ -92,9 +94,9 @@
 
 ### 机会、规则与动作结果
 
-- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆机会沿候选路径的价值、动态敌人的同时间
-  反事实价值差和按统一价值上界聚合的机会候选方向；它只拥有武器射程外的攻击窗口，不重复解释射程内的
-  自动选靶。`bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，比较
+- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会沿候选路径的条件完成进度、
+  候选终点的导航武器完成价值差和按统一价值上界聚合的机会候选方向；它不按目标身份解释自动选靶。
+  `bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，比较
   导航终点，并公开胜出导航方向与可达机会价值上界最高的方向。
   `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
 - `bot/planning/engagement/engagement_target_projector.gd` 把敌人轨迹与树木投影为统一的可交战
@@ -108,13 +110,15 @@
   玩家的一击完成状态统一解释为有效攻击工作量，供波次容量与局部武器结果共享。
 - `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
   `bot/planning/enemy_health_model.gd` 把敌人最后可见生命测量与稳定最大生命先验统一解析为剩余生命。
-- `bot/planning/engagement/weapon_cluster_outcome_model.gd` 只计算贯穿、弹射和范围机制可利用的额外目标
-  容量，并按候选终点时刻的预计可交战目标几何计价。
-- `bot/planning/opportunity_pricing_model.gd` 只换算材料、
-  消耗品、树木和击杀掉落，不再拥有敌人威胁或死亡转移；
+- `bot/planning/engagement/navigation_weapon_completion_value_model.gd` 按候选终点时刻的预计几何统一计算
+  最近主目标与贯穿、弹射、范围机制的后续完成价值，并以同一物理帧缓存目标投影。
+- `bot/planning/pickups/pickup_collection_geometry_model.gd` 统一计算移动拾取物与玩家分段路径的连续收集
+  几何；导航、直接收益和事件规则共同使用该契约。
+- `bot/planning/opportunity_pricing_model.gd` 只换算材料、消耗品、树木和击杀掉落，不再拥有敌人威胁或
+  死亡转移；
   `bot/planning/consumable_drop_probability_model.gd` 把稳定掉落画像与当前幸运组合为消耗品及箱子概率；
   `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。
-- `bot/planning/player_rule_outcome_predictor.gd` 负责事件触发几何；
+- `bot/planning/player_rule_outcome_predictor.gd` 负责把拾取收集和受击等事件证据解释为规则后果；
   `bot/planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量；
   `bot/planning/player_rule_projector.gd` 将规则归约为正交状态。这些模块都不能读取场景节点。
 - `bot/planning/movement_outcome_predictor.gd` 组合动作结果；`bot/planning/movement_utility_model.gd` 将结果换算

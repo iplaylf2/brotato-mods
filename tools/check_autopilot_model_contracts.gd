@@ -23,7 +23,7 @@ func _init() -> void:
 	_check_visible_material_quantity_estimate()
 	_check_spatial_target_control()
 	_check_weapon_outcome_contracts()
-	_check_weapon_cluster_outcome()
+	_check_navigation_weapon_completion_value()
 	_check_local_enemy_interaction_projection()
 	_check_wave_completion_forecast()
 	_check_health_inventory_loss()
@@ -271,17 +271,31 @@ func _check_pickup_interaction_geometry() -> void:
 		"enemy_tracks": [],
 		"localization": {"map_bounds": _unknown_bounds()},
 	}
-	var value: Dictionary = spatial.stationary_value(
+	var value: Dictionary = spatial.value_delta(
 		observation,
 		{
 			"state_factors": {"health_inventory_value": {}},
 			"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
 		},
-		0.0
+		Vector2(50.0, 0.0),
+		0.5
 	)
 	_expect(
 		value.material_opportunity > 0.0 and value.material_opportunity < 1.0,
 		"pickup opportunity must persist until the material center reaches the collection circle"
+	)
+	var collection_geometry_script: Script = load(
+		PLANNING_PATH + "pickups/pickup_collection_geometry_model.gd"
+	)
+	var moving_material: Dictionary = material.duplicate(true)
+	moving_material.relative_position = Vector2(100.0, 0.0)
+	moving_material.velocity = Vector2(-100.0, 0.0)
+	var collection: Dictionary = collection_geometry_script.new().first_collection(
+		moving_material, [{"time": 1.0, "displacement": Vector2(100.0, 0.0)}], 20.0
+	)
+	_expect(
+		not collection.empty() and collection.time < 0.5,
+		"pickup events must use continuous relative motion instead of static sample endpoints"
 	)
 
 
@@ -331,10 +345,10 @@ func _check_spatial_target_control() -> void:
 	}
 	var spatial: Reference = spatial_script.new()
 	var enemy_delta: Dictionary = spatial.value_delta(
-		observation, context, Vector2(100.0, 0.0), 1.0
+		observation, context, Vector2(250.0, 0.0), 1.0
 	)
 	_expect(
-		enemy_delta.engagement_opportunity > 0.0,
+		enemy_delta.weapon_completion_opportunity > 0.0,
 		"creating a positive enemy-completion-value attack window must retain a navigation gradient"
 	)
 	observation.physics_frame += 1
@@ -344,10 +358,10 @@ func _check_spatial_target_control() -> void:
 		observation, context, Vector2(50.0, 0.0), 0.5
 	)
 	_expect(
-		is_equal_approx(in_range_delta.engagement_opportunity, 0.0),
+		in_range_delta.weapon_completion_opportunity > 0.0,
 		(
-			"strategic access must not price an in-range nearest-target switch; "
-			+ "the action-conditioned weapon field owns that consequence"
+			"a sustained in-range movement must retain the value of changing the "
+			+ "future nearest target"
 		)
 	)
 
@@ -367,12 +381,12 @@ func _check_spatial_target_control() -> void:
 	context.enemy_completion_value_ledger = _completion_value_ledger({1: 0.0})
 	context.wave_completion_forecast = _fixtures.wave_completion_forecast({1: 1.0}, {1: 1.0})
 	spatial = spatial_script.new()
-	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(100.0, 0.0), 1.0)
+	var tree_delta: Dictionary = spatial.value_delta(observation, context, Vector2(350.0, 0.0), 1.0)
 	_expect(
-		tree_delta.engagement_completion_opportunity > 0.0,
+		tree_delta.weapon_completion_opportunity > 0.0,
 		(
 			"a visible tree outside the lock boundary must retain an approach gradient; "
-			+ "local weapon outcomes own target competition after lock becomes possible"
+			+ "navigation weapon completion value owns target competition after lock becomes possible"
 		)
 	)
 
@@ -532,8 +546,10 @@ func _check_weapon_outcome_contracts() -> void:
 	)
 
 
-func _check_weapon_cluster_outcome() -> void:
-	var outcome_script: Script = load(PLANNING_PATH + "engagement/weapon_cluster_outcome_model.gd")
+func _check_navigation_weapon_completion_value() -> void:
+	var value_model_script: Script = load(
+		PLANNING_PATH + "engagement/navigation_weapon_completion_value_model.gd"
+	)
 	var primary := _enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
 	var follower := _enemy_track(Vector2(200.0, 20.0), Vector2(-100.0, -10.0), true)
 	follower.track_id = 2
@@ -546,42 +562,38 @@ func _check_weapon_cluster_outcome() -> void:
 		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0, 2: 10.0}),
 		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 0.0, 2: 0.0}),
 	}
-	var outcome_model: Reference = outcome_script.new()
-	var follower_outcome: float = outcome_model.estimate_value(
-		observation, context, Vector2.ZERO, 1.0
-	)
+	var value_model: Reference = value_model_script.new()
+	var follower_value: float = value_model.value_at(observation, context, Vector2.ZERO, 1.0)
 	var stationary_secondary: Dictionary = follower.duplicate(true)
 	stationary_secondary.estimated_velocity = Vector2.ZERO
 	stationary_secondary.behavior_profile.target_position_response.responds_to_target_position = false
 	observation.physics_frame += 1
 	observation.enemy_tracks[1] = stationary_secondary
-	var stationary_outcome: float = outcome_model.estimate_value(
-		observation, context, Vector2.ZERO, 1.0
-	)
+	var stationary_value: float = value_model.value_at(observation, context, Vector2.ZERO, 1.0)
 	_expect(
-		follower_outcome > stationary_outcome,
-		"a projected follower entering a piercing corridor must improve the cluster outcome"
+		follower_value > stationary_value,
+		"a projected follower entering a piercing corridor must improve completion value"
 	)
 	observation.physics_frame += 1
 	observation.enemy_tracks[1] = follower
 	context.enemy_completion_value_ledger = _completion_value_ledger({1: 0.0, 2: -10.0})
 	_expect(
-		outcome_model.estimate_value(observation, context, Vector2.ZERO, 1.0) < 0.0,
-		"cluster capacity must retain a secondary target's adverse completion consequence"
+		value_model.value_at(observation, context, Vector2.ZERO, 1.0) < 0.0,
+		"navigation weapon capacity must retain an adverse completion consequence"
 	)
 	observation.physics_frame += 1
 	context.enemy_completion_value_ledger = _completion_value_ledger({1: 10.0, 2: 10.0})
 	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 1.0
 	_expect(
-		is_equal_approx(outcome_model.estimate_value(observation, context, Vector2.ZERO, 1.0), 0.0),
-		"target density must not invent cluster value for a single-target weapon"
+		value_model.value_at(observation, context, Vector2.ZERO, 1.0) > 0.0,
+		"a single-target weapon must retain its selected primary target's completion value"
 	)
 	observation.physics_frame += 1
 	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 2.0
 	observation.wave_state.seconds_remaining = 1.0
 	_expect(
-		is_equal_approx(outcome_model.estimate_value(observation, context, Vector2.ZERO, 1.0), 0.0),
-		"cluster outcome value must expire when the wave ends before it can occur"
+		is_equal_approx(value_model.value_at(observation, context, Vector2.ZERO, 1.0), 0.0),
+		"navigation weapon completion value must expire when the wave ends before it can occur"
 	)
 
 
