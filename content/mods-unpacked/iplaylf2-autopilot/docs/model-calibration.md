@@ -33,7 +33,7 @@ var path: String = main.autopilot_controller.get_decision_sample_path()
 
 - `session_start` 记录会话与分片信息、目标游戏版本和采样政策；
 - `decision_sample` 记录公共观察的采样投影、此前移动输入、所选动作、预测结果、价值上下文、计算预算、最多
-  三个具有提交期执行资格的高分候选、选择诊断、实际使用的派生尺度、局部交互域计数与波内完成预测摘要；
+  三个具有最终执行资格的高分候选、选择诊断、实际使用的派生尺度、局部交互域计数与波内完成预测摘要；
 - `part_end` 标记因轮转而正常结束的分片，`session_end` 标记正常结束的完整会话，并以
   `final_player_states` 保留关闭时仍可读取的玩家状态；旧样本没有该字段。
 
@@ -212,15 +212,25 @@ terminal_health_loss_unit_value      = K / B
 survivable_action_loss          = Ls = min(L, max(0, B - 1))
 survivable_loss_value                = integral[x=0..Ls] K / max(1, B - x) dx
 terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_unit_value
+terminal_health_reserve_margin  = M  = B - L
+retains_terminal_health_reserve      = M > 0
 ```
 
 已观察消耗品按到达后仍可利用的波次比例和存在置信度计入 `S`；概率掉落按共享攻击容量约束后的目标完成
 份额与掉落概率计入；被动恢复和生命偷取按剩余可作用时间及各自速率计入。因而时间只改变具体补充与收益
 是否还能兑现，不构成独立风险偏好。
+
 `S` 是整波补给总量，不证明其中任何一份会先于当前局部威胁兑现，因此只改变波次尺度的延续库存与补给
 机会。局部预测窗中的碰撞损失按即时生存缓冲 `B` 的损失曲线计价；局部与导航环境暴露按 `K / B` 计价。
-导航只提交下一个控制期，整波未来补给不能扩大该控制期的可行生存域。这样同一份未来果实或吸血不能在
+导航只提交下一个控制期，整波未来补给不能扩大该控制期的即时生存缓冲。这样同一份未来果实或吸血不能在
 连续重规划中被反复借用来压低眼前的接触风险。
+
+`M` 是执行资格诊断，不进入效用总分。若至少一个候选满足 `M > 0`，选择器只在这些候选中比较效用；若
+没有候选满足，则先保留 `M` 最大的候选，再用公共效用打破并列。`expected_recovery` 没有动作窗内的兑现
+顺序，因此在实际进入下一观察的当前生命前不计入 `M`。`R` 由本轮观察和下一控制期联合可达域计算，不会
+在每个候选的动作预测终点重新求解；`M` 是防止滚动规划提前花掉这份即时储备的终点代理，不应解释为完整
+终端可行核。
+
 拾取一单位地面补充时，即时恢复按 `terminal_health_loss_unit_value` 增值、同量地图储备按
 `marginal_health_unit_value` 结清，净值为两者之差；新破坏树木产生的补充尚未被库存计入，则直接按
 `marginal_health_unit_value` 增值。
@@ -279,7 +289,7 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
    破坏条件时比较生命、材料、里程计位置和可见威胁变化；其余结果标记为未知。
 3. 分开检查预测误差与决策交换率。前者校准运动、碰撞和攻击公式，后者校准效用权重；不要用调权重掩盖
    系统性的预测偏差。
-4. 检查最多三个具有提交期执行资格的高分候选，比较风险、分数跨度、字段账本、所选动作和方向连续性。
+4. 检查最多三个具有最终执行资格的高分候选，比较风险、分数跨度、字段账本、所选动作和方向连续性。
    若方向频繁反转，应先
    检查重复计分、单位归一化、路径机会聚合、观察网格陈旧度和候选角向覆盖。方向连续性应在造成波动的
    预测或聚合所有者中修正，选择器不承担目标承诺或迟滞。敌人很少且没有地面机会时，应按
@@ -361,13 +371,22 @@ terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_un
 
 ### 生存与碰撞
 
-先同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、提交期诊断
+先同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、
+`terminal_health_reserve_margin`、`retains_terminal_health_reserve`、提交期诊断
 `terminal_collision_risk`、`expected_health_loss` 和
 `field_utility_breakdown.forecast_health_inventory_loss_value`。联合检查
-`selection_diagnostics.excluded_certain_terminal_candidate_count`、`viable_candidate_count` 与
-`selected_committed_terminal_collision_risk`：确定且可避免的提交期死亡应被排除；概率风险和预测窗后段
-风险仍应保留负担解除、目标完成净价值、生命窃取与其他恢复的交换。按低生命、敌群密度和剩余波时分层，
-确认风险升高不会单独删除仍能改善后续状态的交战候选。
+`selection_diagnostics.excluded_certain_terminal_candidate_count`、
+`terminal_health_reserve_viable_candidate_count`、`terminal_health_reserve_fallback_active`、
+`viable_candidate_count`、`selected_committed_terminal_collision_risk` 与
+`selected_terminal_health_reserve_margin`。确定且可避免的提交期死亡应被排除；若终点生命储备可行域非空，
+未来击杀和导航收益不能购买一个离开该域的动作；若可行域为空，则动作应先最大化储备余量，再由公共效用
+打破并列。
+
+没有窗内先后顺序证据的条件恢复仍可提高公共效用，但
+不能在实际兑现前扩大可行域，否则连续规划会重复借用同一份未来果实或生命偷取。恢复进入下一观察后，增加
+的当前生命会自然恢复执行资格，而不需要“低血找果实”分支。按低生命、敌群密度和剩余波时分层，确认
+可行域内的概率风险仍能保留负担解除、目标完成净价值、生命窃取与其他恢复的交换。
+
 生命库存复盘按本波剩余比例和恢复构筑分层，对照
 `reachable_observed_replenishment`、`expected_drop_replenishment`、`passive_replenishment`、
 `expected_lifesteal_replenishment`、`expected_passive_health_drain`、`immediate_hit_reserve`、

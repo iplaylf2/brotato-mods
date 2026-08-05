@@ -27,6 +27,12 @@ const MovementUtilityModel := preload(
 const MovementActionSelector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_selector.gd"
 )
+const TerminalHealthReserveModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/"
+		+ "terminal_health_reserve_model.gd"
+	)
+)
 const NavigationIntentPlanner := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_intent_planner.gd"
 )
@@ -50,6 +56,7 @@ var _direction_refiner: Reference = AdaptiveDirectionRefiner.new()
 var _outcome_predictor: Reference = MovementOutcomePredictor.new()
 var _utility_model: Reference = MovementUtilityModel.new()
 var _action_selector: Reference = MovementActionSelector.new()
+var _terminal_health_reserve_model: Reference = TerminalHealthReserveModel.new()
 var _navigation_intent_planner: Reference = NavigationIntentPlanner.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _local_enemy_interaction_projector: Reference = LocalEnemyInteractionProjector.new()
@@ -110,9 +117,9 @@ func plan(observation: Dictionary) -> Dictionary:
 	phase_duration_usec.action_evaluation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
 
-	# Optional refinement follows the same committed-viability boundary as final
-	# selection. Probabilistic and later exposure remains eligible for refinement.
-	var direction_scores: Array = _action_selector.retain_committed_viable(scored_actions)
+	# Optional refinement follows the same terminal health domain as final
+	# selection. Probabilistic risk inside that domain remains eligible.
+	var direction_scores: Array = _action_selector.retain_viable(scored_actions)
 	var refined_action_count := 0
 	while (
 		refined_action_count < search_work_allocation.movement_refinement_limit
@@ -131,14 +138,14 @@ func plan(observation: Dictionary) -> Dictionary:
 		actions.push_back(refined_action)
 		var scored_action: Dictionary = _score_action(local_observation, refined_action, context)
 		scored_actions.push_back(scored_action)
-		direction_scores = _action_selector.retain_committed_viable(scored_actions)
+		direction_scores = _action_selector.retain_viable(scored_actions)
 		_compute_budget_policy.observe_work_duration(
 			_compute_budget_policy.WORK_MOVEMENT_REFINEMENT,
 			float(OS.get_ticks_usec() - work_started_usec)
 		)
 
 	var ranked_actions := []
-	for scored in _action_selector.retain_committed_viable(scored_actions):
+	for scored in _action_selector.retain_viable(scored_actions):
 		_insert_descending(ranked_actions, scored, scored_actions.size())
 	phase_duration_usec.refinement = OS.get_ticks_usec() - phase_started_usec
 	var plan: Dictionary = _action_selector.select(scored_actions)
@@ -225,6 +232,12 @@ func _score_action(observation: Dictionary, action: Dictionary, context: Diction
 	var base_outcome: Dictionary = _outcome_predictor.predict_base(observation, action, context)
 	var outcome: Dictionary = _outcome_predictor.complete_prediction(
 		observation, action, base_outcome, context
+	)
+	outcome.merge(
+		_terminal_health_reserve_model.evaluate(
+			outcome, context.state_factors.health_inventory_value
+		),
+		true
 	)
 	var evaluation: Dictionary = _utility_model.evaluate(outcome, context)
 	return _make_scored_action(action, outcome, evaluation)

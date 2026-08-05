@@ -11,7 +11,7 @@
 | `mod_main.gd` | 安装主场景扩展，接入 Mod Loader 配置并发布启用状态 | `is_enabled()` 与 `enabled_changed`；不创建战斗期观察或规划对象 |
 | `extensions/main.gd` | 作为组合根响应玩家生成、启用切换和房间清理，按顺序创建或停止观察服务与控制器 | 主场景上的 `autopilot_observation_service` 与 `autopilot_controller` 只提供诊断入口；不承载观察或规划语义 |
 | `bot/control` | 调度重规划、提交与观察状态隔离的规划值快照、估计规划帧预算、以信号量驱动的单一工作线程执行规划、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.initialize()`、`shutdown()` 和计划诊断入口；`AutopilotMovementBehavior` 是唯一控制输出，`PlanningWorker` 是控制包内部协作者 |
-| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价及提交期执行资格下的效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
+| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价，以及候选执行资格与效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
 | `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 截取不含场景节点并与观察状态隔离的规划值快照 |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
 
@@ -33,8 +33,9 @@
 - `motion` 拥有“规范运动观察与稳定响应 → 未来位置和可达包络”的协议，供暴露、交会、事件与动作采样
   共同消费；
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
-- `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”和“当前生命、即时威胁与清场前补充 →
-  生命库存、即时单位价值及补给库存价值”两段协议，结果供导航风险和动作效用共同消费；
+- `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”、“当前生命、即时威胁与清场前补充 →
+  生命库存、即时单位价值及补给库存价值”和“候选结果 → 终点生命储备可行性”三段协议，结果供导航风险、
+  动作效用与候选执行资格共同消费；
 - `pickups` 拥有“玩家路径与已观察拾取物运动 → 连续收集几何”的协议，供导航机会、直接材料收益与
   拾取事件规则共同消费；
 - `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、动作条件
@@ -93,9 +94,12 @@
   `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
   `bot/planning/health/health_inventory_value_model.gd` 负责即时生存缓冲、预计生命库存、单位价值，以及把
   动作窗内的条件生命损失换算为即时缓冲成本。即时命中储备覆盖下一控制期内敌人与完整玩家动作集合
-  的联合可达域，不只覆盖静止玩家。
-- `bot/planning/movement_action_selector.gd` 拥有提交期执行资格：存在替代动作时排除确定终止碰撞，随后
-  最大化公共效用。概率风险和预测窗后段风险的解释仍归结果与效用模型所有。
+  的联合可达域，不只覆盖静止玩家；
+  `bot/planning/health/terminal_health_reserve_model.gd` 将动作窗内的条件生命损失结算到即时生存缓冲，
+  公开动作预测后相对本轮即时命中储备的余量及其可行性；未提供窗内顺序的未来恢复不能提前扩张可行域。
+- `bot/planning/movement_action_selector.gd` 只消费生命模块公开的执行资格：先排除存在替代动作时的确定
+  提交期终止碰撞，再在存在可行候选时排除耗尽终点生命储备的动作，随后最大化公共效用；若可行域为空，
+  则先保留储备余量最大的候选。它不拥有生命公式、逃跑方向或敌人类别策略。
 - `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 
 ### 机会、规则与动作结果
@@ -135,9 +139,9 @@
   预测和评分是两个边界，选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
   方向和可达机会价值上界最高的方向，并按规划器提出的细分方向构造新候选；
-  `bot/planning/movement_action_selector.gd` 从具有提交期执行资格的已评分候选中选择总效用最高者；
-  `MovementPlanner` 协调生成、
-  预测、评分、细分与选择，不把新行为政策藏进选择器。
+  `bot/planning/movement_action_selector.gd` 从终点生命储备可行的已评分候选中选择总效用最高者，并在可行域
+  为空时执行储备余量回退；
+  `MovementPlanner` 协调生成、预测、评分、细分与选择，不把新行为政策藏进选择器。
 
 ### 计算预算与遥测
 
