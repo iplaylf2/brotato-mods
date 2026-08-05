@@ -229,6 +229,7 @@ func _battlefield_effect_burden(
 ) -> float:
 	var effects: Dictionary = track.behavior_profile.get("battlefield_effects", {})
 	var remaining_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
+	var pressure_horizon: float = sqrt(remaining_seconds)
 	var forecast_hostile_population: float = (
 		effects.get("hostile_population_per_second", 0.0)
 		* remaining_seconds
@@ -260,11 +261,9 @@ func _battlefield_effect_burden(
 		effects.get("enemy_healing_base", 0.0)
 		+ (wave_number - 1.0) * effects.get("enemy_healing_per_wave", 0.0)
 	)
-	var healing_burden: float = (
-		enemy_healing
-		/ mean_enemy_health
-		* max(0, observation.enemy_tracks.size() - 1)
-		* mean_enemy_burden
+	var healing_radius: float = max(0.0, effects.get("enemy_healing_radius", 0.0))
+	var healing_burden: float = _enemy_healing_burden(
+		observation, track, enemy_healing, healing_radius, mean_enemy_health, mean_enemy_burden
 	)
 	var player_healing: float = (
 		effects.get("player_healing_base", 0.0)
@@ -273,11 +272,88 @@ func _battlefield_effect_burden(
 	var missing_health: float = max(
 		0.0, observation.player_state.health.maximum - observation.player_state.health.current
 	)
+	var player_movement_distance: float = (
+		max(0.0, observation.player_state.runtime_stats.get("move_speed", 0.0))
+		* pressure_horizon
+	)
+	var player_healing_access: float = _radial_accessibility(
+		max(
+			0.0,
+			(
+				track.relative_position.length()
+				- healing_radius
+				- observation.player_state.collision_radius
+			)
+		),
+		_characteristic_movement_distance(track, pressure_horizon) + player_movement_distance
+	)
 	var player_healing_opportunity: float = (
 		min(missing_health, max(0.0, player_healing))
 		* marginal_health_unit_value
+		* player_healing_access
 	)
 	return population_burden + amplification_burden + healing_burden - player_healing_opportunity
+
+
+func _enemy_healing_burden(
+	observation: Dictionary,
+	healer: Dictionary,
+	healing_per_entry: float,
+	healing_radius: float,
+	mean_enemy_health: float,
+	mean_enemy_burden: float
+) -> float:
+	if healing_per_entry <= 0.0 or healing_radius <= 0.0:
+		return 0.0
+	var horizon: float = sqrt(max(0.0, observation.wave_state.seconds_remaining))
+	var healer_movement_distance: float = _characteristic_movement_distance(healer, horizon)
+	var recoverable_health := 0.0
+	for candidate in observation.enemy_tracks:
+		if candidate.track_id == healer.track_id:
+			continue
+		var health: Dictionary = candidate.last_measurement.get("health", {})
+		var missing_health: float = max(
+			0.0, float(health.get("maximum", 0.0)) - float(health.get("current", 0.0))
+		)
+		if missing_health <= 0.0:
+			continue
+		var candidate_radius: float = candidate.behavior_profile.get("contact_radius", 0.0)
+		var gap: float = max(
+			0.0,
+			(
+				(candidate.relative_position - healer.relative_position).length()
+				- healing_radius
+				- candidate_radius
+			)
+		)
+		var characteristic_movement_distance: float = (
+			healer_movement_distance
+			+ _characteristic_movement_distance(candidate, horizon)
+		)
+		recoverable_health += (
+			min(missing_health, healing_per_entry)
+			* _radial_accessibility(gap, characteristic_movement_distance)
+			* candidate.recency_confidence
+		)
+	# A body-entered heal can restore at most the health currently missing from
+	# the body that reaches the trigger zone.
+	return recoverable_health / max(1.0, mean_enemy_health) * mean_enemy_burden
+
+
+func _characteristic_movement_distance(track: Dictionary, horizon: float) -> float:
+	var response: Dictionary = track.behavior_profile.get("target_position_response", {})
+	return (
+		max(track.estimated_velocity.length(), max(0.0, response.get("movement_speed", 0.0)))
+		* max(0.0, horizon)
+	)
+
+
+func _radial_accessibility(gap: float, characteristic_distance: float) -> float:
+	if gap <= 0.0:
+		return 1.0
+	if characteristic_distance <= 0.0:
+		return 0.0
+	return exp(-gap / characteristic_distance)
 
 
 func _living_enemy_preservation_value(observation: Dictionary) -> float:

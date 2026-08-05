@@ -21,6 +21,8 @@ func _adapt(unit: Node, uses_enemy_material_drop_rules: bool) -> Dictionary:
 		"item_box_conditional_chance": 0.0,
 		"consumable_drop_guaranteed": false,
 		"guaranteed_death_products": [],
+		# The owning mechanic compiler attaches deterministic player-state changes.
+		"stat_changes": [],
 	}
 	if not "stats" in unit or unit.stats == null or not unit.can_drop_loot:
 		return profile

@@ -12,6 +12,10 @@ const PRICING_MODEL_PATH := (
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/"
 	+ "opportunity_pricing_model.gd"
 )
+const ENEMY_MECHANIC_COMPILER_PATH := (
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/"
+	+ "enemy_mechanic_compiler.gd"
+)
 var _failed := false
 
 
@@ -50,10 +54,83 @@ class DeathRewardUnit:
 		return int(canonical_base_material_quantity)
 
 
+class EnemyMechanicStats:
+	extends Resource
+	var speed := 0.0
+	var health := 10.0
+
+
+class EnemyHitboxState:
+	extends Reference
+	var damage := 1.0
+
+
+class EnemyMechanicUnit:
+	extends Node2D
+	var enemy_id := ""
+	var stats: Reference = EnemyMechanicStats.new()
+	var max_stats: Reference = EnemyMechanicStats.new()
+	var can_drop_loot := false
+	var heal := 0.0
+	var heal_increase_each_wave := 0.0
+	var player_heal := 0.0
+	var player_heal_increase_each_wave := 0.0
+	var _hitbox: Reference = EnemyHitboxState.new()
+
+	func _init(archetype: String, healing_radius := 0.0) -> void:
+		enemy_id = archetype
+		var hitbox := Node2D.new()
+		hitbox.name = "Hitbox"
+		var hitbox_collision := CollisionShape2D.new()
+		hitbox_collision.name = "Collision"
+		var hitbox_shape := CircleShape2D.new()
+		hitbox_shape.radius = 10.0
+		hitbox_collision.shape = hitbox_shape
+		hitbox.add_child(hitbox_collision)
+		add_child(hitbox)
+		if healing_radius <= 0.0:
+			return
+		var boost_zone := Area2D.new()
+		boost_zone.name = "BoostZone"
+		var boost_collision := CollisionShape2D.new()
+		boost_collision.name = "BoostCollision"
+		var boost_shape := CircleShape2D.new()
+		boost_shape.radius = healing_radius
+		boost_collision.shape = boost_shape
+		boost_zone.add_child(boost_collision)
+		add_child(boost_zone)
+
+
 func run() -> bool:
+	_check_enemy_mechanic_profiles()
 	_check_death_reward_profile()
 	_check_material_drop_probability()
 	return not _failed
+
+
+func _check_enemy_mechanic_profiles() -> void:
+	var compiler: Reference = load(ENEMY_MECHANIC_COMPILER_PATH).new()
+	var sea_pig := EnemyMechanicUnit.new("sea_pig")
+	var sea_pig_profile: Dictionary = compiler.compile(sea_pig)
+	var stat_changes: Array = sea_pig_profile.death_rewards.stat_changes
+	_expect(
+		(
+			stat_changes.size() == 1
+			and stat_changes[0].stat == "curse"
+			and stat_changes[0].operation == "add"
+			and is_equal_approx(stat_changes[0].value, 1.0)
+		),
+		"enemy mechanics must expose deterministic death stat changes"
+	)
+	var healer := EnemyMechanicUnit.new("healer", 200.0)
+	healer.heal = 100.0
+	var healer_profile: Dictionary = compiler.compile(healer)
+	_expect(
+		is_equal_approx(healer_profile.battlefield_effects.enemy_healing_radius, 200.0),
+		"enemy mechanics must expose the named healing trigger geometry"
+	)
+	sea_pig.queue_free()
+	healer.queue_free()
 
 
 func _check_death_reward_profile() -> void:
@@ -66,13 +143,38 @@ func _check_death_reward_profile() -> void:
 		"canonical settlement quantity must compose with current material modifiers"
 	)
 	var observation := {
-		"wave_state": {"number": 1, "is_horde": false},
-		"player_state": {"effective_stats": {"luck": 0.0}},
+		"wave_state":
+		{
+			"number": 1,
+			"final_number": 20,
+			"duration_seconds": 20.0,
+			"seconds_remaining": 20.0,
+			"endless": true,
+			"is_horde": false,
+		},
+		"player_state":
+		{
+			"effective_stats": {"luck": 0.0, "curse": 0.0},
+			"stat_opportunity_profiles":
+			{
+				"curse":
+				{
+					"curve": "saturating_probability",
+					"scale": 50.0,
+					"chance_limits": [0.5, 0.15],
+				}
+			},
+		},
 	}
 	var pricing: Reference = load(PRICING_MODEL_PATH).new()
 	_expect(
 		is_equal_approx(pricing.death_reward_value(observation, profile), 150.0),
 		"priced kill rewards must preserve the adapted material value"
+	)
+	profile.stat_changes = [{"stat": "curse", "operation": "add", "value": 1.0}]
+	_expect(
+		is_equal_approx(pricing.death_reward_value(observation, profile), 150.7),
+		"deterministic death stat changes must enter the generic completion value"
 	)
 	unit.stats.always_drop_consumables = true
 	profile = adapter.adapt_enemy(unit)

@@ -41,6 +41,11 @@ func _init() -> void:
 	_check_health_inventory_loss()
 	_check_recovery_liquidity_pricing()
 	_check_additive_collision_damage()
+	var enemy_interaction_checks_path: String = tools_dir.plus_file(
+		"check_autopilot_enemy_interaction_contracts.gd"
+	)
+	if not load(enemy_interaction_checks_path).new().run(_fixtures):
+		_failed = true
 	quit(1 if _failed else 0)
 
 

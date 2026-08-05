@@ -15,9 +15,13 @@ const PlayerRuleProjector := preload(
 const DeathRewardProbabilityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/death_reward_probability_model.gd"
 )
+const StatOpportunityPricingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_pricing_model.gd"
+)
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _death_reward_probability_model: Reference = DeathRewardProbabilityModel.new()
+var _stat_opportunity_pricing_model: Reference = StatOpportunityPricingModel.new()
 
 
 func material_unit_collection_value(observation: Dictionary) -> float:
@@ -108,6 +112,9 @@ func death_reward_value(observation: Dictionary, death_rewards: Dictionary) -> f
 	)
 	if item_box_probability > 0.0:
 		value += item_box_probability * expected_item_box_item_value(observation)
+	value += _stat_opportunity_pricing_model.value(
+		observation, death_rewards.get("stat_changes", [])
+	)
 	return value
 
 

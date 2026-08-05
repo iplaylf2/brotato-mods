@@ -63,11 +63,11 @@
   `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线。
 - `bot/knowledge/pickups/item_box_item_value_profile_adapter.gd` 从原版波次稀有度规则、已解锁道具池和当前
   玩家价格修正生成不消耗随机数的箱子道具价值画像。
-- `bot/knowledge/rewards/death_reward_profile_adapter.gd` 从可见单位编译材料数量、可见机制倍率、消耗品
+- `bot/knowledge/rewards/death_reward_profile_adapter.gd` 从可见单位适配材料数量、可见机制倍率、消耗品
   条件和必掉产物。材料数量使用目标版本的规范 `get_stats_value()` 结算入口；适配器不保留场景节点，也不
   解释目标优先级。
 - `bot/knowledge/enemies/enemy_mechanic_compiler.gd` 聚合稳定攻击、接触形状、战场影响与移除后果，并委托
-  `bot/knowledge/rewards` 形成当次死亡奖励画像；
+  `bot/knowledge/rewards` 形成当次掉落画像，再附加由敌人内容机制确定的死亡属性变化；
   `bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd` 拥有稳定目标位置响应与冲撞配置。两类缓存都不得
   混入战斗期状态。
 
@@ -137,7 +137,7 @@
 - `bot/planning/pickups/pickup_collection_geometry_model.gd` 统一拥有收集圈边界、未来点位间隙，以及移动
   拾取物与玩家分段路径的连续交会；导航查询点位间隙，直接收益和事件规则查询连续收集事件。
 - `bot/planning/opportunity_pricing_model.gd` 把地面材料、地面消耗品、实体死亡奖励与树木保留后果换算为
-  材料等价边际价值；它不拥有敌人威胁或死亡转移。
+  材料等价边际价值，并把知识层提供的确定属性变化委托给属性机会定价；它不拥有敌人威胁或死亡转移机制。
 - `bot/planning/death_reward_probability_model.gd` 把死亡奖励画像与当前波次、潮汐波和幸运组合为材料、
   消耗品及箱子的当前概率。
 - `bot/planning/stat_opportunity_pricing_model.gd` 计算属性变化对未来事件机会的边际价值。

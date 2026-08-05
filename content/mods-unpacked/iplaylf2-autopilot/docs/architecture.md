@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 修改公共数据或记忆语义 | [观察契约](#观察契约) | [玩家权限边界](fair-play.md) |
 | 接入版本机制 | [机制知识](#机制知识) | [敌人、树木与投射物参考](vanilla-enemy-mechanics.md)、[道具与武器审计](vanilla-item-weapon-mechanics.md) |
-| 修改死亡奖励或掉落概率 | [敌人行为画像](#敌人行为画像)、[动态效用](#动态效用) | [敌人、树木与投射物参考](vanilla-enemy-mechanics.md)、[模块边界](module-boundaries.md#机会规则与动作结果) |
+| 修改死亡奖励或掉落概率 | [敌人行为画像](#敌人行为画像)、[动态效用](#动态效用) | [敌人完成价值与死亡奖励](model-calibration.md#敌人完成价值与死亡奖励)、[敌人、树木与投射物参考](vanilla-enemy-mechanics.md)、[模块边界](module-boundaries.md#机会规则与动作结果) |
 | 修改决策行为或诊断字段 | [滚动规划](#滚动规划) | [决策采样与模型校准](model-calibration.md) |
 | 修改材料收集或拾取路径 | [决策基底](#决策基底)、[暴露与导航意图](#暴露与导航意图) | [导航与材料](model-calibration.md#导航与材料)、[模块边界](module-boundaries.md#机会规则与动作结果) |
 | 修改碰撞几何或承伤换算 | [结果与诊断](#结果与诊断)、[动态效用](#动态效用) | [敌人、树木与投射物参考](vanilla-enemy-mechanics.md)、[复盘方法](model-calibration.md#复盘方法) |
@@ -259,9 +259,13 @@ visible_world
 | `death_rewards.item_box_conditional_chance` | 已产生消耗品时成为箱子的基础条件概率，尚未结合当前幸运等状态 |
 | `death_rewards.consumable_drop_guaranteed` | 是否绕过任意消耗品的概率判定 |
 | `death_rewards.guaranteed_death_products` | 死亡必定产生的可见产物类型及原版最大生成位移 |
+| `death_rewards.stat_changes` | 死亡结算确定施加的属性、运算与数值；规划层按当前状态计算边际价值 |
 | `battlefield_effects.hostile_population_per_second` | 敌人存活期间按稳定攻击机制生成敌人的速率 |
 | `battlefield_effects.maximum_lifetime_hostile_population` | 有限次生成机制在完整生命周期内的稳定生成上限；无限机制为 `null`，不表示当前剩余次数 |
-| `battlefield_effects` 的其他字段 | 每秒强化激活数、每次强化比例，以及敌我治疗量等存活期间战场后果 |
+| `battlefield_effects.amplification_*` | 每秒强化激活数，以及每次激活施加的生命、伤害和速度比例 |
+| `battlefield_effects.enemy_healing_base`、`enemy_healing_per_wave` | 敌人进入治疗触发区时的基础治疗量与逐波增量 |
+| `battlefield_effects.player_healing_base`、`player_healing_per_wave` | 玩家进入同一治疗触发区时的基础治疗量与逐波增量 |
+| `battlefield_effects.enemy_healing_radius` | 敌我治疗共用的实际触发区半径 |
 | `material_assimilation` | 材料吸附与拾取半径、进化材料阈值及最高耐久倍率；存活负担解除价值由当前材料竞速几何派生，不包含敌人类别优先级 |
 | `removal_effects.visible_projectile_damage` | 与来源一同删除的当前可见投射物原始伤害总量 |
 | `removal_effects.spawned_hostile_population` | 击杀该敌人会立即生成的稳定敌人数；它作为死亡后果进入独立成本通道 |
@@ -715,8 +719,10 @@ Boss 的预设身份优先级；追击顺序只由上述机制在当前状态下
 收集，不构成提前拾取的边际收益。
 
 `OpportunityPricingModel` 统一把地面材料、地面消耗品、实体死亡奖励和树木保留后果换算为材料等价边际
-价值。`DeathRewardProbabilityModel` 在规划快照上组合材料的波次与潮汐波规则，以及消耗品和箱子的基础
-概率与当前幸运；材料条件数量和概率保持分离。树木收益中的材料使用与地面材料相同的本波兑现价格。
+价值。实体死亡奖励同时包含概率掉落和确定属性变化：`DeathRewardProbabilityModel` 在规划快照上组合
+材料的波次与潮汐波规则、消耗品和箱子的基础概率及当前幸运；`StatOpportunityPricingModel` 按当前属性、
+机会曲线和剩余波次计算确定属性变化的边际价值。材料条件数量和概率保持分离，树木收益中的材料使用与
+地面材料相同的本波兑现价格。
 箱子的道具选择价值由主线程知识适配层根据原版波次稀有度分布、当前已解锁道具池和玩家价格修正形成，
 不消耗未来随机数。所有可能生成的消耗品都按
 补充库存的边际价值计价，因为箱子和果实都能治疗。道具选择与治疗描述同一个箱子结果的不同收益，不是
@@ -725,13 +731,13 @@ Boss 的预设身份优先级；追击顺序只由上述机制在当前状态下
 
 `EnemyCompletionValueModel` 在每次规划中一次性建立敌人完成状态转移账本。奖励变化通道记录敌人死亡奖励
 减去失去的存活奖励；存活负担解除通道记录直接接触与远程压力、来源死亡可清除的当前投射物、存活期间预计
-生成的敌群，以及强化和治疗现存敌群造成的负担；死亡触发生成的敌群进入死亡后果通道。波末保留敌人的
+生成的敌群，以及强化和治疗现存敌群造成的负担。治疗机会以单个目标当前缺失生命和单次治疗量为上限，
+再按触发区间隙与双方特征运动距离衰减；满血目标不贡献治疗负担。敌人可给玩家提供的治疗机会采用同一触发区
+和距离语义。死亡触发生成的敌群进入死亡后果通道。波末保留敌人的
 收益及其可给玩家提供的治疗机会分别使前两个通道减小，必要时可使通道为负。所有项先换成材料等价值；
 局部武器结果预测按离散击打工作量形成的完成份额兑现三个通道；统一目标投影再把该账本与树木的零负担、
 零死亡后果和破坏收益放入同一导航机会通道，并乘共享攻击容量下的完成份额。两者都是受容量约束的期望代理，
-不宣称统计概率。击杀或效果规则造成的属性变化由
-`StatOpportunityPricingModel` 按当前属性、机会曲线和剩余波次计算边际价值。账本构造只扫描敌群一次，
-动作、导航和武器结果预测共享该账本，避免每个消费者重复计算。
+不宣称统计概率。账本构造只扫描敌群一次，动作、导航和武器结果预测共享该账本，避免每个消费者重复计算。
 
 效用模型对 `integrated_environmental_exposure`、由 `forecast_expected_health_loss` 换算的
 `forecast_health_inventory_loss_value`，以及单次终止风险和即时缓冲消耗按当前对局延续价值换算的

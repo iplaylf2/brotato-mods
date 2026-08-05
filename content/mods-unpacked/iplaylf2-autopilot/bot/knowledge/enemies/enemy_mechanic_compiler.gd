@@ -7,6 +7,10 @@ extends Reference
 const MINIMUM_PROJECTILE_PRESSURE_INTENSITY := 0.5
 const MAX_PRESSURE_INTENSITY := 4.0
 const DEATH_SPAWN_COUNT_BY_ARCHETYPE := {"spawner": 3.0, "bloated_spawner": 5.0}
+const DEATH_STAT_CHANGES_BY_ARCHETYPE := {
+	# Versioned content rule: completing a Sea Pig grants one Curse.
+	"sea_pig": [{"stat": "curse", "operation": "add", "value": 1.0}],
+}
 const DeathRewardProfileAdapter := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/rewards/death_reward_profile_adapter.gd"
 )
@@ -42,6 +46,8 @@ func compile(enemy: Node) -> Dictionary:
 		}
 		if not archetype.empty():
 			_mechanics_by_archetype[archetype] = mechanics.duplicate(true)
+	var death_rewards: Dictionary = _death_reward_profile_adapter.adapt_enemy(enemy)
+	death_rewards.stat_changes = _compile_death_stat_changes(archetype)
 	return {
 		"projectile_attack": mechanics.projectile_attack,
 		"charge_attack": mechanics.charge_attack,
@@ -52,10 +58,14 @@ func compile(enemy: Node) -> Dictionary:
 		"contact_damage": _get_contact_damage(enemy),
 		"contact_radius":
 		_collision_shape_radius_adapter.adapt_owner_centered_radius(enemy, "Hitbox/Collision"),
-		"death_rewards": _death_reward_profile_adapter.adapt_enemy(enemy),
+		"death_rewards": death_rewards,
 		"battlefield_effects": mechanics.battlefield_effects,
 		"removal_effects": mechanics.removal_effects,
 	}
+
+
+func _compile_death_stat_changes(archetype: String) -> Array:
+	return DEATH_STAT_CHANGES_BY_ARCHETYPE.get(archetype, []).duplicate(true)
 
 
 func _compile_material_assimilation(enemy: Node) -> Dictionary:
@@ -84,10 +94,10 @@ func _compile_material_assimilation(enemy: Node) -> Dictionary:
 	}
 
 
-func _area_radius(area: Node) -> float:
+func _area_radius(area: Node, collision_name := "CollisionShape2D") -> float:
 	if not is_instance_valid(area):
 		return 0.0
-	var collision: Node = area.get_node_or_null("CollisionShape2D")
+	var collision: Node = area.get_node_or_null(collision_name)
 	if not is_instance_valid(collision) or collision.shape == null:
 		return 0.0
 	if not "radius" in collision.shape:
@@ -145,6 +155,7 @@ func _compile_battlefield_effects(enemy: Node) -> Dictionary:
 			if "heal_increase_each_wave" in enemy
 			else 0.0
 		),
+		"enemy_healing_radius": _area_radius(enemy.get_node_or_null("BoostZone"), "BoostCollision"),
 		"player_healing_base":
 		max(0.0, float(enemy.player_heal)) if "player_heal" in enemy else 0.0,
 		"player_healing_per_wave":
