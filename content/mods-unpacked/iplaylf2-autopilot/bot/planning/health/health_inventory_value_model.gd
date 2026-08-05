@@ -95,16 +95,20 @@ func _immediate_hit_reserve(observation: Dictionary) -> float:
 		observation, MovementTimingModel.control_interval_seconds()
 	)
 	var geometry: Dictionary = _movement_geometry_model.derive(observation)
-	for projectile in observation.visible_world.enemy_projectiles:
-		if _projectile_can_contact_player(observation, projectile, horizon, geometry):
-			maximum_raw_damage = max(maximum_raw_damage, projectile.contact_damage)
-	var knockback_reach: float = (
-		observation.player_state.movement.knockback_velocity.length()
-		* horizon
+	# Inventory value is action-independent, so reserve the strongest hit reachable
+	# from the complete next-control player action set. Omitting commanded player
+	# reach let future replenishment price the player as safe while a candidate could
+	# cross the same enemy's contact boundary before the next plan existed.
+	var player_reach: float = (
+		geometry.command_speed * horizon
+		+ observation.player_state.movement.knockback_velocity.length() * horizon
 	)
+	for projectile in observation.visible_world.enemy_projectiles:
+		if _projectile_can_contact_player(projectile, horizon, player_reach, geometry):
+			maximum_raw_damage = max(maximum_raw_damage, projectile.contact_damage)
 	for track in observation.enemy_tracks:
 		var contact_support_radius: float = _enemy_reach_envelope_model.contact_support_radius(
-			track, horizon, knockback_reach, geometry.player_radius
+			track, horizon, player_reach, geometry.player_radius
 		)
 		if track.relative_position.length() <= contact_support_radius:
 			maximum_raw_damage = max(maximum_raw_damage, track.behavior_profile.contact_damage)
@@ -118,15 +122,11 @@ func _immediate_hit_reserve(observation: Dictionary) -> float:
 
 
 func _projectile_can_contact_player(
-	observation: Dictionary, projectile: Dictionary, horizon: float, geometry: Dictionary
+	projectile: Dictionary, horizon: float, player_reach: float, geometry: Dictionary
 ) -> bool:
 	# Inventory value is built before an action is chosen. Bound the visible
 	# projectile's path length so a curved path cannot disappear between endpoint
 	# checks; candidate-specific swept geometry remains in the action predictor.
-	var player_reach: float = (
-		observation.player_state.movement.knockback_velocity.length()
-		* horizon
-	)
 	var projectile_reach: float = (
 		projectile.velocity.length() * horizon
 		+ 0.5 * projectile.acceleration.length() * horizon * horizon

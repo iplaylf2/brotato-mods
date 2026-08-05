@@ -34,7 +34,7 @@
   共同消费；
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
 - `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”和“当前生命、即时威胁与清场前补充 →
-  生命库存及单位价值”两段协议，结果供导航风险和动作效用共同消费；
+  生命库存、即时单位价值及补给库存价值”两段协议，结果供导航风险和动作效用共同消费；
 - `pickups` 拥有“玩家路径与已观察拾取物运动 → 连续收集几何”的协议，供导航机会、直接材料收益与
   拾取事件规则共同消费；
 - `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、动作条件
@@ -92,7 +92,8 @@
   间隔换算预期生命损失与直接终止风险；
   `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
   `bot/planning/health/health_inventory_value_model.gd` 负责即时生存缓冲、预计生命库存、单位价值，以及把
-  动作窗内的条件生命损失换算为即时缓冲成本。
+  动作窗内的条件生命损失换算为即时缓冲成本。即时命中储备覆盖下一控制周期内敌人与完整玩家动作集合
+  的联合可达域，不只覆盖静止玩家。
 - `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 
 ### 机会、规则与动作结果
@@ -128,7 +129,8 @@
   `bot/planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量；
   `bot/planning/player_rule_projector.gd` 将规则归约为正交状态。这些模块都不能读取场景节点。
 - `bot/planning/movement_outcome_predictor.gd` 组合动作结果；`bot/planning/movement_utility_model.gd` 将结果换算
-  为效用。预测和评分是两个边界，选择器不拥有二者。
+  为效用，其中局部与导航环境暴露使用即时单位价值，补给储备和波次尺度敌人负担使用补给库存价值。
+  预测和评分是两个边界，选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
   方向和可达机会价值上界最高的方向，并按规划器提出的细分方向构造新候选；
   `bot/planning/movement_action_selector.gd` 只选择总效用最高的已评分候选；`MovementPlanner` 协调生成、

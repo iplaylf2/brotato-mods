@@ -43,6 +43,10 @@ func build_context(observation: Dictionary) -> Dictionary:
 	)
 	var marginal_health_unit_value: float = health_inventory_value.marginal_health_unit_value
 	var terminal_health_loss_unit_value: float = health_inventory_value.terminal_health_loss_unit_value
+	# Environmental exposure belongs to the local rolling horizon. Whole-wave
+	# replenishment can replace health later, but cannot make the current reachable
+	# set viable; use the same immediate-buffer price basis as local collision loss.
+	var local_exposure_unit_value: float = terminal_health_loss_unit_value
 	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
 	var damage_is_terminal_rule: bool = player_rule_projection.survival.terminal_on_positive_damage
 	var current_unprotected_damage_is_terminal: bool = (
@@ -61,25 +65,25 @@ func build_context(observation: Dictionary) -> Dictionary:
 		{
 			"survival":
 			{
-				"integrated_environmental_exposure": -marginal_health_unit_value,
+				"integrated_environmental_exposure": -local_exposure_unit_value,
 				"forecast_terminal_collision_risk":
 				(
 					-terminal_health_loss_unit_value
 					* max(1.0, health_inventory_value.immediate_hit_reserve)
 				),
 				"forecast_health_inventory_loss_value": -1.0,
-				"movement_damage_exposure_reduction": marginal_health_unit_value,
+				"movement_damage_exposure_reduction": local_exposure_unit_value,
 			},
-			"recovery":
 			# Recovery first becomes liquid health. A consumable pickup also spends
 			# replenishment supply below, so the two entries together equal the
 			# liquidity-conversion value. Pricing recovery at that net value here
+			# would charge the consumed supply twice.
+			"recovery":
 			{
-				# would charge the consumed supply twice.
 				"expected_recovery": health_inventory_value.terminal_health_loss_unit_value,
-				# Replacement supply lowers the shadow price of taking damage. Charging
-				# that same price when a pickup is consumed puts insurance and consumption
-				# on one ledger instead of letting the same reserve be valued twice.
+				# Replacement supply carries an inventory shadow price. Charging it when
+				# a pickup is consumed puts insurance and consumption on one ledger instead
+				# of letting the same reserve be valued twice.
 				"consumed_consumable_recovery_supply":
 				-health_inventory_value.replenishment_unit_value,
 				"consumed_single_use_support_supply": -marginal_health_unit_value,
@@ -133,7 +137,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"living_enemy_preservation_value":
 			completion_value_ledger.living_enemy_preservation_value,
 			"information_value_per_viewport": information_value_per_viewport,
-			"environmental_exposure_value": marginal_health_unit_value,
+			"environmental_exposure_value": local_exposure_unit_value,
 			"wave_seconds_remaining": max(0.0, observation.wave_state.seconds_remaining),
 			"continuation_horizon_seconds": timing.maximum_navigation_horizon_seconds,
 		},

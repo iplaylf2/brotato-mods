@@ -680,8 +680,14 @@ func _check_recovery_liquidity_pricing() -> void:
 		context
 	)
 	_expect(
-		pickup_utility.objective_utility_breakdown.recovery > 0.0,
-		"turning observed consumable supply into liquid health must have positive low-health value"
+		(
+			pickup_utility.objective_utility_breakdown.recovery > 0.0
+			and is_equal_approx(
+				context.state_factors.environmental_exposure_value,
+				context.state_factors.health_inventory_value.terminal_health_loss_unit_value
+			)
+		),
+		"future supply must reward recovery without discounting rolling-horizon exposure"
 	)
 	var tree := {
 		"destructible_profile":
@@ -848,7 +854,7 @@ func _check_wave_completion_forecast() -> void:
 func _check_immediate_hit_reserve_reachability() -> void:
 	var inventory_script: Script = load(PLANNING_PATH + "health/health_inventory_value_model.gd")
 	var inventory: Reference = inventory_script.new()
-	var nearby_memory := _enemy_track(Vector2(20.0, 0.0), Vector2.ZERO, false)
+	var nearby_memory := _enemy_track(Vector2(25.0, 0.0), Vector2.ZERO, false)
 	nearby_memory.visible = false
 	nearby_memory.behavior_profile.contact_damage = 10.0
 	var remote_memory := _enemy_track(Vector2(5000.0, 0.0), Vector2.ZERO, false)
@@ -867,10 +873,7 @@ func _check_immediate_hit_reserve_reachability() -> void:
 		},
 		_fixtures.wave_completion_forecast({})
 	)
-	_expect(
-		is_equal_approx(result.immediate_hit_reserve, 10.0),
-		"the next-hit reserve must include reachable memory and exclude unreachable tracks"
-	)
+	_expect(is_equal_approx(result.immediate_hit_reserve, 10.0), "reserve must cover joint player-threat reach")
 	observation.physics_frame += 1
 	observation.enemy_tracks = []
 	result = inventory.estimate(
