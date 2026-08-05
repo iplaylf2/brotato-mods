@@ -20,6 +20,11 @@ func _init() -> void:
 	_check_projectile_hitbox_ttc()
 	_check_navigation_horizon_consistency()
 	_check_trajectory_value_field()
+	var deadline_checks_path: String = get_script().resource_path.get_base_dir().plus_file(
+		"check_autopilot_wave_deadline_contracts.gd"
+	)
+	if not load(deadline_checks_path).new().run(_fixtures):
+		_failed = true
 	_check_pickup_interaction_geometry()
 	_check_visible_material_quantity_estimate()
 	_check_spatial_target_control()

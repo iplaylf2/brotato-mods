@@ -120,13 +120,14 @@
   目标投影为局部命中、伤害与完成容量；
   `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样的有限目标容量守恒。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
-  `bot/planning/engagement/damage_completion_work_model.gd` 统一把剩余生命和单次伤害换算为离散击打工作量；
+  `bot/planning/engagement/damage_completion_work_model.gd` 统一把剩余生命和单次伤害换算为离散击打工作量，
+  并把未知攻击相位下的连续容量换算为截止前完成概率；
   `bot/planning/engagement/neutral_completion_work_model.gd` 把树木最后一次观测的剩余生命、命中状态和
   玩家的一击完成状态统一解释为有效攻击工作量，供波次容量与局部武器结果共享。
 - `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
   `bot/planning/enemy_health_model.gd` 把敌人最后可见生命测量与稳定最大生命先验统一解析为剩余生命。
-- `bot/planning/engagement/navigation_weapon_completion_value_model.gd` 按候选轨迹采样状态的预计几何统一计算
-  最近主目标与贯穿、弹射、范围机制的后续完成价值，并以同一物理帧缓存目标投影。
+- `bot/planning/engagement/navigation_weapon_completion_value_model.gd` 按候选轨迹采样状态的预计几何和波末
+  截止统一计算最近主目标与贯穿、弹射、范围机制的后续完成价值，并以同一物理帧缓存目标投影。
 - `bot/planning/pickups/pickup_collection_geometry_model.gd` 统一拥有收集圈边界、未来点位间隙，以及移动
   拾取物与玩家分段路径的连续交会；导航查询点位间隙，直接收益和事件规则查询连续收集事件。
 - `bot/planning/opportunity_pricing_model.gd` 只换算材料、消耗品、树木和击杀掉落，不再拥有敌人威胁或

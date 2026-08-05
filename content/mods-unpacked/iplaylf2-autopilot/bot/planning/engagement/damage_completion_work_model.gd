@@ -18,3 +18,15 @@ func completion_fraction_per_hit(remaining_health: float, damage_per_hit: float)
 	if is_inf(required_hits) or required_hits <= 0.0:
 		return 0.0
 	return 1.0 / required_hits
+
+
+# Expected attack capacity is continuous because the current weapon cooldown
+# phase is not part of the public attack model. With an unknown phase uniformly
+# distributed over one attack interval, capacity c completes k required hits
+# with probability clamp(c - (k - 1), 0, 1). Unlike linear work fractions, this
+# assigns no terminal reward to damage that cannot finish the target by the
+# deadline.
+func completion_probability(expected_hits: float, required_hits: float) -> float:
+	if is_inf(required_hits) or required_hits <= 0.0:
+		return 0.0
+	return clamp(expected_hits - max(0.0, required_hits - 1.0), 0.0, 1.0)

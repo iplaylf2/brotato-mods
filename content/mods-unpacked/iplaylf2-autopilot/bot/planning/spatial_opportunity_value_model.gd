@@ -63,7 +63,20 @@ func _evaluate_point(
 		"weapon_completion_opportunity": 0.0,
 		"total": 0.0,
 	}
-	var reach_distance: float = _prepared_geometry.opportunity_reach_distance
+	var seconds_until_wave_end: float = max(
+		0.0, observation.wave_state.seconds_remaining - forecast_seconds
+	)
+	var continuation_horizon_seconds: float = context.state_factors.get(
+		"continuation_horizon_seconds",
+		(
+			_prepared_geometry.opportunity_reach_distance
+			/ max(1.0, observation.player_state.runtime_stats.move_speed)
+		)
+	)
+	var deadline_reach_distance: float = (
+		observation.player_state.runtime_stats.move_speed
+		* min(seconds_until_wave_end, continuation_horizon_seconds)
+	)
 	for entry in _prepared_pickups:
 		var pickup: Dictionary = entry.pickup
 		var stationary_gap: float = _pickup_collection_geometry_model.collection_gap_at(
@@ -74,7 +87,7 @@ func _evaluate_point(
 		)
 		var contribution: float = (
 			entry.value
-			* _accessibility_delta(stationary_gap, candidate_gap, reach_distance)
+			* _deadline_accessibility_delta(stationary_gap, candidate_gap, deadline_reach_distance)
 		)
 		match pickup.kind:
 			"material":
@@ -219,18 +232,21 @@ func _accessibility(gap: float, reach_distance: float) -> float:
 	return exp(-gap / reach_distance)
 
 
-func _accessibility_delta(
-	stationary_gap: float, candidate_gap: float, reach_distance: float
+func _deadline_accessibility_delta(
+	stationary_gap: float, candidate_gap: float, deadline_reach_distance: float
 ) -> float:
-	if stationary_gap <= 0.0:
-		return 0.0 if candidate_gap <= 0.0 else -1.0
-	var stationary_accessibility: float = _accessibility(stationary_gap, reach_distance)
-	var candidate_accessibility: float = _accessibility(candidate_gap, reach_distance)
-	return clamp(
-		(candidate_accessibility - stationary_accessibility) / (1.0 - stationary_accessibility),
-		-1.0,
-		1.0
+	return (
+		_deadline_accessibility(candidate_gap, deadline_reach_distance)
+		- _deadline_accessibility(stationary_gap, deadline_reach_distance)
 	)
+
+
+func _deadline_accessibility(gap: float, deadline_reach_distance: float) -> float:
+	if gap <= 0.0:
+		return 1.0
+	if deadline_reach_distance <= 0.0 or gap >= deadline_reach_distance:
+		return 0.0
+	return 1.0 - gap / deadline_reach_distance
 
 
 func _append_candidate(candidates: Array, displacement: Vector2, value: float) -> void:

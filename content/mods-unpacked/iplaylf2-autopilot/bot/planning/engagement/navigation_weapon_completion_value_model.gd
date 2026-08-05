@@ -141,9 +141,7 @@ func _weapon_completion_value(
 	var direct_mass := 0.0
 	var redirect_mass := 0.0
 	var area_mass := 0.0
-	var direct_value := 0.0
-	var redirect_value := 0.0
-	var area_value := 0.0
+	var secondary_entries := []
 	var damage_per_hit: float = _weapon_attack_capacity_model.expected_damage_per_hit(attack_model)
 	for secondary in targets:
 		if secondary.target.target_id == primary.target.target_id:
@@ -157,33 +155,23 @@ func _weapon_completion_value(
 		if available_mass <= 0.0:
 			continue
 		var direct_coverage := _direct_path_coverage(primary, secondary, paths)
-		direct_mass += available_mass * direct_coverage
-		direct_value += (
-			available_mass
-			* direct_coverage
-			* _completion_value_per_hit(
-				secondary.target, damage_per_hit, clamp(paths.retained_damage, 0.0, 1.0)
-			)
-		)
-		redirect_mass += available_mass
-		redirect_value += (
-			available_mass
-			* _completion_value_per_hit(
-				secondary.target,
-				damage_per_hit,
-				clamp(delivery.redirects.retained_damage, 0.0, 1.0)
-			)
-		)
+		var target_direct_mass: float = available_mass * direct_coverage
 		var area_coverage := (
 			_area_coverage(primary, secondary, attack_model)
 			if secondary.target.weapon_response.health_damage_applies
 			else 0.0
 		)
-		area_mass += available_mass * area_coverage
-		area_value += (
-			available_mass
-			* area_coverage
-			* _completion_value_per_hit(secondary.target, damage_per_hit, 1.0)
+		var target_area_mass: float = available_mass * area_coverage
+		direct_mass += target_direct_mass
+		redirect_mass += available_mass
+		area_mass += target_area_mass
+		secondary_entries.push_back(
+			{
+				"target": secondary.target,
+				"direct_mass": target_direct_mass,
+				"redirect_mass": available_mass,
+				"area_mass": target_area_mass,
+			}
 		)
 
 	var attack_interval: float = max(0.05, attack_model.timing.expected_attack_interval_seconds)
@@ -193,25 +181,43 @@ func _weapon_completion_value(
 	)
 	var base_hit_capacity: float = primary_path_count * completion_horizon_seconds / attack_interval
 	var primary_value: float = (
-		base_hit_capacity
-		* primary.confidence
-		* primary.selection_coverage
-		* _completion_value_per_hit(primary.target, damage_per_hit, 1.0)
+		primary.confidence
+		* _completion_value_for_capacity(
+			primary.target, damage_per_hit, 1.0, base_hit_capacity * primary.selection_coverage
+		)
 	)
 	var direct_share: float = min(direct_capacity, direct_mass)
 	var redirect_share: float = min(redirect_capacity, redirect_mass)
 	var area_share: float = min(area_capacity, area_mass)
-	var projected_value: float = (
-		primary_value
-		+ (
+	var projected_value := primary_value
+	for entry in secondary_entries:
+		var direct_hits: float = (
 			base_hit_capacity
-			* (
-				direct_share * _mean_value(direct_value, direct_mass)
-				+ redirect_share * _mean_value(redirect_value, redirect_mass)
-				+ area_share * _mean_value(area_value, area_mass)
-			)
+			* direct_share
+			* entry.direct_mass
+			/ max(0.0001, direct_mass)
 		)
-	)
+		var redirect_hits: float = (
+			base_hit_capacity
+			* redirect_share
+			* entry.redirect_mass
+			/ max(0.0001, redirect_mass)
+		)
+		var area_hits: float = (
+			base_hit_capacity
+			* area_share
+			* entry.area_mass
+			/ max(0.0001, area_mass)
+		)
+		var raw_hit_capacity: float = direct_hits + redirect_hits + area_hits
+		var health_hit_capacity: float = (
+			direct_hits * clamp(paths.retained_damage, 0.0, 1.0)
+			+ redirect_hits * clamp(delivery.redirects.retained_damage, 0.0, 1.0)
+			+ area_hits
+		)
+		projected_value += _completion_value_for_capacities(
+			entry.target, damage_per_hit, health_hit_capacity, raw_hit_capacity
+		)
 	return projected_value
 
 
@@ -298,30 +304,42 @@ func _area_coverage(primary: Dictionary, secondary: Dictionary, attack_model: Di
 	return result
 
 
-func _mean_value(weighted_value: float, mass: float) -> float:
-	return weighted_value / max(0.0001, mass)
-
-
-func _completion_value_per_hit(
-	target: Dictionary, damage_per_hit: float, retained_damage: float
+func _completion_value_for_capacity(
+	target: Dictionary, damage_per_hit: float, retained_damage: float, expected_hits: float
 ) -> float:
-	var completion_fraction := 0.0
+	return _completion_value_for_capacities(
+		target, damage_per_hit, expected_hits * retained_damage, expected_hits
+	)
+
+
+func _completion_value_for_capacities(
+	target: Dictionary, damage_per_hit: float, health_hit_capacity: float, raw_hit_capacity: float
+) -> float:
+	var completion_probability := 0.0
 	if target.weapon_response.health_damage_applies:
-		completion_fraction = max(
-			completion_fraction,
-			_damage_completion_work_model.completion_fraction_per_hit(
-				target.completion.health.remaining, damage_per_hit * retained_damage
+		var required_damage_hits: float = _damage_completion_work_model.hits_to_complete(
+			target.completion.health.remaining, damage_per_hit
+		)
+		completion_probability = max(
+			completion_probability,
+			_damage_completion_work_model.completion_probability(
+				health_hit_capacity, required_damage_hits
 			)
 		)
 	if target.weapon_response.hit_limit_progress_per_hit > 0.0:
-		completion_fraction = max(
-			completion_fraction,
+		var required_limit_hits: float = ceil(
 			(
-				target.weapon_response.hit_limit_progress_per_hit
-				/ max(1.0, target.completion.hit_limit.remaining)
+				target.completion.hit_limit.remaining
+				/ target.weapon_response.hit_limit_progress_per_hit
 			)
 		)
-	return target.value.net_completion_value * clamp(completion_fraction, 0.0, 1.0)
+		completion_probability = max(
+			completion_probability,
+			_damage_completion_work_model.completion_probability(
+				raw_hit_capacity, required_limit_hits
+			)
+		)
+	return target.value.net_completion_value * completion_probability
 
 
 func _nearer_target(left: Dictionary, right: Dictionary) -> bool:

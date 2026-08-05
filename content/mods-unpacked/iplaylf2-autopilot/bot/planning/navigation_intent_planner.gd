@@ -293,7 +293,11 @@ func _trajectory_sample_count(distance: float, geometry: Dictionary) -> int:
 	var sample_spacing: float = max(
 		geometry.control_distance, geometry.default_local_horizon_distance
 	)
-	return int(max(1, ceil(distance / max(1.0, sample_spacing))))
+	# A single right-endpoint sample lands exactly on wave cleanup when the
+	# remaining horizon is short, erasing every combat opportunity that required
+	# movement earlier in the interval. The first sample and terminal sample
+	# preserve both setup value and the absorbing wave boundary.
+	return int(max(2, ceil(distance / max(1.0, sample_spacing))))
 
 
 func _uniform_directions(direction_count: int) -> Array:
