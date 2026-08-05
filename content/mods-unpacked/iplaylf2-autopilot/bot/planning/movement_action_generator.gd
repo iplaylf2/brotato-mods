@@ -1,8 +1,9 @@
 extends Reference
 
 # Discretizes the feasible movement-input space for the next control interval.
-# Forecast duration follows observed encounter timing; it is not an execution
-# commitment. Zero velocity is the origin of the same action space, not a mode.
+# All candidates share one comparison horizon, extended when local player and
+# threat reach domains can overlap. It is not an execution commitment. Zero
+# velocity is the origin of the same action space, not a mode.
 
 const MovementTimingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
@@ -16,12 +17,16 @@ const MovementGeometryModel := preload(
 const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
+const EnemyReachEnvelopeModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_reach_envelope_model.gd"
+)
 
 const MAX_PROJECTILE_PHASE_STEP := PI / 2.0
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
+var _enemy_reach_envelope_model: Reference = EnemyReachEnvelopeModel.new()
 
 
 func generate(observation: Dictionary, navigation_intent: Dictionary) -> Array:
@@ -111,54 +116,30 @@ func _candidate_directions(direction_count: int, navigation_intent: Dictionary) 
 
 
 func _forecast_window(observation: Dictionary, timing: Dictionary) -> float:
-	var nearest_encounter := INF
-	var player_velocity: Vector2 = _player_kinematics.predict_average_velocity(
-		observation,
-		observation.player_state.movement.input_vector,
-		timing.near_term_horizon_seconds
-	)
 	var geometry: Dictionary = _movement_geometry.derive(observation)
+	var maximum_horizon: float = timing.effective_local_horizon_seconds
+	var player_reach: float = geometry.command_speed * maximum_horizon
 	for track in observation.enemy_tracks:
-		var relative_velocity: Vector2 = track.estimated_velocity - player_velocity
-		nearest_encounter = min(
-			nearest_encounter,
-			_encounter_time(
-				track.relative_position,
-				relative_velocity,
-				(
-					geometry.player_radius
-					+ track.behavior_profile.contact_radius
-					+ geometry.encounter_margin
-				)
-			)
+		var contact_support: float = _enemy_reach_envelope_model.contact_support_radius(
+			track, maximum_horizon, player_reach, geometry.player_radius
 		)
+		if track.relative_position.length() <= contact_support:
+			return maximum_horizon
 	for projectile in observation.visible_world.enemy_projectiles:
-		var projectile_displacement: Vector2 = (
-			_projectile_motion_predictor.predict_position(
-				projectile, timing.default_local_horizon_seconds
-			)
-			- projectile.relative_position
+		var projectile_reach: float = _projectile_motion_predictor.maximum_displacement(
+			projectile, maximum_horizon
 		)
-		var relative_velocity: Vector2 = (
-			projectile_displacement / timing.default_local_horizon_seconds
-			- player_velocity
+		var contact_support: float = (
+			geometry.player_radius
+			+ projectile.contact_radius
+			+ player_reach
+			+ projectile_reach
 		)
-		nearest_encounter = min(
-			nearest_encounter,
-			_encounter_time(
-				projectile.relative_position,
-				relative_velocity,
-				geometry.player_radius + projectile.contact_radius + geometry.encounter_margin
-			)
-		)
-	var forecast_seconds: float = timing.default_local_horizon_seconds
-	if nearest_encounter != INF:
-		forecast_seconds = clamp(
-			nearest_encounter + timing.control_interval_seconds,
-			timing.default_local_horizon_seconds,
-			timing.maximum_local_horizon_seconds
-		)
-	return MovementTimingModel.clip_to_wave_remaining(observation, forecast_seconds)
+		if projectile.relative_position.length() <= contact_support:
+			return maximum_horizon
+	return MovementTimingModel.clip_to_wave_remaining(
+		observation, timing.default_local_horizon_seconds
+	)
 
 
 func _forecast_sample_count(
@@ -185,15 +166,6 @@ func _forecast_sample_count(
 	# spatial sweeps on the same resolution contract.
 	var control_samples := int(ceil(forecast_seconds / timing.control_interval_seconds))
 	return int(max(max(1, spatial_samples), max(phase_samples, control_samples)))
-
-
-func _encounter_time(position: Vector2, velocity: Vector2, threat_radius: float) -> float:
-	var speed_squared := velocity.length_squared()
-	if speed_squared <= 1.0:
-		return 0.0 if position.length() <= threat_radius else INF
-	var closest_time := max(0.0, -position.dot(velocity) / speed_squared)
-	var closest_distance := (position + velocity * closest_time).length()
-	return closest_time if closest_distance <= threat_radius else INF
 
 
 func _has_similar_direction(directions: Array, candidate: Vector2) -> bool:

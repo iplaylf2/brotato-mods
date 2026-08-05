@@ -91,7 +91,8 @@
   `bot/planning/movement_geometry_model.gd` 统一派生共享空间尺度。
 - `bot/planning/motion/observed_motion_predictor.gd` 只负责纯观测运动外推；
   `bot/planning/motion/enemy_motion_predictor.gd` 对稳定目标位置响应作自适应中点积分，并在不适用时改用
-  观测运动外推；`bot/planning/motion/projectile_motion_predictor.gd` 解析积分已形成的确定性弹道；
+  观测运动外推；`bot/planning/motion/projectile_motion_predictor.gd` 解析积分已形成的确定性弹道，并统一
+  提供该弹道的保守位移上界，供规划域过滤与动作时域扩展共同消费；
   `bot/planning/motion/enemy_reach_envelope_model.gd` 派生敌人的最大位移和接触支撑半径。
 - `bot/planning/local_enemy_interaction_projector.gd` 结合敌人可达包络、压力作用范围与武器锁定距离，构造
   动作预测的敌人空间粗筛。完整观察仍归导航与价值上下文所有。
@@ -115,7 +116,8 @@
 ### 机会、规则与动作结果
 
 - `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会及导航武器完成价值在未来玩家状态
-  相对同刻零输入反事实的差，并按统一价值上界提出预算内搜索方向；它不按目标身份解释自动选靶。
+  相对同刻零输入反事实的差，统一拥有波末截止前的访问势能与不可达机会剪枝，并按价值上界提出预算内
+  搜索方向；它不按目标身份解释自动选靶。
 - `bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，沿每个可达候选
   轨迹采样时空价值场，并只公开经过完整轨迹评价后胜出的导航方向。
 - `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
@@ -148,7 +150,8 @@
   为效用，其中局部与导航环境暴露使用即时单位价值，补给储备和波次尺度敌人负担使用补给库存价值。
   预测和评分是两个边界，选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
-  方向，并按规划器提出的细分方向构造新候选；
+  方向，并按规划器提出的细分方向构造新候选；它还根据时间模型以及敌人与投射物的可达上界，为本轮所有
+  候选选择同一个动作比较时域；
   `bot/planning/movement_action_selector.gd` 从终点生命储备可行的已评分候选中选择总效用最高者，并在可行域
   为空时执行储备余量回退；
   `MovementPlanner` 协调生成、预测、评分、细分与选择，不把新行为政策藏进选择器。
@@ -162,7 +165,8 @@
 - `bot/planning/planning_compute_budget_policy.gd` 把帧预算上下文转换成统一最终截止与连续预算压力，并维护
   额外工作的耗时估计；`bot/planning/planning_search_work_allocator.gd` 把预算压力映射为导航额外评价和
   移动细分额度，并公开固定导航基线。两者都不拥有局部动作基线、导航机会或行为效用。
-- `bot/planning/projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；
+- `bot/planning/projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；弹道积分与位移上界仍由
+  `bot/planning/motion/projectile_motion_predictor.gd` 提供；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止
   策略仍归调用方。
 - `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、落盘和分片策略；`MovementPlanner`

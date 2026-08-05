@@ -15,6 +15,7 @@ func run(fixtures: Reference) -> bool:
 	_check_short_deadline_combat_setup()
 	_check_pickup_deadline()
 	_check_incomplete_enemy_deadline()
+	_check_long_range_access_gradients()
 	return not _failed
 
 
@@ -132,6 +133,99 @@ func _check_incomplete_enemy_deadline() -> void:
 		(
 			"piercing, redirect, and area capacity must use the same deadline completion "
 			+ "boundary as the primary target"
+		)
+	)
+
+
+func _check_long_range_access_gradients() -> void:
+	var spatial_script: Script = load(PLANNING_PATH + "spatial_opportunity_value_model.gd")
+	var observation: Dictionary = _fixtures.planning_observation([])
+	var material := {
+		"kind": "material",
+		"relative_position": Vector2(700.0, 0.0),
+		"existence_confidence": 1.0,
+		"material_quantity": 1.0,
+	}
+	observation.remembered_entities = [material]
+	var context := {
+		"state_factors":
+		{
+			"health_inventory_value":
+			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0}
+		},
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
+	}
+	var material_toward: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2.RIGHT * 100.0, 1.0
+	)
+	var material_away: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2.LEFT * 100.0, 1.0
+	)
+	observation.physics_frame += 1
+	material = material.duplicate(true)
+	material.relative_position = Vector2(900.0, 0.0)
+	observation.remembered_entities = [material]
+	var farther_material: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2.RIGHT * 100.0, 1.0
+	)
+	_expect(
+		(
+			material_toward.material_opportunity > 0.0
+			and material_away.material_opportunity < 0.0
+			and farther_material.material_opportunity > 0.0
+			and farther_material.material_opportunity < material_toward.material_opportunity
+		),
+		(
+			"reachable remembered pickups must reward approach, penalize retreat, and expose "
+			+ "less marginal value as distance grows beyond the local navigation horizon"
+		)
+	)
+	observation.physics_frame += 1
+	observation.wave_state.seconds_remaining = 2.0
+	var unreachable_spatial: Reference = spatial_script.new()
+	var unreachable_material: Dictionary = unreachable_spatial.point_value_delta(
+		observation, context, Vector2.RIGHT * 100.0, 1.0
+	)
+	_expect(
+		(
+			abs(unreachable_material.material_opportunity) < 0.0001
+			and unreachable_spatial.candidate_directions(observation, context).empty()
+		),
+		"a pickup that cannot be reached before cleanup must add neither value nor search work"
+	)
+
+	observation.physics_frame += 1
+	observation.wave_state.seconds_remaining = 10.0
+	observation.player_state.weapons = [
+		{"slot": 0, "attack_model": _fixtures.weapon_attack_model()}
+	]
+	observation.remembered_entities = [
+		{
+			"memory_record_id": 1,
+			"kind": "tree",
+			"relative_position": Vector2(900.0, 0.0),
+			"visual_radius": 10.0,
+			"existence_confidence": 1.0,
+			"destructible_profile": _fixtures.tree_destructible_profile(1.0, 10.0, 8.0),
+		}
+	]
+	context.enemy_completion_value_ledger = _completion_value_ledger({})
+	context.state_factors.continuation_horizon_seconds = 1.0
+	context.wave_completion_forecast = _fixtures.wave_completion_forecast({}, {1: 1.0})
+	var distant_tree: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2.RIGHT * 100.0, 1.0
+	)
+	var retreating_from_tree: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2.LEFT * 100.0, 1.0
+	)
+	_expect(
+		(
+			distant_tree.weapon_completion_opportunity > 0.0
+			and retreating_from_tree.weapon_completion_opportunity < 0.0
+		),
+		(
+			"a completable target beyond local weapon setup must reward approach and penalize "
+			+ "retreat through the same deadline-limited access field"
 		)
 	)
 

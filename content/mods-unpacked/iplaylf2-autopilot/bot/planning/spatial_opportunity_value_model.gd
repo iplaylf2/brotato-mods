@@ -41,6 +41,7 @@ var _prepared_physics_frame := -1
 var _prepared_geometry := {}
 var _prepared_pickups := []
 var _prepared_candidate_entries := []
+var _prepared_engagement_access := []
 var _stationary_weapon_value_by_time := {}
 
 
@@ -66,17 +67,7 @@ func _evaluate_point(
 	var seconds_until_wave_end: float = max(
 		0.0, observation.wave_state.seconds_remaining - forecast_seconds
 	)
-	var continuation_horizon_seconds: float = context.state_factors.get(
-		"continuation_horizon_seconds",
-		(
-			_prepared_geometry.opportunity_reach_distance
-			/ max(1.0, observation.player_state.runtime_stats.move_speed)
-		)
-	)
-	var deadline_reach_distance: float = (
-		observation.player_state.runtime_stats.move_speed
-		* min(seconds_until_wave_end, continuation_horizon_seconds)
-	)
+	var deadline_reach_distance: float = _prepared_geometry.command_speed * seconds_until_wave_end
 	for entry in _prepared_pickups:
 		var pickup: Dictionary = entry.pickup
 		var stationary_gap: float = _pickup_collection_geometry_model.collection_gap_at(
@@ -87,7 +78,12 @@ func _evaluate_point(
 		)
 		var contribution: float = (
 			entry.value
-			* _deadline_accessibility_delta(stationary_gap, candidate_gap, deadline_reach_distance)
+			* _deadline_accessibility_delta(
+				stationary_gap,
+				candidate_gap,
+				deadline_reach_distance,
+				_prepared_geometry.opportunity_reach_distance
+			)
 		)
 		match pickup.kind:
 			"material":
@@ -95,10 +91,13 @@ func _evaluate_point(
 			"consumable":
 				result.recovery_opportunity += contribution
 	result.weapon_completion_opportunity = (
-		_navigation_weapon_completion_value_model.value_at(
-			observation, context, player_displacement, forecast_seconds
+		_engagement_access_delta(player_displacement, forecast_seconds, deadline_reach_distance)
+		+ (
+			_navigation_weapon_completion_value_model.value_at(
+				observation, context, player_displacement, forecast_seconds
+			)
+			- _stationary_weapon_value(observation, context, forecast_seconds)
 		)
-		- _stationary_weapon_value(observation, context, forecast_seconds)
 	)
 	result.total = (
 		result.material_opportunity
@@ -151,7 +150,13 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	_prepared_geometry = _movement_geometry.derive(observation)
 	_prepared_pickups = []
 	_prepared_candidate_entries = []
+	_prepared_engagement_access = []
 	_stationary_weapon_value_by_time = {}
+	var deadline_reach_distance: float = (
+		_prepared_geometry.command_speed
+		* max(0.0, float(observation.wave_state.seconds_remaining))
+	)
+	var characteristic_reach_distance: float = _prepared_geometry.opportunity_reach_distance
 	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
 	for pickup in observation.get("remembered_entities", []):
 		if pickup.kind == "tree":
@@ -172,23 +177,78 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 			"value": value,
 		}
 		_prepared_pickups.push_back(pickup_entry)
-		_prepared_candidate_entries.push_back(
-			{
-				"position": pickup.relative_position,
-				"value": value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance),
-			}
+		_append_prepared_candidate(
+			pickup.relative_position,
+			(
+				value
+				* _deadline_accessibility(
+					gap, deadline_reach_distance, characteristic_reach_distance
+				)
+			)
 		)
+	var maximum_targeting_distance := _maximum_weapon_targeting_distance(observation)
+	if maximum_targeting_distance <= 0.0:
+		return
 	for target in _engagement_target_projector.project_navigation_targets(observation, context):
-		var value: float = target.value.net_completion_value * target.confidence
+		var value: float = (
+			target.value.net_completion_value
+			* target.confidence
+			* context.wave_completion_forecast.get("completion_fraction_by_target_id", {}).get(
+				target.target_id, 0.0
+			)
+		)
 		if value <= 0.0:
 			continue
-		var gap: float = target.relative_position.length()
-		_prepared_candidate_entries.push_back(
-			{
-				"position": target.relative_position,
-				"value": value * _accessibility(gap, _prepared_geometry.opportunity_reach_distance),
-			}
+		var gap: float = max(0.0, target.relative_position.length() - maximum_targeting_distance)
+		var access_potential: float = _deadline_accessibility(
+			gap, deadline_reach_distance, characteristic_reach_distance
 		)
+		_append_prepared_candidate(target.relative_position, value * access_potential)
+		if gap > 0.0 and access_potential > 0.0:
+			_prepared_engagement_access.push_back(
+				{
+					"target": target,
+					"value": value,
+					"targeting_distance": maximum_targeting_distance,
+				}
+			)
+
+
+func _engagement_access_delta(
+	player_displacement: Vector2, forecast_seconds: float, deadline_reach_distance: float
+) -> float:
+	var result := 0.0
+	for entry in _prepared_engagement_access:
+		var target: Dictionary = entry.target
+		var stationary_position: Vector2 = _enemy_motion_predictor.predict_position(
+			target.motion_track, forecast_seconds, Vector2.ZERO
+		)
+		var candidate_position: Vector2 = _enemy_motion_predictor.predict_position(
+			target.motion_track, forecast_seconds, player_displacement
+		)
+		var stationary_gap: float = max(
+			0.0, stationary_position.length() - entry.targeting_distance
+		)
+		var candidate_gap: float = max(
+			0.0, (candidate_position - player_displacement).length() - entry.targeting_distance
+		)
+		result += (
+			entry.value
+			* _deadline_accessibility_delta(
+				stationary_gap,
+				candidate_gap,
+				deadline_reach_distance,
+				_prepared_geometry.opportunity_reach_distance
+			)
+		)
+	return result
+
+
+func _maximum_weapon_targeting_distance(observation: Dictionary) -> float:
+	var result := 0.0
+	for weapon in observation.player_state.weapons:
+		result = max(result, float(weapon.attack_model.delivery.maximum_targeting_distance))
+	return result
 
 
 func _stationary_weapon_value(
@@ -228,25 +288,38 @@ func _pickup_collection_radius(observation: Dictionary) -> float:
 	return observation.player_state.pickup.collection_radius
 
 
-func _accessibility(gap: float, reach_distance: float) -> float:
-	return exp(-gap / reach_distance)
+func _append_prepared_candidate(position: Vector2, value: float) -> void:
+	if value <= 0.0:
+		return
+	_prepared_candidate_entries.push_back({"position": position, "value": value})
 
 
 func _deadline_accessibility_delta(
-	stationary_gap: float, candidate_gap: float, deadline_reach_distance: float
+	stationary_gap: float,
+	candidate_gap: float,
+	deadline_reach_distance: float,
+	characteristic_reach_distance: float
 ) -> float:
 	return (
-		_deadline_accessibility(candidate_gap, deadline_reach_distance)
-		- _deadline_accessibility(stationary_gap, deadline_reach_distance)
+		_deadline_accessibility(
+			candidate_gap, deadline_reach_distance, characteristic_reach_distance
+		)
+		- _deadline_accessibility(
+			stationary_gap, deadline_reach_distance, characteristic_reach_distance
+		)
 	)
 
 
-func _deadline_accessibility(gap: float, deadline_reach_distance: float) -> float:
+func _deadline_accessibility(
+	gap: float, deadline_reach_distance: float, characteristic_reach_distance: float
+) -> float:
 	if gap <= 0.0:
 		return 1.0
 	if deadline_reach_distance <= 0.0 or gap >= deadline_reach_distance:
 		return 0.0
-	return 1.0 - gap / deadline_reach_distance
+	var scale := max(1.0, characteristic_reach_distance)
+	var deadline_floor := exp(-deadline_reach_distance / scale)
+	return (exp(-gap / scale) - deadline_floor) / max(0.0001, 1.0 - deadline_floor)
 
 
 func _append_candidate(candidates: Array, displacement: Vector2, value: float) -> void:

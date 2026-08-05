@@ -10,8 +10,12 @@ const MovementTimingModel := preload(
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
 )
+const ProjectileMotionPredictor := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
+)
 
 var _movement_geometry: Reference = MovementGeometryModel.new()
+var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 
 
 func filter(observation: Dictionary) -> Dictionary:
@@ -42,23 +46,9 @@ func _projectile_can_reach_planning_region(
 	projectile: Dictionary, horizon_seconds: float, geometry: Dictionary
 ) -> bool:
 	var player_travel_bound: float = geometry.command_speed * horizon_seconds
-	var projectile_travel_bound: float = projectile.velocity.length() * horizon_seconds
-	projectile_travel_bound += (
-		projectile.acceleration.length()
-		* horizon_seconds
-		* horizon_seconds
-		* 0.5
+	var projectile_travel_bound: float = _projectile_motion_predictor.maximum_displacement(
+		projectile, horizon_seconds
 	)
-	var motion_model: Dictionary = projectile.get("motion_model", {"kind": "linear"})
-	if motion_model.kind == "sinusoidal_velocity":
-		var amplitude: Vector2 = motion_model.velocity_amplitude
-		var angular_velocity: Vector2 = motion_model.angular_velocity
-		projectile_travel_bound += _maximum_integrated_axis_excursion(
-			amplitude.x, angular_velocity.x, horizon_seconds
-		)
-		projectile_travel_bound += _maximum_integrated_axis_excursion(
-			amplitude.y, angular_velocity.y, horizon_seconds
-		)
 	var interaction_radius: float = (
 		geometry.player_radius
 		+ projectile.contact_radius
@@ -68,11 +58,3 @@ func _projectile_can_reach_planning_region(
 		projectile.relative_position.length()
 		<= player_travel_bound + projectile_travel_bound + interaction_radius
 	)
-
-
-func _maximum_integrated_axis_excursion(
-	amplitude: float, angular_velocity: float, horizon_seconds: float
-) -> float:
-	if abs(angular_velocity) <= 0.0001:
-		return abs(amplitude) * horizon_seconds
-	return min(abs(amplitude) * horizon_seconds, 2.0 * abs(amplitude / angular_velocity))

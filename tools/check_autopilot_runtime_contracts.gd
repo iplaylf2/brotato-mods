@@ -30,9 +30,83 @@ func _init() -> void:
 	_check_persistent_enemy_health_observation()
 	_check_enemy_death_product_matching()
 	_check_collision_shape_radius_adapter()
+	_check_projectile_motion_bound()
+	_check_action_forecast_domain()
 	_check_immediate_hit_reserve_reachability()
 	_check_terminal_health_reserve_action_selection()
 	quit(1 if _failed else 0)
+
+
+func _check_action_forecast_domain() -> void:
+	var observation: Dictionary = _fixtures.planning_observation(
+		[_fixtures.enemy_track(Vector2(230.0, 0.0), Vector2.UP * 370.0, true)]
+	)
+	observation.player_state.collision_radius = 36.0
+	observation.player_state.runtime_stats.move_speed = 445.0
+	observation.player_state.movement.input_vector = Vector2.RIGHT
+	var generator: Reference = load(PLANNING_PATH + "movement_action_generator.gd").new()
+	var actions: Array = generator.generate(observation, {"movement_preference": Vector2.ZERO})
+	var timing: Dictionary = load(PLANNING_PATH + "movement_timing_model.gd").derive(observation)
+	_expect(
+		_all_actions_share_forecast(actions, timing.maximum_local_horizon_seconds),
+		(
+			"a reachable pursuer must keep candidate comparisons on the shared extended "
+			+ "horizon even when its current heading does not intersect the previous input"
+		)
+	)
+	observation.physics_frame += 1
+	observation.enemy_tracks[0].relative_position = Vector2(2000.0, 0.0)
+	actions = generator.generate(observation, {"movement_preference": Vector2.ZERO})
+	_expect(
+		_all_actions_share_forecast(actions, timing.default_local_horizon_seconds),
+		"a threat outside the local reachable domain must not expand action-search work"
+	)
+	observation.physics_frame += 1
+	observation.enemy_tracks[0].relative_position = Vector2(230.0, 0.0)
+	observation.wave_state.seconds_remaining = 0.25
+	actions = generator.generate(observation, {"movement_preference": Vector2.ZERO})
+	_expect(
+		_all_actions_share_forecast(actions, 0.25),
+		"the shared threat horizon must remain clipped to observable time before cleanup"
+	)
+
+
+func _all_actions_share_forecast(actions: Array, expected_seconds: float) -> bool:
+	for action in actions:
+		if not is_equal_approx(action.forecast_seconds, expected_seconds):
+			return false
+	return not actions.empty()
+
+
+func _check_projectile_motion_bound() -> void:
+	var predictor: Reference = load(PLANNING_PATH + "motion/projectile_motion_predictor.gd").new()
+	var projectile := {
+		"relative_position": Vector2(30.0, -20.0),
+		"velocity": Vector2(40.0, -10.0),
+		"acceleration": Vector2.ZERO,
+		"motion_confidence": 1.0,
+		"motion_model":
+		{
+			"kind": "sinusoidal_velocity",
+			"phase": Vector2(0.7, -0.3),
+			"angular_velocity": Vector2(8.0, 3.0),
+			"velocity_amplitude": Vector2(120.0, 50.0),
+		},
+	}
+	var origin: Vector2 = projectile.relative_position
+	var bound_contains_samples := true
+	for sample_index in range(1, 17):
+		var sample_time := float(sample_index) / 16.0
+		var displacement: float = predictor.predict_position(projectile, sample_time).distance_to(
+			origin
+		)
+		if displacement > predictor.maximum_displacement(projectile, sample_time) + 0.0001:
+			bound_contains_samples = false
+			break
+	_expect(
+		bound_contains_samples,
+		"the shared projectile displacement bound must contain resolved curved motion"
+	)
 
 
 func _check_collision_shape_radius_adapter() -> void:

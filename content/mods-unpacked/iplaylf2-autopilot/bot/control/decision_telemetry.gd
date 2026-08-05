@@ -200,6 +200,7 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 	# serializing attack configuration and rule evidence on the main thread.
 	var projectile_attack: Dictionary = profile.get("projectile_attack", {})
 	var charge_attack: Dictionary = profile.get("charge_attack", {})
+	var target_response: Dictionary = profile.get("target_position_response", {})
 	return {
 		"durability": profile.get("durability", {}),
 		"contact_damage": profile.get("contact_damage", 0.0),
@@ -217,6 +218,16 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 		{
 			"active": charge_attack.get("active", false),
 			"confidence": charge_attack.get("confidence", 0.0),
+		},
+		"target_position_response":
+		{
+			"responds_to_target_position":
+			target_response.get("responds_to_target_position", false),
+			"preferred_distance": target_response.get("preferred_distance", 0.0),
+			"moves_away_inside_preferred_distance":
+			target_response.get("moves_away_inside_preferred_distance", false),
+			"movement_speed": target_response.get("movement_speed", 0.0),
+			"confidence": target_response.get("confidence", 0.0),
 		},
 		"battlefield_effects": profile.get("battlefield_effects", {}),
 		"removal_effects": profile.get("removal_effects", {}),
