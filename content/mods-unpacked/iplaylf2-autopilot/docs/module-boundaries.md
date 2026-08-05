@@ -55,6 +55,9 @@
   不可见实体或未来随机结果。
 - `bot/knowledge/neutrals/neutral_mechanic_compiler.gd` 拥有可见树木的稳定生命、命中上限与掉落画像；
   `bot/knowledge/projectiles/projectile_motion_compiler.gd` 把可见投射物的稳定运动配置编译为解析运动模型。
+- `bot/knowledge/collision_shape_radius_adapter.gd` 把原版圆形和矩形 `CollisionShape2D` 及其完整世界变换
+  适配为规范碰撞半径。它提供以实体或碰撞节点为中心的两种包围圆；观察器选择中心并形成当帧测量，
+  机制编译器不得重复解释形状。
 - `bot/knowledge/weapons/weapon_mechanic_compiler.gd` 拥有目标版本武器状态与资源到 `attack_model` 的映射；
   `bot/knowledge/stats/stat_metadata.gd` 提供规范属性名和目标版本一级升级增量；
   `bot/knowledge/stats/stat_opportunity_profile_adapter.gd` 适配属性的目标版本机会曲线。
@@ -72,7 +75,8 @@
 - `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量；
   `bot/observation/enemy_attack_timing_observer.gd` 只拥有当前可见敌人的下一轮齐射与冲撞时间窗；
   `bot/observation/visible_world_observer.gd` 单次扫描原版统一敌人域，观察普通敌人、精英与 Boss 的视觉状态，
-  并单独输出原版持续血条提供的视野外存活和当前生命，以及当前敌方投射物和友方角色的碰撞形状。
+  并单独输出原版持续血条提供的视野外存活和当前生命；对敌方投射物，它以实际命中形状中心形成位置测量，
+  再通过碰撞形状适配器取得规范半径。
 - 观察层只输出语义画像。它不读取规划结果，规划层也不读取观察层的场景节点或内部实现细节。
 
 ### 运动、碰撞与生命

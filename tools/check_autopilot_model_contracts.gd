@@ -17,6 +17,7 @@ func _init() -> void:
 		return
 	_check_target_response()
 	_check_swept_enemy_contact()
+	_check_projectile_hitbox_ttc()
 	_check_navigation_horizon_consistency()
 	_check_navigation_opportunity_retention()
 	_check_pickup_interaction_geometry()
@@ -121,6 +122,45 @@ func _check_swept_enemy_contact() -> void:
 	_expect(
 		is_equal_approx(swarm_impact.expected_health_loss, single_impact.expected_health_loss),
 		"simultaneous swept contacts must remain one complete hit under vanilla iframes"
+	)
+
+
+func _check_projectile_hitbox_ttc() -> void:
+	var collision_model: Reference = load(PLANNING_PATH + "velocity_obstacle_collision_model.gd").new()
+	var observation: Dictionary = _planning_observation([])
+	observation.player_state.collision_radius = 24.0
+	observation.player_state.runtime_stats.move_speed = 481.0
+	observation.visible_world.enemy_projectiles = [
+		{
+			"relative_position": Vector2(30.0, -100.0),
+			"velocity": Vector2.ZERO,
+			"acceleration": Vector2.ZERO,
+			"motion_confidence": 1.0,
+			"motion_model": {"kind": "linear"},
+			"contact_radius": 33.0,
+			"contact_damage": 13.0,
+		},
+	]
+	var action := {
+		"movement": Vector2.UP,
+		"forecast_seconds": 0.4,
+		"samples":
+		[
+			{"time": 0.1, "displacement": Vector2(0.0, -48.1), "movement": Vector2.UP},
+			{"time": 0.4, "displacement": Vector2(0.0, -192.4), "movement": Vector2.UP},
+		],
+	}
+	var outcome: Dictionary = collision_model.evaluate(observation, action, 0.1)
+	_expect(
+		outcome.minimum_time_to_collision < action.forecast_seconds,
+		"movement into an observed hostile hitbox must retain its finite collision time"
+	)
+	_expect(
+		(
+			outcome.projectile_velocity_obstacle_risk > 0.0
+			and outcome.forecast_maximum_velocity_obstacle_raw_damage == 13.0
+		),
+		"projectile TTC evidence must preserve both contact risk and hostile damage"
 	)
 
 

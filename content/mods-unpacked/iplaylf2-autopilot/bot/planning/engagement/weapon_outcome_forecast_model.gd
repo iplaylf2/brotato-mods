@@ -414,6 +414,11 @@ func _additional_direct_target_mass(
 	var result := {"enemy": 0.0, "tree": 0.0, "total": 0.0}
 	for primary_index in covered_samples.size():
 		var primary: Dictionary = covered_samples[primary_index]
+		# Fully available nearer targets reduce every later nearest-target selection
+		# weight to zero. Those targets cannot contribute to the expectation, so do
+		# not traverse their O(target_count) direct-path intersections.
+		if primary.selection_weight <= 0.0:
+			continue
 		var aim_position: Vector2 = primary.sample.relative_position
 		if aim_position.length_squared() <= 0.0:
 			continue

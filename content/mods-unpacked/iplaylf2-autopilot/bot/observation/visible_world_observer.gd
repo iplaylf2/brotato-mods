@@ -33,6 +33,9 @@ const NeutralMechanicCompiler := preload(
 const ProjectileMotionCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/projectiles/projectile_motion_compiler.gd"
 )
+const CollisionShapeRadiusAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/collision_shape_radius_adapter.gd"
+)
 
 var _main: Node
 var _players: Array
@@ -45,6 +48,7 @@ var _consumable_profile_adapter: Reference = ConsumableProfileAdapter.new()
 var _material_quantity_estimator: Reference = MaterialQuantityEstimator.new()
 var _neutral_mechanic_compiler: Reference = NeutralMechanicCompiler.new()
 var _projectile_motion_compiler: Reference = ProjectileMotionCompiler.new()
+var _collision_shape_radius_adapter: Reference = CollisionShapeRadiusAdapter.new()
 
 
 func _init(main: Node, players: Array) -> void:
@@ -190,13 +194,17 @@ func _append_visible_projectiles(
 	for child in parent.get_children():
 		if child is EnemyProjectile and _is_node_visible(child, visible_rect):
 			var observation := _make_entity_observation(child, origin, "enemy_projectile")
+			var collision: CollisionShape2D = child.get_node("Hitbox/Collision")
 			observation._source = child
-			observation._world_position = child.global_position
+			observation.relative_position = collision.global_position - origin
+			observation._world_position = collision.global_position
 			observation.acceleration = Vector2.ZERO
 			observation.motion_confidence = 0.0
 			observation.motion_model = _projectile_motion_compiler.compile(child)
 			observation.contact_damage = max(0.0, float(child.get_damage()))
-			observation.contact_radius = _circle_collision_radius(child, "Hitbox/Collision")
+			observation.contact_radius = (_collision_shape_radius_adapter.adapt_collision_centered_radius(
+				collision
+			))
 			observations.push_back(observation)
 		_append_visible_projectiles(observations, child, origin, visible_rect)
 
@@ -290,7 +298,9 @@ func _append_allied_agent(
 	observation.owner_player_index = owner_player_index
 	observation.relationship = relationship
 	observation.influence = _ally_mechanic_compiler.compile(agent, kind)
-	observation.collision_radius = _circle_collision_radius(agent, "Collision")
+	observation.collision_radius = (_collision_shape_radius_adapter.adapt_owner_centered_radius(
+		agent, "Collision"
+	))
 	if kind == "player":
 		observation.pickup = _get_player_pickup_geometry(agent)
 		observation.move_speed = agent.get_move_speed()
@@ -437,16 +447,6 @@ func _get_velocity(node: Node2D) -> Vector2:
 	if "velocity" in node:
 		return node.velocity
 	return Vector2.ZERO
-
-
-func _circle_collision_radius(owner: Node, path: String) -> float:
-	var collision: Node = owner.get_node(path)
-	assert(collision is CollisionShape2D)
-	assert(collision.shape is CircleShape2D)
-	return (
-		float(collision.shape.radius)
-		* max(abs(collision.global_scale.x), abs(collision.global_scale.y))
-	)
 
 
 func _get_visual_radius(node: Node2D) -> float:

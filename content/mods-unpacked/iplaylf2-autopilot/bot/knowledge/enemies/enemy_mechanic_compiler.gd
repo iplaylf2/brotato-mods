@@ -10,9 +10,13 @@ const DEATH_SPAWN_COUNT_BY_ARCHETYPE := {"spawner": 3.0, "bloated_spawner": 5.0}
 const EnemyMotionMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_motion_mechanic_compiler.gd"
 )
+const CollisionShapeRadiusAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/collision_shape_radius_adapter.gd"
+)
 
 var _mechanics_by_archetype := {}
 var _motion_mechanic_compiler: Reference = EnemyMotionMechanicCompiler.new()
+var _collision_shape_radius_adapter: Reference = CollisionShapeRadiusAdapter.new()
 
 
 func compile(enemy: Node) -> Dictionary:
@@ -42,21 +46,12 @@ func compile(enemy: Node) -> Dictionary:
 		# Maximum health is the durability prior.
 		"durability": {"maximum_health": _get_maximum_health(enemy)},
 		"contact_damage": _get_contact_damage(enemy),
-		"contact_radius": _circle_collision_radius(enemy, "Hitbox/Collision"),
+		"contact_radius":
+		_collision_shape_radius_adapter.adapt_owner_centered_radius(enemy, "Hitbox/Collision"),
 		"kill_rewards": _compile_kill_rewards(enemy, archetype),
 		"battlefield_effects": mechanics.battlefield_effects,
 		"removal_effects": mechanics.removal_effects,
 	}
-
-
-func _circle_collision_radius(owner: Node, path: String) -> float:
-	var collision: Node = owner.get_node(path)
-	assert(collision is CollisionShape2D)
-	assert(collision.shape is CircleShape2D)
-	return (
-		float(collision.shape.radius)
-		* max(abs(collision.global_scale.x), abs(collision.global_scale.y))
-	)
 
 
 func _compile_material_assimilation(enemy: Node) -> Dictionary:

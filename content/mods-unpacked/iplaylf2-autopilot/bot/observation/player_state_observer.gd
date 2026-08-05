@@ -18,11 +18,15 @@ const ItemBoxItemValueProfileAdapter := preload(
 const WeaponMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/weapons/weapon_mechanic_compiler.gd"
 )
+const CollisionShapeRadiusAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/collision_shape_radius_adapter.gd"
+)
 
 var _player_effect_adapter: Reference = PlayerEffectAdapter.new()
 var _stat_opportunity_profile_adapter: Reference = StatOpportunityProfileAdapter.new()
 var _item_box_item_value_profile_adapter: Reference = ItemBoxItemValueProfileAdapter.new()
 var _weapon_mechanic_compiler: Reference = WeaponMechanicCompiler.new()
+var _collision_shape_radius_adapter: Reference = CollisionShapeRadiusAdapter.new()
 
 
 func observe(player_index: int, player: Node) -> Dictionary:
@@ -99,12 +103,7 @@ func _get_runtime_stats(player: Node) -> Dictionary:
 
 
 func _get_collision_radius(player: Node) -> float:
-	var collision_shape: CollisionShape2D = player.get_node("Collision")
-	assert(collision_shape.shape is CircleShape2D)
-	return (
-		collision_shape.shape.radius
-		* max(abs(collision_shape.global_scale.x), abs(collision_shape.global_scale.y))
-	)
+	return _collision_shape_radius_adapter.adapt_owner_centered_radius(player, "Collision")
 
 
 func _get_movement_state(player: Node) -> Dictionary:

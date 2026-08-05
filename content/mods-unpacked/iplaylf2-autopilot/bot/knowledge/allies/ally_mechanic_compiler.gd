@@ -3,6 +3,12 @@ extends Reference
 # Describes visible allied agents through capabilities, not content IDs. Current
 # targets, cooldowns, health, and other transient private state are not read.
 
+const CollisionShapeRadiusAdapter := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/collision_shape_radius_adapter.gd"
+)
+
+var _collision_shape_radius_adapter: Reference = CollisionShapeRadiusAdapter.new()
+
 
 func compile(agent: Node, kind: String) -> Dictionary:
 	var profile := {
@@ -105,12 +111,9 @@ func _get_collision_radius(agent: Node, path: String) -> float:
 	if not agent.has_node(path):
 		return 0.0
 	var collision: Node = agent.get_node(path)
-	if not collision is CollisionShape2D or not collision.shape is CircleShape2D:
+	if not collision is CollisionShape2D or collision.shape == null:
 		return 0.0
-	return (
-		collision.shape.radius
-		* max(abs(collision.global_scale.x), abs(collision.global_scale.y))
-	)
+	return _collision_shape_radius_adapter.adapt_owner_centered_radius(agent, path)
 
 
 func _empty_zone() -> Dictionary:

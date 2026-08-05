@@ -1,6 +1,7 @@
 extends SceneTree
 
 const PLANNING_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/planning/"
+const KNOWLEDGE_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/"
 var _failed := false
 var _fixtures: Reference
 var _observed_world_memory_script: Script
@@ -28,9 +29,46 @@ func _init() -> void:
 	_check_enemy_negative_visibility_evidence()
 	_check_persistent_enemy_health_observation()
 	_check_enemy_death_product_matching()
+	_check_collision_shape_radius_adapter()
 	_check_immediate_hit_reserve_reachability()
 	_check_terminal_health_reserve_action_selection()
 	quit(1 if _failed else 0)
+
+
+func _check_collision_shape_radius_adapter() -> void:
+	var adapter: Reference = load(KNOWLEDGE_PATH + "collision_shape_radius_adapter.gd").new()
+	var owner := Node2D.new()
+	get_root().add_child(owner)
+	var collision := CollisionShape2D.new()
+	collision.name = "Collision"
+	collision.position = Vector2(10.0, 0.0)
+	collision.scale = Vector2(2.0, 1.0)
+	var rectangle := RectangleShape2D.new()
+	rectangle.extents = Vector2(16.0, 9.0)
+	collision.shape = rectangle
+	owner.add_child(collision)
+	_expect(
+		is_equal_approx(
+			adapter.adapt_owner_centered_radius(owner, "Collision"),
+			10.0 + Vector2(32.0, 9.0).length()
+		),
+		"a rectangular hostile projectile must expose a finite enclosing collision radius"
+	)
+	_expect(
+		is_equal_approx(
+			adapter.adapt_collision_centered_radius(collision), Vector2(32.0, 9.0).length()
+		),
+		"projectile collision support must be centered on its moving hitbox"
+	)
+	var circle := CircleShape2D.new()
+	circle.radius = 10.0
+	collision.position = Vector2(5.0, 0.0)
+	collision.shape = circle
+	_expect(
+		is_equal_approx(adapter.adapt_owner_centered_radius(owner, "Collision"), 25.0),
+		"circle observations must retain their scaled support without rectangle-corner inflation"
+	)
+	owner.free()
 
 
 func _check_item_box_tier_expectation() -> void:
