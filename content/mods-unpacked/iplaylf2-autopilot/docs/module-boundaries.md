@@ -43,7 +43,7 @@
 - `pickups` 拥有“已观察拾取物运动与玩家未来状态或路径 → 收集圈间隙或连续收集事件”的协议，供导航
   机会、直接材料收益与拾取事件规则共同消费；
 - `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、动作条件
-  武器结果预测与容量守恒，以及候选轨迹采样状态的导航武器完成价值。
+  武器结果预测与容量守恒、规则事件完成价值，以及候选轨迹采样状态的导航武器完成价值。
 
 根目录保留跨域协调者，以及尚未形成独立组件族的小型共享模型；例如对局延续价值横跨材料、道具、武器
 和死亡后果，不属于任一单独领域。不能只为单个文件建立目录。
@@ -101,12 +101,12 @@
   观测运动外推；`bot/planning/motion/projectile_motion_predictor.gd` 解析积分已形成的确定性弹道，并统一
   提供该弹道的保守位移上界，供规划域过滤与动作时域扩展共同消费；
   `bot/planning/motion/enemy_reach_envelope_model.gd` 派生敌人的最大位移和接触支撑半径；
-  `bot/planning/motion/maneuver_space_model.gd` 衡量可达敌人圆盘遮蔽的下一控制期角向机动空间，不选择路线。
+  `bot/planning/motion/maneuver_space_model.gd` 计算可达敌人圆盘与已知地图边界遮蔽角区间的并集，不选择路线。
 - `bot/planning/local_enemy_interaction_projector.gd` 结合敌人可达包络、压力作用范围与武器锁定距离，构造
   动作预测的敌人空间粗筛。完整观察仍归导航与价值上下文所有。
 - `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、普通敌人与投射物的位置域碰撞证据、确定性
-  目标定向齐射在弹体生成前的未来射击走廊、边缘压力下的敌对暴露耦合、战斗支援伤害与消耗、友方减压、
-  治疗和挡弹时序；
+  目标定向齐射在弹体生成前的未来射击走廊、敌人与地图边界共同形成的角向机动约束、战斗支援伤害与
+  消耗、友方减压、治疗和挡弹时序；
   `bot/planning/collision/velocity_obstacle_collision_model.gd` 拥有投射物与队友 TTC，以及已知冲撞锁定
   走廊的速度空间交会证据；
   `bot/planning/collision/contact_opportunity_projector.gd` 将几何模型已判定的交会及其来源映射为预测接触机会契约，
@@ -125,8 +125,8 @@
 
 ### 机会、规则与动作结果
 
-- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会、可见生成警告的未来事件机会及
-  导航武器完成价值在未来玩家状态相对同刻零输入反事实的差，统一拥有截止前的访问势能与不可达机会
+- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会、拾取规则完成机会、可见生成警告
+  的未来事件机会及导航武器完成价值在未来玩家状态相对同刻零输入反事实的差，统一拥有截止前的访问势能与不可达机会
   剪枝，并按价值上界提出预算内搜索方向；它不猜测警告结果，也不按目标身份解释自动选靶。
 - `bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，沿每个可达候选
   轨迹采样时空价值场，并只公开经过完整轨迹评价后胜出的导航方向。
@@ -144,6 +144,9 @@
   玩家的一击完成状态统一解释为有效攻击工作量，供波次容量与局部武器结果共享。
 - `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
   `bot/planning/enemy_health_model.gd` 把敌人最后可见生命测量与稳定最大生命先验统一解析为剩余生命。
+- `bot/planning/engagement/rule_event_value_model.gd` 统一把拾取等规则事件的空间伤害与状态转换换算为
+  有限敌人完成价值，供局部动作结果与导航拾取机会共享；它不发现事件、识别角色、估计跨时刻保留价值
+  或选择路线。
 - `bot/planning/engagement/navigation_weapon_completion_value_model.gd` 按候选轨迹采样状态的预计几何和波末
   截止统一计算最近主目标与贯穿、弹射、范围机制的后续完成价值，并以同一物理帧缓存目标投影。
 - `bot/planning/pickups/pickup_collection_geometry_model.gd` 统一拥有收集圈边界、未来点位间隙，以及移动
@@ -191,9 +194,9 @@
   它只读取公共观察，或接收控制器已经取得的观察与规划结果，不另建场景读取入口。
 - `bot/sampling/battle_sample_writer.gd` 拥有波次与玩家固定上下文提取、独占写入线程、JSON Lines 编码、
   画像压缩、刷新和落盘策略。存储失败时，该边界停止接受记录并保留可回收的线程生命周期，不把记录
-  失败提升为移动控制失败。它省略重复的机制配置与规则证据，但保留解释路径风险所需的攻击因果字段和
-  当前攻击时间窗；采样压缩只改变持久化投影，不改变规划输入或字段语义。`MovementPlanner` 仍独占规划
-  结果与诊断语义。
+  失败提升为移动控制失败。它省略敌人轨迹中重复的稳定机制画像与行为证据，但保留每条样本当时的玩家
+  效果规则，以及解释路径风险所需的攻击因果字段和当前攻击时间窗；采样压缩只改变持久化投影，不改变
+  规划输入或字段语义。`MovementPlanner` 仍独占规划结果与诊断语义。
 
 ## 组件角色命名
 

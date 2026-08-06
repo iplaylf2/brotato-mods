@@ -96,4 +96,4 @@ README 只提供使用概览。维护时按任务进入对应文档：
 - [战斗采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
 - [原版敌人、树木与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人运动、攻击与死亡
   奖励、树木完成机制及投射物入口；
-- [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。
+- [原版玩家效果与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。

@@ -19,6 +19,9 @@ const NavigationWeaponCompletionValueModel := preload(
 		+ "navigation_weapon_completion_value_model.gd"
 	)
 )
+const RuleEventValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/" + "rule_event_value_model.gd"
+)
 const PickupCollectionGeometryModel := preload(
 	(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/pickups/"
@@ -34,6 +37,7 @@ const EnemyMotionPredictor := preload(
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _navigation_weapon_completion_value_model := NavigationWeaponCompletionValueModel.new()
+var _rule_event_value_model: Reference = RuleEventValueModel.new()
 var _pickup_collection_geometry_model: Reference = PickupCollectionGeometryModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
@@ -46,9 +50,14 @@ var _prepared_engagement_access := []
 var _stationary_weapon_value_by_time := {}
 
 
+func _init() -> void:
+	_rule_event_value_model.set_enemy_motion_predictor(_enemy_motion_predictor)
+
+
 func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_enemy_motion_predictor = predictor
 	_navigation_weapon_completion_value_model.set_enemy_motion_predictor(predictor)
+	_rule_event_value_model.set_enemy_motion_predictor(predictor)
 
 
 func _evaluate_point(
@@ -63,6 +72,7 @@ func _evaluate_point(
 		"material_opportunity": 0.0,
 		"recovery_opportunity": 0.0,
 		"future_event_opportunity": 0.0,
+		"rule_event_opportunity": 0.0,
 		"weapon_completion_opportunity": 0.0,
 		"total": 0.0,
 	}
@@ -78,15 +88,25 @@ func _evaluate_point(
 		var candidate_gap: float = _pickup_collection_geometry_model.collection_gap_at(
 			pickup, player_displacement, forecast_seconds, _pickup_collection_radius(observation)
 		)
-		var contribution: float = (
-			entry.value
-			* _deadline_accessibility_delta(
-				stationary_gap,
-				candidate_gap,
-				deadline_reach_distance,
-				_prepared_geometry.opportunity_reach_distance
-			)
+		var stationary_accessibility := _deadline_accessibility(
+			stationary_gap, deadline_reach_distance, _prepared_geometry.opportunity_reach_distance
 		)
+		var candidate_accessibility := _deadline_accessibility(
+			candidate_gap, deadline_reach_distance, _prepared_geometry.opportunity_reach_distance
+		)
+		var contribution: float = entry.value * (candidate_accessibility - stationary_accessibility)
+		var event_name := _pickup_event_name(pickup)
+		if not event_name.empty():
+			var stationary_rule_value := _pickup_rule_event_value(
+				observation, context, pickup, Vector2.ZERO, forecast_seconds
+			)
+			var candidate_rule_value := _pickup_rule_event_value(
+				observation, context, pickup, player_displacement, forecast_seconds
+			)
+			result.rule_event_opportunity += (
+				candidate_rule_value * candidate_accessibility
+				- stationary_rule_value * stationary_accessibility
+			)
 		match pickup.kind:
 			"material":
 				result.material_opportunity += contribution
@@ -125,6 +145,7 @@ func _evaluate_point(
 		result.material_opportunity
 		+ result.recovery_opportunity
 		+ result.future_event_opportunity
+		+ result.rule_event_opportunity
 		+ result.weapon_completion_opportunity
 	)
 	return result
@@ -143,6 +164,7 @@ func point_value_delta(
 		"material_opportunity": candidate.material_opportunity,
 		"recovery_opportunity": candidate.recovery_opportunity,
 		"future_event_opportunity": candidate.future_event_opportunity,
+		"rule_event_opportunity": candidate.rule_event_opportunity,
 		"weapon_completion_opportunity": candidate.weapon_completion_opportunity,
 		"total": candidate.total,
 	}
@@ -191,21 +213,26 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		var gap: float = _pickup_initial_collection_gap(observation, pickup)
 		if gap <= 0.0:
 			continue
-		var value: float = (
+		var base_value: float = (
 			_pickup_value(observation, pickup, health_inventory_value)
 			* pickup.existence_confidence
 		)
-		if value <= 0.0:
+		var candidate_value := base_value
+		if not _pickup_event_name(pickup).empty():
+			candidate_value += _pickup_rule_event_value(
+				observation, context, pickup, Vector2.ZERO, 0.0
+			)
+		if candidate_value <= 0.0:
 			continue
 		var pickup_entry := {
 			"pickup": pickup,
-			"value": value,
+			"value": base_value,
 		}
 		_prepared_pickups.push_back(pickup_entry)
 		_append_prepared_candidate(
 			pickup.relative_position,
 			(
-				value
+				candidate_value
 				* _deadline_accessibility(
 					gap, deadline_reach_distance, characteristic_reach_distance
 				)
@@ -318,6 +345,44 @@ func _pickup_value(
 				observation, pickup, health_inventory_value
 			)
 	return 0.0
+
+
+func _pickup_rule_event_value(
+	observation: Dictionary,
+	context: Dictionary,
+	pickup: Dictionary,
+	player_displacement: Vector2,
+	forecast_seconds: float
+) -> float:
+	var event_pickup: Dictionary = pickup.duplicate(false)
+	event_pickup.relative_position = (
+		pickup.relative_position
+		+ (
+			pickup.get("velocity", Vector2.ZERO)
+			* clamp(pickup.get("motion_confidence", 1.0), 0.0, 1.0)
+			* forecast_seconds
+		)
+	)
+	return _rule_event_value_model.realized_value(
+		observation,
+		_pickup_event_name(pickup),
+		{
+			"entity": event_pickup,
+			"time": forecast_seconds,
+			"player_displacement": player_displacement,
+			"event_weight": pickup.existence_confidence,
+		},
+		context.enemy_completion_value_ledger
+	)
+
+
+func _pickup_event_name(pickup: Dictionary) -> String:
+	match pickup.kind:
+		"material":
+			return "material_pickup"
+		"consumable":
+			return "consumable_pickup"
+	return ""
 
 
 func _pickup_initial_collection_gap(observation: Dictionary, pickup: Dictionary) -> float:

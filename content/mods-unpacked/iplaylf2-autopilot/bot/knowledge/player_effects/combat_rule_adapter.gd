@@ -1,12 +1,32 @@
 extends Reference
 
-# Adapts rewards caused by combat outcomes. Current target state and completion
-# evidence remain in observation and planning; this adapter only translates the
-# player's stable on-kill rules.
+# Adapts stable player-effect fields that modify combat outcomes or rewards.
+# Current target state and completion evidence remain in observation and planning.
 
 
 func adapt(effects: Dictionary) -> Array:
 	var rules := []
+	var bonus_key: int = Keys.bonus_non_elemental_damage_against_burning_targets_hash
+	var burning_target_bonus: float = effects[bonus_key]
+	if burning_target_bonus != 0.0:
+		rules.push_back(
+			{
+				"event": "damage_dealt",
+				"condition":
+				{
+					"target_has_status": "burning",
+					"damage_kind_is_not": "damage_over_time",
+				},
+				"consequences":
+				[
+					{
+						"target": "dealt_damage",
+						"operation": "multiply",
+						"value": 1.0 + burning_target_bonus / 100.0,
+					}
+				],
+			}
+		)
 	for entry in effects[Keys.gold_on_crit_kill_hash]:
 		if entry.size() < 2:
 			continue

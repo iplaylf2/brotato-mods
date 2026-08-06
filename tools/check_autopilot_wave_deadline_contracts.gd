@@ -76,6 +76,7 @@ func _check_pickup_deadline() -> void:
 	observation.remembered_entities = [material]
 	var context := {
 		"state_factors": {"health_inventory_value": {}},
+		"enemy_completion_value_ledger": _completion_value_ledger({}),
 		"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
 	}
 	var spatial: Reference = load(PLANNING_PATH + "spatial_opportunity_value_model.gd").new()
@@ -153,6 +154,7 @@ func _check_long_range_access_gradients() -> void:
 			"health_inventory_value":
 			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0}
 		},
+		"enemy_completion_value_ledger": _completion_value_ledger({}),
 		"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
 	}
 	var material_toward: Dictionary = spatial_script.new().point_value_delta(
@@ -267,7 +269,6 @@ func _influence_weights() -> Dictionary:
 		"spawn_warning": 1.0,
 		"maneuver_constraint": 1.0,
 		"ranged_attack": 1.0,
-		"map_edge": 1.0,
 		"allied_body_proximity": 1.0,
 		"allied_pressure_relief": 1.0,
 		"projectile_interception_relief": 1.0,

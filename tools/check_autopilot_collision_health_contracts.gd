@@ -214,7 +214,6 @@ func _influence_weights() -> Dictionary:
 		"spawn_warning": 1.0,
 		"maneuver_constraint": 1.0,
 		"ranged_attack": 1.0,
-		"map_edge": 1.0,
 		"allied_body_proximity": 1.0,
 		"allied_pressure_relief": 1.0,
 		"projectile_interception_relief": 1.0,

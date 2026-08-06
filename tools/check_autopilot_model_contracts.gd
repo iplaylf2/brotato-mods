@@ -17,6 +17,7 @@ func _init() -> void:
 		quit(1)
 		return
 	_check_target_response()
+	_check_maneuver_space_topology()
 	var collision_health_checks_path: String = tools_dir.plus_file(
 		"check_autopilot_collision_health_contracts.gd"
 	)
@@ -31,6 +32,11 @@ func _init() -> void:
 	if not load(deadline_checks_path).new().run(_fixtures):
 		_failed = true
 	_check_pickup_interaction_geometry()
+	var rule_event_checks_path: String = tools_dir.plus_file(
+		"check_autopilot_rule_event_contracts.gd"
+	)
+	if not load(rule_event_checks_path).new().run(_fixtures):
+		_failed = true
 	var material_checks_path: String = tools_dir.plus_file(
 		"check_autopilot_material_value_contracts.gd"
 	)
@@ -71,6 +77,56 @@ func _check_target_response() -> void:
 	_expect(
 		stopped_position.distance_to(Vector2(50.0, 0.0)) < 0.01,
 		"a stop-close follower must not be modeled as moving away inside its preferred distance"
+	)
+
+
+func _check_maneuver_space_topology() -> void:
+	var model: Reference = load(PLANNING_PATH + "motion/maneuver_space_model.gd").new()
+	var first: Dictionary = _enemy_track(Vector2(50.0, 0.0), Vector2.ZERO, false)
+	var second: Dictionary = first.duplicate(true)
+	second.track_id = 2
+	var geometry := {
+		"player_radius": 10.0,
+		"control_distance": 10.0,
+		"command_speed": 100.0,
+		"encounter_margin": 60.0,
+	}
+	var clustered: Dictionary = model.constraint_profile(
+		[first, second],
+		[Vector2(50.0, 0.0), Vector2(50.0, 2.0)],
+		_unknown_bounds(),
+		Vector2.ZERO,
+		geometry
+	)
+	var encircling: Dictionary = model.constraint_profile(
+		[first, second],
+		[Vector2(50.0, 0.0), Vector2(-50.0, 0.0)],
+		_unknown_bounds(),
+		Vector2.ZERO,
+		geometry
+	)
+	_expect(
+		encircling.combined > clustered.combined,
+		(
+			"maneuver pressure must measure the union of blocked headings so a clustered crowd "
+			+ "blocks fewer distinct headings than enemies on opposing sides"
+		)
+	)
+	var near_right_boundary := _unknown_bounds()
+	near_right_boundary.seen_right = true
+	near_right_boundary.distance_to_right = 12.0
+	var overlapping_boundary: Dictionary = model.constraint_profile(
+		[first], [Vector2(50.0, 0.0)], near_right_boundary, Vector2.ZERO, geometry
+	)
+	_expect(
+		(
+			overlapping_boundary.boundary > 0.0
+			and (
+				overlapping_boundary.combined
+				< overlapping_boundary.enemy + overlapping_boundary.boundary
+			)
+		),
+		"a boundary and enemy blocking the same headings must not be charged twice"
 	)
 
 
@@ -249,6 +305,7 @@ func _check_pickup_interaction_geometry() -> void:
 	}
 	var context := {
 		"state_factors": {"health_inventory_value": {}},
+		"enemy_completion_value_ledger": _completion_value_ledger({}),
 		"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
 	}
 	var value: Dictionary = spatial.point_value_delta(observation, context, Vector2(50.0, 0.0), 0.5)
@@ -279,6 +336,47 @@ func _check_pickup_interaction_geometry() -> void:
 	_expect(
 		not collection.empty() and collection.time < 0.5,
 		"pickup events must use continuous relative motion instead of static sample endpoints"
+	)
+
+	var enemy: Dictionary = _enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
+	var consumable: Dictionary = material.duplicate(true)
+	consumable.kind = "consumable"
+	consumable.erase("material_quantity")
+	consumable.pickup_profile = {"base_recovery": 0.0, "traits": ["fruit"]}
+	observation.physics_frame += 1
+	observation.enemy_tracks = [enemy]
+	observation.remembered_entities = [consumable]
+	observation.player_state.health = {"current": 20.0, "maximum": 20.0, "ratio": 1.0}
+	observation.player_state.effect_rules = [
+		{
+			"event": "consumable_pickup",
+			"condition": {},
+			"consequences":
+			[
+				{
+					"target": "enemy_health",
+					"operation": "deal_damage",
+					"amount": {"constant": 10.0, "minimum": 0.0},
+					"delivery":
+					{
+						"anchor_on_event_entity": true,
+						"radius": 75.0,
+						"capacity_per_event": INF,
+					},
+				}
+			],
+		}
+	]
+	context.enemy_completion_value_ledger = _completion_value_ledger({1: 10.0})
+	var explosive_value: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2(50.0, 0.0), 0.5
+	)
+	_expect(
+		explosive_value.rule_event_opportunity > 0.0,
+		(
+			"navigation must value the enemy completion created by a consumable pickup rule, "
+			+ "even when the consumable has no current healing value"
+		)
 	)
 
 
@@ -347,7 +445,6 @@ func _check_spatial_target_control() -> void:
 			+ "future nearest target"
 		)
 	)
-
 	observation.physics_frame += 1
 	observation.enemy_tracks = [_enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)]
 	observation.remembered_entities = [
@@ -836,7 +933,6 @@ func _influence_weights() -> Dictionary:
 		"spawn_warning": 1.0,
 		"maneuver_constraint": 1.0,
 		"ranged_attack": 1.0,
-		"map_edge": 1.0,
 		"allied_body_proximity": 1.0,
 		"allied_pressure_relief": 1.0,
 		"projectile_interception_relief": 1.0,

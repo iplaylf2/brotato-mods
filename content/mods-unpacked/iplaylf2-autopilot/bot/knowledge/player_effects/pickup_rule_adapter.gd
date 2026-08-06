@@ -109,8 +109,9 @@ func _append_material_rules(rules: Array, effects: Dictionary, player_index: int
 
 
 func _append_consumable_rules(rules: Array, effects: Dictionary, player_index: int) -> void:
-	_append_consumable_explosion_rules(
-		rules, effects[Keys.explode_on_consumable_hash], player_index
+	_append_explosion_event_rule(rules, effects[Keys.explode_on_consumable_hash], player_index)
+	_append_explosion_event_rule(
+		rules, effects[Keys.explode_on_consumable_burning_hash], player_index
 	)
 	_append_trait_stat_rules(rules, effects[Keys.stats_on_fruit_hash], "fruit")
 	_append_consumable_recovery_rule(rules, effects[Keys.consumable_heal_hash])
@@ -143,34 +144,65 @@ func _append_consumable_rules(rules: Array, effects: Dictionary, player_index: i
 		)
 
 
-func _append_consumable_explosion_rules(rules: Array, effects: Array, player_index: int) -> void:
+func _append_explosion_event_rule(rules: Array, effects: Array, player_index: int) -> void:
+	var valid_effects := []
 	for effect in effects:
-		if effect == null or effect.stats == null:
-			continue
-		var damage: float = (
+		if effect != null and effect.stats != null:
+			valid_effects.push_back(effect)
+	if valid_effects.empty():
+		return
+	# Vanilla performs one chance roll from the sum, then one explosion whose
+	# damage sums every effect and whose scene geometry comes from the first effect.
+	# Independent rules would understate stacked damage and invent partial outcomes.
+	var probability := 0.0
+	var damage := 0.0
+	for effect in valid_effects:
+		probability += effect.chance
+		damage += (
 			WeaponService.get_explosion_damage(effect.stats, player_index)
 			+ effect.get_additional_scaling_damage(player_index)
 		)
-		var size_bonus: float = Utils.get_stat(Keys.explosion_size_hash, player_index) / 100.0
-		var radius: float = max(
-			1.0, effect.stats.max_range * effect.scale * max(0.1, 1.0 + size_bonus)
-		)
-		rules.push_back(
+	var first_effect: Resource = valid_effects[0]
+	var size_bonus: float = Utils.get_stat(Keys.explosion_size_hash, player_index) / 100.0
+	var radius: float = max(
+		1.0, first_effect.stats.max_range * first_effect.scale * max(0.1, 1.0 + size_bonus)
+	)
+	var consequences := []
+	if damage > 0.0:
+		consequences.push_back(
 			{
-				"event": "consumable_pickup",
-				"condition": {},
-				"consequences":
-				[
-					{
-						"target": "enemy_health",
-						"operation": "deal_damage",
-						"amount": _damage_amount(damage),
-						"delivery": _enemy_delivery(true, radius, INF),
-						"probability": effect.chance,
-					}
-				],
+				"target": "enemy_health",
+				"operation": "deal_damage",
+				"amount": _damage_amount(damage),
+				"delivery": _enemy_delivery(true, radius, INF),
+				"probability": clamp(probability, 0.0, 1.0),
 			}
 		)
+	var burning: Resource = first_effect.burning_data if "burning_data" in first_effect else null
+	if burning != null and not burning.is_not_burning():
+		var scaled_burning: Resource = WeaponService.init_burning_data(burning, player_index)
+		consequences.push_back(
+			{
+				"target": "enemy_status",
+				"operation": "apply",
+				"status": "burning",
+				"duration_seconds": max(0.0, float(scaled_burning.duration)),
+				"damage_over_time":
+				_damage_amount(max(0.0, float(scaled_burning.damage * scaled_burning.duration))),
+				"delivery": _enemy_delivery(true, radius, INF),
+				"probability":
+				clamp(probability, 0.0, 1.0) * clamp(scaled_burning.chance, 0.0, 1.0),
+			}
+		)
+	if consequences.empty():
+		return
+	rules.push_back(
+		{
+			"event": "consumable_pickup",
+			"condition": {},
+			"consequences": consequences,
+		}
+	)
 
 
 func _append_trait_stat_rules(rules: Array, entries: Array, trait: String) -> void:

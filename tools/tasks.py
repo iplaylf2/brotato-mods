@@ -21,6 +21,9 @@ THIS_FILE = Path(__file__).relative_to(REPOSITORY)
 PKG_RESOURCES_WARNING = "ignore:pkg_resources is deprecated as an API:UserWarning"
 GODOT_VALIDATOR = REPOSITORY / "tools" / "validate_godot_scripts.gd"
 AUTOPILOT_MODEL_CHECKS = REPOSITORY / "tools" / "check_autopilot_model_contracts.gd"
+AUTOPILOT_RULE_EVENT_CHECKS = (
+    REPOSITORY / "tools" / "check_autopilot_rule_event_contracts.gd"
+)
 AUTOPILOT_RUNTIME_CHECKS = REPOSITORY / "tools" / "check_autopilot_runtime_contracts.gd"
 AUTOPILOT_MODEL_FIXTURES = REPOSITORY / "tools" / "autopilot_model_contract_fixtures.gd"
 AUTOPILOT_DEATH_REWARD_CHECKS = (
@@ -297,6 +300,7 @@ def lint_portable() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_RULE_EVENT_CHECKS),
         str(AUTOPILOT_RUNTIME_CHECKS),
         str(AUTOPILOT_DEATH_REWARD_CHECKS),
         str(AUTOPILOT_MATERIAL_VALUE_CHECKS),
@@ -313,6 +317,7 @@ def lint_portable() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_RULE_EVENT_CHECKS),
         str(AUTOPILOT_RUNTIME_CHECKS),
         str(AUTOPILOT_DEATH_REWARD_CHECKS),
         str(AUTOPILOT_MATERIAL_VALUE_CHECKS),
@@ -392,6 +397,7 @@ def format_sources() -> None:
         str(MODS),
         str(GODOT_VALIDATOR),
         str(AUTOPILOT_MODEL_CHECKS),
+        str(AUTOPILOT_RULE_EVENT_CHECKS),
         str(AUTOPILOT_RUNTIME_CHECKS),
         str(AUTOPILOT_DEATH_REWARD_CHECKS),
         str(AUTOPILOT_MATERIAL_VALUE_CHECKS),

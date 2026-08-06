@@ -21,22 +21,24 @@ const PickupCollectionGeometryModel := preload(
 		+ "pickup_collection_geometry_model.gd"
 	)
 )
-const DamageCompletionWorkModel := preload(
-	(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
-		+ "damage_completion_work_model.gd"
-	)
+const RuleEventValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/" + "rule_event_value_model.gd"
 )
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_pricing_model: Reference = StatOpportunityPricingModel.new()
 var _pickup_collection_geometry_model: Reference = PickupCollectionGeometryModel.new()
-var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
+var _rule_event_value_model: Reference = RuleEventValueModel.new()
+
+
+func _init() -> void:
+	_rule_event_value_model.set_enemy_motion_predictor(_enemy_motion_predictor)
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_enemy_motion_predictor = predictor
+	_rule_event_value_model.set_enemy_motion_predictor(predictor)
 
 
 func accumulate_outcome(
@@ -186,16 +188,15 @@ func _apply_consequence(
 	if consequence.target == "materials" and consequence.operation == "add":
 		outcome.expected_material_gain += consequence.get("value", 0.0) * expected_occurrences
 		return
-	if consequence.target == "enemy_health" and consequence.operation == "deal_damage":
+	if (
+		(consequence.target == "enemy_health" and consequence.operation == "deal_damage")
+		or (consequence.target == "enemy_status" and consequence.operation == "apply")
+	):
 		outcome.expected_rule_completion_value += (
-			_delivered_enemy_completion_value(
-				observation.enemy_tracks,
-				consequence.delivery,
-				event,
-				_rule_damage_amount(consequence.amount),
-				planning_context.enemy_completion_value_ledger
+			_rule_event_value_model.consequence_value(
+				observation, consequence, event, planning_context.enemy_completion_value_ledger
 			)
-			* expected_occurrences
+			* event.get("event_weight", 1.0)
 		)
 		return
 	match consequence.operation:
@@ -278,45 +279,6 @@ func _first_incoming_hit_event(observation: Dictionary, samples: Array) -> Dicti
 					"dodge_probability": 1.0 - dodge_failure,
 				}
 	return {}
-
-
-func _delivered_enemy_completion_value(
-	tracks: Array,
-	delivery: Dictionary,
-	event: Dictionary,
-	damage: float,
-	completion_value_ledger: Dictionary
-) -> float:
-	var center: Vector2 = event.player_displacement
-	if delivery.anchor_on_event_entity:
-		center = event.entity.get("relative_position", center)
-	var radius: float = max(0.0, delivery.radius)
-	var covered_mass := 0.0
-	var weighted_completion_value := 0.0
-	for track in tracks:
-		if not track.visible:
-			continue
-		var enemy_position := _predict_enemy_position(track, event.time, event.player_displacement)
-		if enemy_position.distance_to(center) > radius + track.last_measurement.visual_radius:
-			continue
-		var confidence: float = track.recency_confidence
-		var ledger_entry: Dictionary = completion_value_ledger.entries_by_track_id[track.track_id]
-		covered_mass += confidence
-		weighted_completion_value += (
-			confidence
-			* ledger_entry.net_completion_value
-			* _damage_completion_work_model.completion_fraction_per_hit(
-				ledger_entry.remaining_health, damage
-			)
-		)
-	if covered_mass <= 0.0:
-		return 0.0
-	var capacity_scale := min(1.0, max(0.0, delivery.capacity_per_event) / covered_mass)
-	return weighted_completion_value * capacity_scale
-
-
-func _rule_damage_amount(amount: Dictionary) -> float:
-	return max(amount.minimum, amount.constant)
 
 
 func _condition_matches(condition: Dictionary, event: Dictionary, observation: Dictionary) -> bool:

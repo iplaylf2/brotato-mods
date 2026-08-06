@@ -59,13 +59,17 @@ func _check_battle_sample_storage_contract() -> void:
 		"player_state":
 		{
 			"movement": {"input_vector": Vector2.RIGHT},
+			"effect_rules": [{"event": "consumable_pickup", "consequences": []}],
 			"stat_opportunity_profiles": {"maximum_health": {"weight": 1.0}},
 		},
 		"enemy_tracks": [],
+		"sampling_context": {"character_id": "character_chef"},
 	}
 	writer.record_human_sample(0, 1, observation)
 	var second_observation: Dictionary = observation.duplicate(true)
 	second_observation.physics_frame = 124
+	second_observation.sampling_context.character_id = "character_ranger"
+	second_observation.player_state.effect_rules[0].event = "material_pickup"
 	second_observation.player_state.stat_opportunity_profiles.maximum_health.weight = 2.0
 	writer.record_human_sample(1, 1, second_observation)
 	writer.close([0, 0], [1, 1], [])
@@ -93,6 +97,7 @@ func _check_battle_sample_storage_contract() -> void:
 	var player_context_count := 0
 	var action_count := 0
 	var samples_are_compact := true
+	var sampled_rule_events := []
 	var segment_end_count := 0
 	var wave_context_index := -1
 	var player_context_index := -1
@@ -114,11 +119,14 @@ func _check_battle_sample_storage_contract() -> void:
 			"action_sample":
 				action_count += 1
 				action_index = record_index
+				sampled_rule_events.push_back(record.observation.player_state.effect_rules[0].event)
 				samples_are_compact = (
 					samples_are_compact
 					and not record.has("run_id")
 					and not record.observation.wave_state.has("number")
 					and not record.observation.player_state.has("stat_opportunity_profiles")
+					and record.observation.player_state.has("effect_rules")
+					and not record.observation.has("sampling_context")
 				)
 			"segment_end":
 				segment_end_count += 1
@@ -149,8 +157,11 @@ func _check_battle_sample_storage_contract() -> void:
 	_expect(
 		(
 			wave_context.wave_state.number == 7
+			and player_contexts[0].character_id == "character_chef"
+			and player_contexts[1].character_id == "character_ranger"
 			and player_contexts[0].stat_opportunity_profiles.maximum_health.weight == 1.0
 			and player_contexts[1].stat_opportunity_profiles.maximum_health.weight == 2.0
+			and sampled_rule_events == ["consumable_pickup", "material_pickup"]
 		),
 		"wave-wide context must be shared while player context remains player-specific"
 	)

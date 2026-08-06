@@ -274,6 +274,7 @@ func _write_player_context_now(player_index: int, observation: Dictionary) -> bo
 		{
 			"record_type": "player_context",
 			"player_index": player_index,
+			"character_id": observation.get("sampling_context", {}).get("character_id", ""),
 			"stat_opportunity_profiles": player_state.get("stat_opportunity_profiles", {}),
 		}
 	)
@@ -299,6 +300,7 @@ func _flush_now() -> bool:
 
 func _compact_observation(observation: Dictionary) -> Dictionary:
 	var result: Dictionary = observation.duplicate(false)
+	result.erase("sampling_context")
 	var wave_state: Dictionary = result.get("wave_state", {}).duplicate(false)
 	for fixed_field in ["number", "final_number", "endless", "is_horde", "duration_seconds"]:
 		wave_state.erase(fixed_field)

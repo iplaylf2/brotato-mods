@@ -133,9 +133,10 @@ func sample_point(
 	var channels := _empty_channels()
 	_prepare_shared_inputs(observation)
 	var geometry: Dictionary = _shared_geometry
-	_sample_enemy_pressure(observation.enemy_tracks, sample, channels, geometry)
+	_sample_enemy_pressure(
+		observation.enemy_tracks, sample, channels, geometry, observation.localization.map_bounds
+	)
 	_sample_spawn_pressure(observation.visible_world.spawn_warnings, sample, channels, geometry)
-	_sample_edge_pressure(observation.localization.map_bounds, displacement, channels, geometry)
 	_sample_combat_support(
 		observation, _get_influence_sources(observation), sample, 0, {}, channels, geometry, null
 	)
@@ -168,12 +169,14 @@ func _sample_channels(
 ) -> Dictionary:
 	var channels := _empty_channels()
 	_sample_enemy_pressure(
-		observation.enemy_tracks, sample, channels, geometry, previous_enemy_positions
+		observation.enemy_tracks,
+		sample,
+		channels,
+		geometry,
+		observation.localization.map_bounds,
+		previous_enemy_positions
 	)
 	_sample_spawn_pressure(observation.visible_world.spawn_warnings, sample, channels, geometry)
-	_sample_edge_pressure(
-		observation.localization.map_bounds, sample.displacement, channels, geometry
-	)
 	_sample_combat_support(
 		observation,
 		sources,
@@ -202,15 +205,18 @@ func _sample_enemy_pressure(
 	sample: Dictionary,
 	channels: Dictionary,
 	geometry: Dictionary,
+	bounds: Dictionary,
 	previous_positions = null
 ) -> void:
 	assert(previous_positions == null or previous_positions.size() == tracks.size())
+	var predicted_positions := []
 	for track_index in tracks.size():
 		var track: Dictionary = tracks[track_index]
 		var predicted_position: Vector2 = _predict_enemy_position(
 			track, sample.time, sample.displacement
 		)
 		var position: Vector2 = predicted_position - sample.displacement
+		predicted_positions.push_back(position)
 		var uncertain_clearance: float = (
 			position.length()
 			- geometry.player_radius
@@ -241,9 +247,6 @@ func _sample_enemy_pressure(
 		# damage to the grazing contacts that vanilla resolves as ordinary hits.
 		var contact := _intersection_contact_evidence(physical_clearance)
 		channels.contact = max(channels.contact, contact * track.recency_confidence)
-		channels.maneuver_constraint += _maneuver_space_model.enemy_constraint(
-			track, position, geometry
-		)
 		if contact > 0.0:
 			var contact_evidence: float = contact * track.recency_confidence
 			channels.path_contact_evidence += contact_evidence
@@ -260,6 +263,11 @@ func _sample_enemy_pressure(
 				)
 			)
 		_accumulate_ranged_pressure(track, position, sample, channels, geometry)
+	var constraint_profile: Dictionary = _maneuver_space_model.constraint_profile(
+		tracks, predicted_positions, bounds, sample.displacement, geometry
+	)
+	channels.maneuver_constraint = constraint_profile.combined
+	channels.edge = constraint_profile.boundary
 
 
 func _accumulate_ranged_pressure(
@@ -386,22 +394,6 @@ func _sample_spawn_pressure(
 			1.0
 		)
 		channels.spawn += proximity * proximity
-
-
-func _sample_edge_pressure(
-	bounds: Dictionary, displacement: Vector2, channels: Dictionary, geometry: Dictionary
-) -> void:
-	var future_distances := [
-		_add_if_known(bounds.distance_to_left, displacement.x),
-		_add_if_known(bounds.distance_to_right, -displacement.x),
-		_add_if_known(bounds.distance_to_top, displacement.y),
-		_add_if_known(bounds.distance_to_bottom, -displacement.y),
-	]
-	for distance in future_distances:
-		if distance == null or distance >= geometry.edge_margin:
-			continue
-		var proximity := clamp((geometry.edge_margin - distance) / geometry.edge_margin, 0.0, 1.0)
-		channels.edge += proximity * proximity
 
 
 func _sample_combat_support(
@@ -739,10 +731,7 @@ func _evaluate_channels(channels: Dictionary, weights: Dictionary) -> Dictionary
 	)
 	var spawn_exposure: float = channels.spawn * weights.spawn_warning
 	var maneuver_exposure: float = channels.maneuver_constraint * weights.maneuver_constraint
-	var positional: float = (
-		channels.edge * weights.map_edge
-		+ channels.ally_body * weights.allied_body_proximity
-	)
+	var positional: float = channels.ally_body * weights.allied_body_proximity
 	var ambient_relief: float = min(
 		suppressible_enemy_ambient, channels.allied_suppression * weights.allied_pressure_relief
 	)
@@ -750,26 +739,21 @@ func _evaluate_channels(channels: Dictionary, weights: Dictionary) -> Dictionary
 		channels.projectile_contact * weights.projectile_contact,
 		channels.projectile_contact_interception * weights.projectile_interception_relief
 	)
-	# Boundaries remove escape headings. Under hostile pressure that lost control
-	# authority is more costly than an independent edge penalty, especially at a
-	# corner. This coupling is a local viability constraint derived from the same
-	# continuous fields; it does not prescribe a route or orbit direction.
-	var hostile_confinement_multiplier := 1.0 + max(0.0, channels.edge)
 	# Contact channels are already normalized geometric likelihoods. Applying the
 	# ambient-pressure saturation transform again capped even a center crossing at
 	# 1 - exp(-1), which then understated both hit probability and lethal risk.
 	var collision: float = clamp(collision_hostile - interception_relief, 0.0, 1.0)
 	var environmental: float = (
-		max(0.0, suppressible_enemy_ambient - ambient_relief) * hostile_confinement_multiplier
-		+ spawn_exposure * hostile_confinement_multiplier
+		max(0.0, suppressible_enemy_ambient - ambient_relief)
+		+ spawn_exposure
 		+ maneuver_exposure
 		+ positional
 	)
-	var relief: float = ambient_relief * hostile_confinement_multiplier + interception_relief
+	var relief: float = ambient_relief + interception_relief
 	var hostile: float = (
 		collision_hostile
-		+ suppressible_enemy_ambient * hostile_confinement_multiplier
-		+ spawn_exposure * hostile_confinement_multiplier
+		+ suppressible_enemy_ambient
+		+ spawn_exposure
 		+ maneuver_exposure
 		+ positional
 	)
@@ -926,11 +910,6 @@ func _saturate_channels(channels: Dictionary) -> void:
 		"ally_body",
 	]:
 		channels[channel] = _saturate(channels[channel])
-	channels.maneuver_constraint = _saturate(channels.maneuver_constraint)
-
-
-func _add_if_known(value, addition: float):
-	return null if value == null else value + addition
 
 
 func _empty_result() -> Dictionary:

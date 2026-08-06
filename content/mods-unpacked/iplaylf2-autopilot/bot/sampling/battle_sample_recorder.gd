@@ -50,7 +50,11 @@ func _physics_process(delta: float) -> void:
 		if observation.empty() or observation.get("player_state", {}).get("dead", false):
 			continue
 		_sample_counts[player_index] += 1
-		_writer.record_human_sample(player_index, _sample_counts[player_index], observation)
+		_writer.record_human_sample(
+			player_index,
+			_sample_counts[player_index],
+			_with_diagnostic_context(player_index, observation)
+		)
 
 
 func record_bot_decision(
@@ -71,10 +75,19 @@ func record_bot_decision(
 		player_index,
 		_decision_counts[player_index],
 		_sample_counts[player_index],
-		observation,
+		_with_diagnostic_context(player_index, observation),
 		plan,
 		previous_movement
 	)
+
+
+func _with_diagnostic_context(player_index: int, observation: Dictionary) -> Dictionary:
+	var result: Dictionary = observation.duplicate(false)
+	var character: Resource = RunData.get_player_character(player_index)
+	result.sampling_context = {
+		"character_id": character.my_id if character != null else "",
+	}
+	return result
 
 
 func switch_to_human() -> void:

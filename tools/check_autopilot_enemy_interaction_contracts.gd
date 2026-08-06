@@ -159,8 +159,14 @@ func _check_hostile_edge_confinement() -> void:
 		edge_only, Vector2.ZERO, 0.0, weights
 	).environmental_pressure
 	_expect(
-		combined_pressure > threat_pressure + edge_pressure,
-		"hostile pressure near a corner must price the lost escape headings"
+		(
+			combined_pressure >= max(threat_pressure, edge_pressure)
+			and combined_pressure <= threat_pressure + edge_pressure + 0.0001
+		),
+		(
+			"hostile and boundary constraints must compose through blocked heading coverage "
+			+ "without a synthetic corner multiplier"
+		)
 	)
 
 
@@ -242,9 +248,19 @@ func _check_maneuver_space_pressure() -> void:
 		observation
 	)
 	var track: Dictionary = _fixtures.enemy_track(Vector2(50.0, 0.0), Vector2.ZERO, false)
-	var nearby_constraint: float = model.enemy_constraint(track, track.relative_position, geometry)
-	var remote_constraint: float = model.enemy_constraint(track, Vector2(500.0, 0.0), geometry)
-	var overlap_constraint: float = model.enemy_constraint(track, Vector2.ZERO, geometry)
+	var nearby_constraint: float = model.constraint_profile(
+		[track],
+		[track.relative_position],
+		observation.localization.map_bounds,
+		Vector2.ZERO,
+		geometry
+	).enemy
+	var remote_constraint: float = model.constraint_profile(
+		[track], [Vector2(500.0, 0.0)], observation.localization.map_bounds, Vector2.ZERO, geometry
+	).enemy
+	var overlap_constraint: float = model.constraint_profile(
+		[track], [Vector2.ZERO], observation.localization.map_bounds, Vector2.ZERO, geometry
+	).enemy
 	var influence: Reference = load(PLANNING_PATH + "battlefield_influence_model.gd").new()
 	observation.enemy_tracks = [track]
 	var channels: Dictionary = influence.sample_point(
@@ -288,7 +304,6 @@ func _influence_weights() -> Dictionary:
 		"spawn_warning": 1.0,
 		"maneuver_constraint": 1.0,
 		"ranged_attack": 1.0,
-		"map_edge": 1.0,
 		"allied_body_proximity": 1.0,
 		"allied_pressure_relief": 1.0,
 		"projectile_interception_relief": 1.0,
