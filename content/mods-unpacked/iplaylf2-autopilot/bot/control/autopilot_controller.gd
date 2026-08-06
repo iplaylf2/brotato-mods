@@ -1,5 +1,7 @@
 extends Node
 
+signal control_released
+
 # Closes the observation -> planning -> movement-input loop. Planning runs on a
 # single background thread at a lower cadence than physics; the chosen movement
 # remains active until a completed plan replaces it.
@@ -10,9 +12,6 @@ const AutopilotMovementBehavior := preload(
 )
 const MovementTimingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
-)
-const DecisionTelemetry := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/control/decision_telemetry.gd"
 )
 const PhysicsFrameBudgetMonitor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/control/physics_frame_budget_monitor.gd"
@@ -26,7 +25,7 @@ var _actuators: Array = []
 var _original_movement_behaviors: Array = []
 var _current_plans: Array = []
 var _previous_movements: Array = []
-var _decision_telemetry: Reference = DecisionTelemetry.new()
+var _battle_sample_recorder: Node = null
 var _physics_frame_budget_monitor: Reference = PhysicsFrameBudgetMonitor.new()
 var _planning_worker: Reference = PlanningWorker.new()
 var _shut_down := false
@@ -35,18 +34,18 @@ var _replan_physics_ticks := 1
 var _next_replan_physics_frame := 0
 
 
-func initialize(observation_service: Node, players: Array) -> void:
+func initialize(observation_service: Node, players: Array) -> bool:
 	_replan_interval_seconds = MovementTimingModel.control_interval_seconds()
 	_replan_physics_ticks = MovementTimingModel.REPLAN_PHYSICS_TICKS
 	_next_replan_physics_frame = int(Engine.get_physics_frames())
 	_observation_service = observation_service
+	_players = players
 	if not _planning_worker.start(players.size()):
 		ModLoaderLog.error(
 			"Could not start the planning worker; Autopilot will not take control.", MOD_ID
 		)
 		_shut_down = true
-		return
-	_players = players
+		return false
 	for player in players:
 		var actuator := AutopilotMovementBehavior.new()
 		add_child(actuator)
@@ -55,7 +54,11 @@ func initialize(observation_service: Node, players: Array) -> void:
 		_current_plans.push_back({})
 		_previous_movements.push_back(Vector2.ZERO)
 		player._current_movement_behavior = actuator
-	_decision_telemetry.start(players.size(), _replan_interval_seconds)
+	return true
+
+
+func set_battle_sample_recorder(recorder: Node) -> void:
+	_battle_sample_recorder = recorder
 
 
 func _physics_process(delta: float) -> void:
@@ -81,7 +84,6 @@ func shutdown() -> void:
 		return
 	_shut_down = true
 	_planning_worker.shutdown()
-	_decision_telemetry.close(_final_player_states())
 	for player_index in _players.size():
 		var player: Node = _players[player_index]
 		var actuator: Node = _actuators[player_index]
@@ -98,30 +100,6 @@ func get_current_plan(player_index: int) -> Dictionary:
 	if player_index < 0 or player_index >= _current_plans.size():
 		return {}
 	return _current_plans[player_index].duplicate(true)
-
-
-func get_decision_sample_path() -> String:
-	return _decision_telemetry.get_current_path()
-
-
-func _final_player_states() -> Array:
-	var result := []
-	for player in _players:
-		if not is_instance_valid(player):
-			result.push_back({"available": false})
-			continue
-		result.push_back(
-			{
-				"available": true,
-				"dead": player.dead,
-				"health":
-				{
-					"current": player.current_stats.health,
-					"maximum": player.max_stats.health,
-				},
-			}
-		)
-	return result
 
 
 func _start_replan() -> void:
@@ -152,7 +130,11 @@ func _start_replan() -> void:
 			"The planning worker rejected a request; Autopilot is releasing movement control.",
 			MOD_ID
 		)
+		var recorder := _battle_sample_recorder
 		shutdown()
+		if is_instance_valid(recorder):
+			recorder.switch_to_human()
+		emit_signal("control_released")
 
 
 func _collect_planning_results() -> void:
@@ -176,9 +158,10 @@ func _apply_plan_results(results: Array) -> void:
 				0, OS.get_ticks_usec() - int(compute_budget.planning_started_usec)
 			)
 		_current_plans[player_index] = plan
-		_decision_telemetry.record_decision(
-			player_index, observation, plan, _previous_movements[player_index]
-		)
+		if is_instance_valid(_battle_sample_recorder):
+			_battle_sample_recorder.record_bot_decision(
+				player_index, observation, plan, _previous_movements[player_index]
+			)
 		var movement: Vector2 = plan.movement
 		_actuators[player_index].set_movement(movement)
 		_previous_movements[player_index] = movement

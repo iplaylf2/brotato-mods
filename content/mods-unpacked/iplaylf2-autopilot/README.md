@@ -14,12 +14,18 @@ Autopilot 是一个实验性 Brotato mod。它在玩家权限边界内评估环�
 
 ## 安装与启用
 
-Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetails/?id=2944608034)，且默认
-关闭。安装依赖后，在游戏中打开 `设置 → Mods → Autopilot`，启用 **Enable Autopilot**。
+Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetails/?id=2944608034)。安装依赖后，
+在游戏中打开 `设置 → Mods → Autopilot`：
+
+- **Enable Autopilot** 允许 Autopilot 控制战斗移动；
+- **Record Battle Samples** 写入本地战斗样本。它与控制开关相互独立；只开启采样时，文件记录人工移动，
+  可作为复盘和校准参考。
+
+两个开关均默认关闭。
 
 设置会立即作用于当前战斗并保存到后续战斗。关闭后，Autopilot 会停止移动并恢复玩家原有的
-`MovementBehavior`。启用且进入战斗后，Autopilot 还会在本地写入决策采样文件；具体路径、采样频率和
-分片策略见 [诊断与采样](#诊断与采样)。
+`MovementBehavior`。采样设置独立生效；具体路径、采样频率和记录结构见
+[诊断与采样](#诊断与采样)。
 
 ## 公平边界
 
@@ -53,27 +59,30 @@ Autopilot 用当前可见信息、玩家自身状态、稳定机制知识和先�
 
 ## 诊断与采样
 
-启用并进入战斗后，可以读取某位玩家的最新观察和计划：
+任一开关启用并进入战斗后，都可以读取某位玩家的最新观察；只有 Autopilot 正在控制时才有当前计划：
 
 ```gdscript
 var observation: Dictionary = main.autopilot_observation_service.get_observation(player_index)
-var plan: Dictionary = main.autopilot_controller.get_current_plan(player_index)
+var plan := {}
+if is_instance_valid(main.autopilot_controller):
+	plan = main.autopilot_controller.get_current_plan(player_index)
 ```
 
 计划包含所选动作、移动方向、结果字段、字段级与目标级效用账本、价值上下文、导航意图、计算预算、
 搜索工作分配、投射物过滤诊断和高分动作摘要，供游戏内诊断与模型校准。
 
-控制器会为每位玩家记录第一次决策，此后每 10 次重规划记录一次，并额外记录规划失败；按名义
-`0.1` 秒控制期计算，常规采样间隔约为 `1` 秒，实际间隔可能随物理帧调度和规划周转延长。样本写入
-`user://logs/mods/iplaylf2-autopilot/` 下的 JSON Lines 文件，单个文件达到
-32 MiB 后自动分片。Windows 上 `user://` 对应 `%APPDATA%/Brotato/`，因此完整目录通常是
+开启采样后，bot 控制期间会为每位玩家记录第一次决策，此后每 10 次重规划记录一次，并额外记录规划失败；
+人工控制期间则约每秒记录一次观察与实际移动输入。当前文件路径可由
+`main.get_current_battle_sample_path()` 读取。样本写入
+`user://logs/mods/iplaylf2-autopilot/<run-id>/`：一次完整对局共用一个目录，目录内文件名以波次和
+`human`/`bot` 控制来源区分，每个控制分段只写一个文件。Windows 上 `user://` 对应
+`%APPDATA%/Brotato/`，因此日志根目录通常是
 `%APPDATA%/Brotato/logs/mods/iplaylf2-autopilot/`；Mod Loader 日志也会打印
-当前文件的 `user://` 路径和绝对路径。游戏暂停时观察与规划停止，不会新增决策样本；恢复后继续写入
-同一会话文件。每位玩家的首条决策样本立即刷新到磁盘，后续样本分批刷新；异常退出时，尾部样本仍可能
-缺失。
+当前文件的 `user://` 路径和绝对路径。游戏暂停时观察、规划和采样停止；恢复后继续写入
+同一分段文件。样本分批刷新，正常关闭时会写完队列；异常退出时，尾部样本仍可能缺失。
 
 采样不包含两条样本之间的全部决策，不能作为逐帧回放；字段约定、参数证据等级和正确复盘方法见
-[决策采样与模型校准](docs/model-calibration.md)。
+[战斗采样与模型校准](docs/model-calibration.md)。
 
 ## 维护入口
 
@@ -82,7 +91,7 @@ README 只提供使用概览。维护时按任务进入对应文档：
 - [玩家权限边界](docs/fair-play.md) 定义允许读取的信息和唯一控制面；
 - [架构文档](docs/architecture.md) 定义运行链路、公共观察、机制语义和规划结果；
 - [模块边界与责任](docs/module-boundaries.md) 定义目录归属、依赖方向、公共入口和组件角色；
-- [决策采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
+- [战斗采样与模型校准](docs/model-calibration.md) 定义采样格式、参数证据等级和复盘方法；
 - [原版敌人、树木与投射物机制参考](docs/vanilla-enemy-mechanics.md) 记录目标版本的敌人运动、攻击与死亡
   奖励、树木完成机制及投射物入口；
 - [原版道具与武器机制审计](docs/vanilla-item-weapon-mechanics.md) 记录目标版本的非常规效果覆盖及复核方法。

@@ -11,41 +11,49 @@
 | 修改公共数据或记忆语义 | [观察契约](#观察契约) | [玩家权限边界](fair-play.md) |
 | 接入版本机制 | [机制知识](#机制知识) | [敌人、树木与投射物参考](vanilla-enemy-mechanics.md)、[道具与武器审计](vanilla-item-weapon-mechanics.md) |
 | 修改死亡奖励或掉落概率 | [敌人行为画像](#敌人行为画像)、[动态效用](#动态效用) | [敌人完成价值与死亡奖励](model-calibration.md#敌人完成价值与死亡奖励)、[敌人、树木与投射物参考](vanilla-enemy-mechanics.md)、[模块边界](module-boundaries.md#机会规则与动作结果) |
-| 修改决策行为或诊断字段 | [滚动规划](#滚动规划) | [决策采样与模型校准](model-calibration.md) |
+| 修改决策行为或诊断字段 | [滚动规划](#滚动规划) | [战斗采样与模型校准](model-calibration.md) |
 | 修改材料收集或拾取路径 | [决策基底](#决策基底)、[暴露与导航意图](#暴露与导航意图) | [导航与材料](model-calibration.md#导航与材料)、[模块边界](module-boundaries.md#机会规则与动作结果) |
 | 修改环境暴露、碰撞几何或承伤换算 | [暴露与导航意图](#暴露与导航意图)、[结果与诊断](#结果与诊断)、[动态效用](#动态效用) | [敌人、树木与投射物参考](vanilla-enemy-mechanics.md)、[复盘方法](model-calibration.md#复盘方法) |
 | 修改可交战目标或树木完成机制 | [暴露与导航意图](#暴露与导航意图)、[武器结果预测](#武器结果预测) | [树木与武器](model-calibration.md#树木与武器)、[模块边界](module-boundaries.md#机会规则与动作结果) |
 | 调整生命补充、承伤或死亡风险定价 | [动态效用](#动态效用) | [生存风险定价](model-calibration.md#生存风险定价)、[生存与碰撞](model-calibration.md#生存与碰撞) |
 | 调整武器输出估计 | [武器结果预测](#武器结果预测) | [武器结果预测的性能边界](model-calibration.md#武器结果预测的性能边界) |
 | 调整性能预算或排查掉帧 | [计算预算与搜索工作分配](#计算预算与搜索工作分配) | [性能与计算预算](model-calibration.md#性能与计算预算) |
-| 复盘行为或校准模型参数 | [结果与诊断](#结果与诊断) | [决策采样与模型校准](model-calibration.md) |
+| 复盘行为或校准模型参数 | [结果与诊断](#结果与诊断) | [战斗采样与模型校准](model-calibration.md) |
 | 调整文件归属或依赖方向 | [模块边界与责任](module-boundaries.md) | [玩家权限边界](fair-play.md) |
 
 ## 运行链路
 
 ```text
+RunData 扩展
+└── 整局采样 ID：生成、存档与恢复
+
 主场景扩展
 ├── ObservationService
 │   ├── 当前观察：PlayerStateObserver、VisibleWorldObserver
 │   ├── 版本知识：bot/knowledge
 │   └── 局内记忆：ObservedWorldMemory
-└── AutopilotController
-    ├── PhysicsFrameBudgetMonitor
-    ├── PlanningWorker
-    │   └── MovementPlanner
-    │       ├── 投射物可达性过滤、计算预算与导航意图
-    │       ├── 动作生成与结果预测
-    │       └── 效用评价与动作选择
-    ├── DecisionTelemetry
-    └── AutopilotMovementBehavior
+├── AutopilotController（仅在控制开启时存在）
+│   ├── PhysicsFrameBudgetMonitor
+│   ├── PlanningWorker
+│   │   └── MovementPlanner
+│   │       ├── 投射物可达性过滤、计算预算与导航意图
+│   │       ├── 动作生成与结果预测
+│   │       └── 效用评价与动作选择
+│   └── AutopilotMovementBehavior
+└── BattleSampleRecorder（仅在采样开启时存在）
+    └── BattleSampleWriter
 ```
 
-主场景扩展负责管理观察服务和控制器的生命周期。启用 Autopilot 后，控制器定期读取观察并请求运动
-计划，只把计划中的首个移动方向交给 `MovementBehavior`；这是系统唯一的控制边界。重规划起点按六个
+`RunData` 扩展拥有整局采样 ID：新对局重置时生成，保存和恢复对局状态时一并存取。主场景扩展作为组合根，
+按设置管理观察服务、控制器和样本记录器的波次生命周期；控制或采样至少一项开启时才创建观察服务。
+
+启用 Autopilot 后，控制器定期读取观察并请求运动计划，只把计划中的首个移动方向交给
+`MovementBehavior`；这是系统唯一的控制边界。重规划起点按六个
 物理 tick 的绝对节拍推进，后台计算占用这个周期而不会被额外加在周期之后；若计算跨过下一个起点，
-控制器从结果提交时的物理帧建立新周期，不追赶过时的积压请求。游戏暂停时，观察、
-规划和采样一并停止；波次清场时，主场景扩展先停止 Autopilot 并恢复原移动行为，再由原版释放战斗
-节点。速度、碰撞、击退、动画、瞄准、攻击触发和移动机制均由原版 `Player`、`Unit` 与武器系统负责。
+控制器从结果提交时的物理帧建立新周期，不追赶过时的积压请求。波次清场时，主场景扩展先停止控制器并
+恢复原移动行为，再关闭样本记录器，最后由原版释放战斗节点。游戏暂停时，观察、规划和采样一并停止。速度、
+碰撞、击退、动画、瞄准、攻击触发和移动机制均由原版 `Player`、`Unit` 与武器系统负责。
+
 观察层每个物理帧更新可见世界、运动估计、里程计和记忆，但只在读取时物化观察快照；这样持续感知仍为
 原物理频率，而随局内记忆增长的轨迹与实体副本只按重规划频率构造一次。公共读取保留防御性深拷贝；
 `ObservationService` 另行截取与观察状态隔离的规划值快照，其中只含已经脱离场景节点的嵌套值，不携带
@@ -53,21 +61,23 @@
 每位玩家的规划器，在同一线程配置、执行和释放其可变模型状态，然后只返回值结果，控制器在主线程整体
 替换计划。`PlanningWorker` 独占 Godot 3 的长期线程、信号量、互斥交接和退出协议，不读取或回调活动
 场景树。工作线程无法启动时，控制器不安装动作适配器；运行中拒绝请求时，控制器停止 Autopilot 并恢复
-原移动行为。两种情况都不会在物理线程降级执行规划。关闭时，控制器先回收工作线程，再释放观察与采样
-边界。
+原移动行为。两种情况都不会在物理线程降级执行规划。
 
-`DecisionTelemetry` 按固定采样政策，把控制器已取得的合法观察和只读规划账本交给独占写入线程，在线程
-内完成采样投影、JSON Lines 编码、刷新和分片。物理线程只判断采样准入并提交已经脱离场景节点的值；正常
-关闭时等待队列排空并写入会话结尾。它的责任终止于序列化和存储；计划生成与动作选择归属规划器，调度和
-结果提交归属控制器。写入或分片重开失败时，写线程停止接受采样，但其生命周期仍由控制器在关闭时回收；
-遥测失败不改变移动控制。性能验证方法见 [性能与计算预算](model-calibration.md#性能与计算预算)。
+`BattleSampleRecorder` 独立于控制器存在。human 分段由它按固定间隔读取公共观察中的实际移动输入；bot
+分段由控制器把已经取得的观察和只读规划账本提交给它。运行中若规划工作线程拒绝新请求，记录器会先关闭
+bot 分段，再转入 human 分段。记录器负责采样准入、控制来源和波次分段生命周期；
+`BattleSampleWriter` 只负责在独占写入线程中压缩观察、编码 JSON Lines、刷新和落盘。分段元数据和波次
+上下文各记录一次，每位玩家的固定上下文也只在其首次样本前记录。写入失败只会停止当前分段接受记录，
+不改变移动控制；正常关闭会等待队列排空并写入分段结尾。性能验证方法见
+[性能与计算预算](model-calibration.md#性能与计算预算)。
 
 `PhysicsFrameBudgetMonitor` 读取 Godot 报告窗口内的物理回调峰值，在同一 `idle frame` 内只推进一次
 平滑估计。引擎计时止于该边界；动作决策和计算预算准入分别归属 `MovementPlanner` 与
 `PlanningComputeBudgetPolicy`。
 
-代码依赖保持单向：主场景扩展依赖 `control` 与 `observation`，`control` 依赖 `observation` 与
-`planning`，`observation` 依赖 `knowledge`。规划层只接收已经移除场景节点的观察字典；
+代码依赖保持单向：主场景扩展依赖 `control`、`sampling` 与 `observation`；`control` 依赖 `observation`
+与 `planning`，`sampling` 依赖 `observation`，`observation` 依赖 `knowledge`。规划层只接收已经移除场景
+节点的观察字典；
 `bot/observation/observation_service.gd` 是观察的公共读取入口。完整入口与跨包契约见
 [模块边界与责任](module-boundaries.md#运行时边界与依赖)。
 
@@ -75,7 +85,7 @@
 
 ### 公共入口与顶层结构
 
-启用 Autopilot 且玩家生成后，可以从主场景读取某位玩家的最新观察：
+控制或采样至少一项开启且玩家生成后，可以从主场景读取某位玩家的最新观察：
 
 ```gdscript
 var observation: Dictionary = main.autopilot_observation_service.get_observation(player_index)

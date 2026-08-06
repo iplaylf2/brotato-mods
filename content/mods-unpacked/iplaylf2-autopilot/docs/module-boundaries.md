@@ -8,17 +8,20 @@
 
 | 模块 | 责任 | 公共边界 |
 | --- | --- | --- |
-| `mod_main.gd` | 安装主场景扩展，接入 Mod Loader 配置并发布启用状态 | `is_enabled()` 与 `enabled_changed`；不创建战斗期观察或规划对象 |
-| `extensions/main.gd` | 作为组合根响应玩家生成、启用切换和房间清理，按顺序创建或停止观察服务与控制器 | 主场景上的 `autopilot_observation_service` 与 `autopilot_controller` 只提供诊断入口；不承载观察或规划语义 |
-| `bot/control` | 调度重规划、提交与观察状态隔离的规划值快照、估计规划帧预算、以信号量驱动的单一工作线程执行规划、保存当前计划、采样决策账本，并适配原版 `MovementBehavior` | `AutopilotController.initialize()`、`shutdown()` 和计划诊断入口；`AutopilotMovementBehavior` 是唯一控制输出，`PlanningWorker` 是控制包内部协作者 |
+| `mod_main.gd` | 安装主场景与 RunData 扩展，接入 Mod Loader 配置并发布控制/采样启用状态 | `is_enabled()`、`is_sampling_enabled()` 与对应信号；不持有对局或战斗期状态 |
+| `extensions/run_data.gd` | 生成整局采样 ID，并随原版对局状态保存和恢复 | 扩展 `RunData.reset()`、`get_state()` 与 `resume_from_state()`；`get_battle_sample_run_id()` 是主场景组合根的只读入口 |
+| `extensions/main.gd` | 作为组合根响应玩家生成、设置切换和房间清理，按需创建或停止观察、控制与记录边界 | 主场景公开 `autopilot_observation_service`、`autopilot_controller` 和 `get_current_battle_sample_path()`；不公开采样组件，也不实现观察、规划、存储或整局身份语义 |
+| `bot/control` | 调度后台规划并适配原版移动控制 | `AutopilotController` 只在控制开启时存在；`AutopilotMovementBehavior` 是唯一控制输出，`PlanningWorker` 是包内协作者 |
+| `bot/sampling` | 协调 human/bot 战斗采样并异步写入分段文件 | `BattleSampleRecorder` 只在采样开启时存在；`BattleSampleWriter` 是包内协作者 |
 | `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价，以及候选执行资格与效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
 | `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 截取不含场景节点并与观察状态隔离的规划值快照 |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
 
-依赖从组合根向领域边界单向展开：`mod_main.gd → extensions/main.gd`，主场景扩展再依赖 `control` 与
-`observation`；`control → observation`、`control → planning`，`observation → knowledge`。`planning` 只接收
-已经移除场景节点的观察字典，不反向依赖 `control`、`observation` 或 `knowledge`。控制层对
-`MovementTimingModel` 的依赖只共享重规划间隔；时域派生及其解释权仍属于规划包。
+`mod_main.gd` 只安装两个同级扩展；`extensions/run_data.gd` 独立拥有整局身份，`extensions/main.gd` 只通过
+其公开只读入口取得 ID。战斗期依赖从主场景组合根向 `control`、`sampling` 与 `observation` 单向展开；
+`control → observation`、`control → planning`、`sampling → observation`，`observation → knowledge`。
+`planning` 只接收已经移除场景节点的观察字典，不反向依赖 `control`、`sampling`、`observation` 或
+`knowledge`。控制层对 `MovementTimingModel` 的依赖只共享重规划间隔；时域派生及其解释权仍属于规划包。
 
 所有新增能力必须先满足玩家权限边界。玩家效果的原版字段映射由 `bot/knowledge/player_effects` 拥有，
 消耗品稳定画像由 `bot/knowledge/pickups` 拥有；公共规则轴及其解释权属于规划模型，不能随原版字段数量
@@ -84,6 +87,8 @@
   再通过碰撞形状适配器取得规范半径；对可见材料，它读取原版结算直接消费的确定数量；对生成警告，
   它直接适配当帧精确倒计时。这些当前事实不由机制编译器或观察记忆重复维护。
 - 观察层只输出语义画像。它不读取规划结果，规划层也不读取观察层的场景节点或内部实现细节。
+- 规划视图省略已确认不存在的永久历史记录，公共观察仍保留它们；该视图优化不改变规划所消费的当前
+  机会或保留字段的语义值。
 
 ### 运动、碰撞与生命
 
@@ -159,7 +164,7 @@
   `bot/planning/movement_action_selector.gd` 从已评分候选中排除可避免的提交期确定死亡，再选择总效用最高者；
   `MovementPlanner` 协调生成、预测、评分、细分与选择，不把新行为政策藏进选择器。
 
-### 计算预算与遥测
+### 控制与计算预算
 
 - `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视与物理回调峰值估计，向规划
   边界公开帧预算上下文；`bot/control/planning_worker.gd` 独占工作线程、信号量、互斥交接和回收，并在该
@@ -172,11 +177,17 @@
   `bot/planning/motion/projectile_motion_predictor.gd` 提供；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止
   策略仍归调用方。
-- `bot/control/decision_telemetry.gd` 拥有采样频率、独占写入线程、JSON Lines 编码、画像压缩、落盘和分片策略；
-  存储失败时由该边界停止接受记录并保留可回收的线程生命周期，不把遥测失败提升为移动控制失败；
-  `MovementPlanner` 拥有规划结果及诊断语义。采样器省略重复的机制配置与规则证据，但保留解释路径风险
-  所需的攻击因果字段和当前攻击时间窗，并降低同步刷新频率；规划视图省略已确认不存在的永久历史记录，
-  公共观察仍保留它们。两项优化都不改变规划所消费的当前机会或保留字段的语义值。
+
+### 战斗采样
+
+- `bot/sampling/battle_sample_recorder.gd` 拥有 human 定时准入、bot 决策准入、控制来源切换和波次分段
+  生命周期；
+  它只读取公共观察，或接收控制器已经取得的观察与规划结果，不另建场景读取入口。
+- `bot/sampling/battle_sample_writer.gd` 拥有波次与玩家固定上下文提取、独占写入线程、JSON Lines 编码、
+  画像压缩、刷新和落盘策略。存储失败时，该边界停止接受记录并保留可回收的线程生命周期，不把记录
+  失败提升为移动控制失败。它省略重复的机制配置与规则证据，但保留解释路径风险所需的攻击因果字段和
+  当前攻击时间窗；采样压缩只改变持久化投影，不改变规划输入或字段语义。`MovementPlanner` 仍独占规划
+  结果与诊断语义。
 
 ## 组件角色命名
 
@@ -202,7 +213,8 @@
 | `Refiner` | 根据已评价候选提出更细的搜索候选，不拥有评价或停止策略 | `propose_*` |
 | `Allocator` | 把既有资源信号映射为某一计算维度的本轮额度，不拥有资源测量或行为价值 | `allocate` |
 | `Policy` | 根据资源上下文形成计算预算或其他可调策略 | 领域动词，或 `set_frame_budget_context`、`allocate`、`observe_*` |
-| `Telemetry` | 按既定采样政策持久化诊断记录，不参与被记录的决策 | `start`、`record_decision`、`close` |
+| `Recorder` | 协调样本准入、来源和分段生命周期，不解释或改变被记录的决策 | `initialize`、`record_*`、`switch_*`、`shutdown` |
+| `Writer` | 异步转换并持久化已经准入的记录，不参与采样准入或被记录的决策 | `start`、`record_*`、`close` |
 
 数据按产物命名，例如 `attack_model`、`rule_projection`、`behavior_profile` 和 `navigation_intent`；组件使用
 上表的角色后缀。这样可以区分投影结果与执行投影的 `Projector`，以及导航意图与生成它的

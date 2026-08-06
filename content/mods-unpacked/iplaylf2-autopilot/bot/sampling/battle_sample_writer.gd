@@ -1,13 +1,10 @@
 extends Reference
 
-# Persists calibration-oriented decision samples as newline-delimited JSON. Sampling
-# owns storage policy only; planning remains the source of model inputs and
-# diagnostics. Files rotate before a long run can create one unbounded artifact.
+# Writes admitted battle samples as newline-delimited JSON. The recorder owns
+# sampling policy and segment lifecycle.
 
 const MOD_ID := "iplaylf2-autopilot"
 const SAMPLE_DIRECTORY := "user://logs/mods/iplaylf2-autopilot"
-const SAMPLE_INTERVAL_SECONDS := 1.0
-const MAX_FILE_BYTES := 32 * 1024 * 1024
 const FLUSH_EVERY_SAMPLES := 16
 
 var _file: File = null
@@ -16,93 +13,85 @@ var _writer_mutex: Mutex = Mutex.new()
 var _writer_semaphore: Semaphore = Semaphore.new()
 var _pending_writes := []
 var _writer_stop_requested := false
-var _session_id := ""
-var _part_index := 0
+var _battle_run_id := ""
+var _segment_id := ""
+var _run_directory := ""
+var _wave_number := 0
+var _control_source := ""
 var _player_count := 0
-var _decision_counts := []
-var _sample_counts := []
-var _decisions_until_sample := []
 var _samples_since_flush := 0
-var _sample_every_decisions := 1
 var _active := false
 var _accepting_records := false
 var _current_path := ""
-var _control_interval_seconds := 0.0
+var _wave_context_written := false
+var _player_context_written := []
 
 
-func start(player_count: int, control_interval_seconds: float) -> void:
+func start(
+	player_count: int,
+	battle_run_id: String,
+	wave_number: int,
+	control_source: String,
+	sampling_policy: Dictionary
+) -> void:
 	_player_count = player_count
-	_control_interval_seconds = control_interval_seconds
-	_sample_every_decisions = max(
-		1, int(round(SAMPLE_INTERVAL_SECONDS / max(0.001, control_interval_seconds)))
-	)
-	_decision_counts.resize(player_count)
-	_sample_counts.resize(player_count)
-	_decisions_until_sample.resize(player_count)
+	_player_context_written.resize(player_count)
 	for player_index in player_count:
-		_decision_counts[player_index] = 0
-		_sample_counts[player_index] = 0
-		_decisions_until_sample[player_index] = 0
-
-	_session_id = _make_session_id()
+		_player_context_written[player_index] = false
+	_battle_run_id = battle_run_id
+	_segment_id = _make_segment_id()
+	_wave_number = wave_number
+	_control_source = control_source
+	_run_directory = "%s/%s" % [SAMPLE_DIRECTORY, _battle_run_id]
 	var directory := Directory.new()
-	var directory_error := directory.make_dir_recursive(SAMPLE_DIRECTORY)
-	if directory_error != OK and not directory.dir_exists(SAMPLE_DIRECTORY):
+	var directory_error := directory.make_dir_recursive(_run_directory)
+	if directory_error != OK and not directory.dir_exists(_run_directory):
 		ModLoaderLog.error(
 			(
-				"Could not create the decision sample directory %s (error %s)."
-				% [SAMPLE_DIRECTORY, directory_error]
+				"Could not create the battle sample directory %s (error %s)."
+				% [_run_directory, directory_error]
 			),
 			MOD_ID
 		)
 		return
-	if not _open_part(control_interval_seconds, false):
+	if not _open_file(sampling_policy):
 		return
-	_writer_stop_requested = false
-	_pending_writes.clear()
 	_writer_thread = Thread.new()
 	if _writer_thread.start(self, "_run_writer") != OK:
 		_file.close()
 		_file = null
 		_writer_thread = null
-		ModLoaderLog.error("Could not start the decision telemetry writer.", MOD_ID)
+		ModLoaderLog.error("Could not start the battle sample writer.", MOD_ID)
 		return
 	_writer_mutex.lock()
 	_accepting_records = true
 	_writer_mutex.unlock()
 	_active = true
-	if _active:
-		ModLoaderLog.info(
-			(
-				"Writing decision samples to %s (%s)."
-				% [_current_path, ProjectSettings.globalize_path(_current_path)]
-			),
-			MOD_ID
-		)
+	ModLoaderLog.info(
+		(
+			"Writing battle samples to %s (%s)."
+			% [_current_path, ProjectSettings.globalize_path(_current_path)]
+		),
+		MOD_ID
+	)
 
 
-func record_decision(
-	player_index: int, observation: Dictionary, plan: Dictionary, previous_movement: Vector2
+func record_bot_sample(
+	player_index: int,
+	decision_index: int,
+	sample_index: int,
+	observation: Dictionary,
+	plan: Dictionary,
+	previous_movement: Vector2
 ) -> void:
-	if not _is_accepting_records() or player_index < 0 or player_index >= _player_count:
+	if not _is_accepting_records():
 		return
-	_decision_counts[player_index] += 1
-	var should_sample: bool = _decisions_until_sample[player_index] <= 0
-	if plan.get("status", "") != "ready":
-		should_sample = true
-	if not should_sample:
-		_decisions_until_sample[player_index] -= 1
-		return
-
-	_decisions_until_sample[player_index] = _sample_every_decisions - 1
-	_sample_counts[player_index] += 1
 	_enqueue_record(
 		{
 			"record_type": "decision_sample",
-			"session_id": _session_id,
 			"player_index": player_index,
-			"decision_index": _decision_counts[player_index],
-			"sample_index": _sample_counts[player_index],
+			"decision_index": decision_index,
+			"sample_index": sample_index,
 			"physics_frame": observation.get("physics_frame"),
 			"previous_movement": previous_movement,
 			# Planning observations and plans are detached value graphs. Defer their
@@ -112,26 +101,42 @@ func record_decision(
 		}
 	)
 	_samples_since_flush += 1
-	var flush_after_write := false
-	# Flush each player's first recorded plan so an abnormal exit cannot leave an
-	# otherwise completed first decision buffered behind the regular batch policy.
-	if _sample_counts[player_index] == 1 or _samples_since_flush >= FLUSH_EVERY_SAMPLES:
-		flush_after_write = true
+	if _samples_since_flush >= FLUSH_EVERY_SAMPLES:
 		_samples_since_flush = 0
-	if flush_after_write:
 		_enqueue_flush()
 
 
-func close(final_player_states := []) -> void:
+func record_human_sample(player_index: int, sample_index: int, observation: Dictionary) -> void:
+	if not _is_accepting_records():
+		return
+	var movement: Vector2 = observation.get("player_state", {}).get("movement", {}).get(
+		"input_vector", Vector2.ZERO
+	)
+	_enqueue_record(
+		{
+			"record_type": "action_sample",
+			"player_index": player_index,
+			"sample_index": sample_index,
+			"physics_frame": observation.get("physics_frame"),
+			"action": {"movement": movement},
+			"observation": observation,
+		}
+	)
+	_samples_since_flush += 1
+	if _samples_since_flush >= FLUSH_EVERY_SAMPLES:
+		_samples_since_flush = 0
+		_enqueue_flush()
+
+
+func close(decision_counts: Array, sample_counts: Array, final_player_states: Array) -> void:
 	if not _active:
 		return
 	if _is_accepting_records():
 		_enqueue_record(
 			{
-				"record_type": "session_end",
-				"session_id": _session_id,
-				"decision_counts": _decision_counts,
-				"sample_counts": _sample_counts,
+				"record_type": "segment_end",
+				"decision_counts": decision_counts,
+				"sample_counts": sample_counts,
 				"final_player_states": final_player_states,
 			}
 		)
@@ -147,66 +152,39 @@ func close(final_player_states := []) -> void:
 
 
 func get_current_path() -> String:
-	_writer_mutex.lock()
+	return _current_path
+
+
+func _open_file(sampling_policy: Dictionary) -> bool:
+	_current_path = (
+		"%s/wave-%03d-%s-%s.jsonl"
+		% [_run_directory, _wave_number, _control_source, _segment_id]
+	)
 	var path := _current_path
-	_writer_mutex.unlock()
-	return path
-
-
-func _rotate(control_interval_seconds: float) -> bool:
-	if not _write_record_now(
-		{
-			"record_type": "part_end",
-			"session_id": _session_id,
-			"part_index": _part_index,
-		}
-	):
-		_file.close()
-		_file = null
-		return false
-	if not _flush_now():
-		_file.close()
-		_file = null
-		return false
-	_file.close()
-	_file = null
-	_part_index += 1
-	return _open_part(control_interval_seconds, true)
-
-
-func _open_part(control_interval_seconds: float, continued: bool) -> bool:
-	_writer_mutex.lock()
-	_current_path = "%s/%s-part-%03d.jsonl" % [SAMPLE_DIRECTORY, _session_id, _part_index]
-	var path := _current_path
-	_writer_mutex.unlock()
 	_file = File.new()
 	var open_error := _file.open(path, File.WRITE)
 	if open_error != OK:
 		ModLoaderLog.error(
-			"Could not open the decision sample file %s (error %s)." % [path, open_error], MOD_ID
+			"Could not open the battle sample file %s (error %s)." % [path, open_error], MOD_ID
 		)
 		_file = null
 		return false
 	if not _write_record_now(
 		{
-			"record_type": "session_start",
-			"session_id": _session_id,
-			"part_index": _part_index,
-			"continued": continued,
+			"record_type": "segment_start",
+			"run_id": _battle_run_id,
+			"segment_id": _segment_id,
+			"wave_number": _wave_number,
+			"control_source": _control_source,
 			"target_game_version": "1.1.15.4",
 			"player_count": _player_count,
-			"sampling":
-			{
-				"interval_seconds": SAMPLE_INTERVAL_SECONDS,
-				"control_interval_seconds": control_interval_seconds,
-				"every_decisions": _sample_every_decisions,
-				"maximum_part_bytes": MAX_FILE_BYTES,
-			},
+			"sampling_policy": sampling_policy,
 		}
 	):
 		_file.close()
 		_file = null
 		return false
+	_wave_context_written = false
 	if _flush_now():
 		return true
 	_file.close()
@@ -252,10 +230,6 @@ func _run_writer(_unused) -> void:
 			if not _write_record_now(record):
 				_stop_accepting_after_writer_failure()
 				return
-			if _file.get_position() >= MAX_FILE_BYTES:
-				if not _rotate(_control_interval_seconds):
-					_stop_accepting_after_writer_failure()
-					return
 		if should_stop:
 			_flush_now()
 			_file.close()
@@ -267,21 +241,49 @@ func _stop_accepting_after_writer_failure() -> void:
 	_writer_mutex.lock()
 	_accepting_records = false
 	_writer_mutex.unlock()
-	if _file != null:
-		_file.close()
-		_file = null
+	_file.close()
+	_file = null
 
 
 func _write_record_now(record: Dictionary) -> bool:
 	var persisted_record := record
-	if record.get("record_type", "") == "decision_sample":
+	if record.get("record_type", "") in ["decision_sample", "action_sample"]:
+		if not _wave_context_written:
+			if not _write_wave_context_now(record.observation):
+				return false
+			_wave_context_written = true
+		var player_index: int = record.player_index
+		if not _player_context_written[player_index]:
+			if not _write_player_context_now(player_index, record.observation):
+				return false
+			_player_context_written[player_index] = true
 		persisted_record = record.duplicate(false)
 		persisted_record.observation = _compact_observation(record.observation)
-		persisted_record.decision = _compact_plan(record.decision)
-	_file.store_line(JSON.print(_to_json_value(persisted_record)))
+	return _store_record_now(persisted_record)
+
+
+func _write_wave_context_now(observation: Dictionary) -> bool:
+	var wave_state: Dictionary = observation.get("wave_state", {}).duplicate(false)
+	wave_state.erase("seconds_remaining")
+	return _store_record_now({"record_type": "wave_context", "wave_state": wave_state})
+
+
+func _write_player_context_now(player_index: int, observation: Dictionary) -> bool:
+	var player_state: Dictionary = observation.get("player_state", {})
+	return _store_record_now(
+		{
+			"record_type": "player_context",
+			"player_index": player_index,
+			"stat_opportunity_profiles": player_state.get("stat_opportunity_profiles", {}),
+		}
+	)
+
+
+func _store_record_now(record: Dictionary) -> bool:
+	_file.store_line(JSON.print(_to_json_value(record)))
 	var write_error := _file.get_error()
 	if write_error != OK:
-		ModLoaderLog.error("Could not write decision telemetry (error %s)." % write_error, MOD_ID)
+		ModLoaderLog.error("Could not write battle samples (error %s)." % write_error, MOD_ID)
 		return false
 	return true
 
@@ -290,13 +292,20 @@ func _flush_now() -> bool:
 	_file.flush()
 	var flush_error := _file.get_error()
 	if flush_error != OK:
-		ModLoaderLog.error("Could not flush decision telemetry (error %s)." % flush_error, MOD_ID)
+		ModLoaderLog.error("Could not flush battle samples (error %s)." % flush_error, MOD_ID)
 		return false
 	return true
 
 
 func _compact_observation(observation: Dictionary) -> Dictionary:
 	var result: Dictionary = observation.duplicate(false)
+	var wave_state: Dictionary = result.get("wave_state", {}).duplicate(false)
+	for fixed_field in ["number", "final_number", "endless", "is_horde", "duration_seconds"]:
+		wave_state.erase(fixed_field)
+	result.wave_state = wave_state
+	var player_state: Dictionary = result.get("player_state", {}).duplicate(false)
+	player_state.erase("stat_opportunity_profiles")
+	result.player_state = player_state
 	# behavior_profile is the planner contract. The evidence and stable profile
 	# nested under last_measurement duplicate that same compiled mechanic for every
 	# tracked enemy, so persisting both would inflate sample size and writer work.
@@ -360,12 +369,6 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 	}
 
 
-func _compact_plan(plan: Dictionary) -> Dictionary:
-	# JSON conversion constructs the detached persisted graph. A second deep copy
-	# would only duplicate immutable planning state in the writer queue.
-	return plan.duplicate(false)
-
-
 func _to_json_value(value):
 	match typeof(value):
 		TYPE_DICTIONARY:
@@ -392,7 +395,7 @@ func _to_json_value(value):
 			return str(value)
 
 
-func _make_session_id() -> String:
+func _make_segment_id() -> String:
 	var now := OS.get_datetime()
 	return (
 		"%04d%02d%02d-%02d%02d%02d-%s"

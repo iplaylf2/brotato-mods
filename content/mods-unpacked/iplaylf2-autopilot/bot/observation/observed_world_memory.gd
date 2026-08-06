@@ -225,7 +225,7 @@ func get_planning_remembered_entities() -> Array:
 	# Confirmed-absent records remain part of the public historical observation
 	# contract, but cannot affect planning. Keeping them out of the hot snapshot
 	# prevents battle-long pickup history from growing every navigation query and
-	# telemetry sample without bound.
+	# recorded battle sample without bound.
 	return _materialize_remembered_entities(true, true)
 
 

@@ -3,6 +3,7 @@ extends SceneTree
 const PLANNING_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/planning/"
 const KNOWLEDGE_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/"
 const OBSERVATION_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/observation/"
+const SAMPLING_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/sampling/"
 var _failed := false
 var _fixtures: Reference
 var _observed_world_memory_script: Script
@@ -36,7 +37,127 @@ func _init() -> void:
 	_check_action_forecast_domain()
 	_check_immediate_hit_reserve_reachability()
 	_check_run_continuation_risk_and_action_selection()
+	_check_battle_sample_storage_contract()
 	quit(1 if _failed else 0)
+
+
+func _check_battle_sample_storage_contract() -> void:
+	var writer: Reference = load(SAMPLING_PATH + "battle_sample_writer.gd").new()
+	writer.start(2, "contract-run", 7, "human", {"interval_seconds": 1.0})
+	var path: String = writer.get_current_path()
+	var observation := {
+		"physics_frame": 123,
+		"wave_state":
+		{
+			"number": 7,
+			"final_number": 20,
+			"endless": false,
+			"is_horde": false,
+			"seconds_remaining": 42.0,
+			"duration_seconds": 60.0,
+		},
+		"player_state":
+		{
+			"movement": {"input_vector": Vector2.RIGHT},
+			"stat_opportunity_profiles": {"maximum_health": {"weight": 1.0}},
+		},
+		"enemy_tracks": [],
+	}
+	writer.record_human_sample(0, 1, observation)
+	var second_observation: Dictionary = observation.duplicate(true)
+	second_observation.physics_frame = 124
+	second_observation.player_state.stat_opportunity_profiles.maximum_health.weight = 2.0
+	writer.record_human_sample(1, 1, second_observation)
+	writer.close([0, 0], [1, 1], [])
+	_expect(
+		path.find("/contract-run/wave-007-human-") >= 0 and path.ends_with(".jsonl"),
+		"each wave and control source must use one file in the enclosing run directory"
+	)
+	var file := File.new()
+	var open_error: int = file.open(path, File.READ)
+	_expect(open_error == OK, "the sample writer must create a readable human segment")
+	if open_error != OK:
+		return
+	var records := []
+	while not file.eof_reached():
+		var line: String = file.get_line()
+		if line.empty():
+			continue
+		records.push_back(JSON.parse(line).result)
+	file.close()
+	var header := {}
+	var wave_context := {}
+	var player_contexts := {}
+	var header_count := 0
+	var wave_context_count := 0
+	var player_context_count := 0
+	var action_count := 0
+	var samples_are_compact := true
+	var segment_end_count := 0
+	var wave_context_index := -1
+	var player_context_index := -1
+	var action_index := -1
+	for record_index in records.size():
+		var record: Dictionary = records[record_index]
+		match record.get("record_type", ""):
+			"segment_start":
+				header = record
+				header_count += 1
+			"wave_context":
+				wave_context = record
+				wave_context_count += 1
+				wave_context_index = record_index
+			"player_context":
+				player_contexts[int(record.player_index)] = record
+				player_context_count += 1
+				player_context_index = record_index
+			"action_sample":
+				action_count += 1
+				action_index = record_index
+				samples_are_compact = (
+					samples_are_compact
+					and not record.has("run_id")
+					and not record.observation.wave_state.has("number")
+					and not record.observation.player_state.has("stat_opportunity_profiles")
+				)
+			"segment_end":
+				segment_end_count += 1
+	_expect(
+		(
+			header_count == 1
+			and wave_context_count == 1
+			and player_context_count == 2
+			and action_count == 2
+			and segment_end_count == 1
+			and wave_context_index < action_index
+			and player_context_index < action_index
+		),
+		"a human segment must declare its wave and player contexts before sampling and end once"
+	)
+	if (
+		header_count != 1
+		or wave_context_count != 1
+		or player_context_count != 2
+		or action_count != 2
+		or segment_end_count != 1
+	):
+		return
+	_expect(
+		header.control_source == "human" and header.run_id == "contract-run",
+		"the file header must associate the segment with its run and control source"
+	)
+	_expect(
+		(
+			wave_context.wave_state.number == 7
+			and player_contexts[0].stat_opportunity_profiles.maximum_health.weight == 1.0
+			and player_contexts[1].stat_opportunity_profiles.maximum_health.weight == 2.0
+		),
+		"wave-wide context must be shared while player context remains player-specific"
+	)
+	_expect(
+		samples_are_compact,
+		"per-sample records must omit metadata already declared by the file context"
+	)
 
 
 func _check_exact_observed_state() -> void:

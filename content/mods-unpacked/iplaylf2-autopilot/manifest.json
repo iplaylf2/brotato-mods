@@ -25,13 +25,20 @@
       "config_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "Autopilot",
-        "description": "Configure Autopilot's battle movement control.",
+        "description": "Configure Autopilot's battle movement control and sample recording.",
         "type": "object",
         "properties": {
           "enabled": {
             "title": "Enable Autopilot",
             "description": "Allow Autopilot to control your battle movement.",
-            "tooltip": "While enabled in battle, Autopilot writes local decision samples for diagnostics and calibration.",
+            "tooltip": "This setting is independent from battle sample recording.",
+            "type": "boolean",
+            "default": false
+          },
+          "sampling_enabled": {
+            "title": "Record Battle Samples",
+            "description": "Write local JSON Lines samples for diagnostics, calibration, and post-battle review.",
+            "tooltip": "With Autopilot disabled, samples capture human movement as reference data.",
             "type": "boolean",
             "default": false
           }

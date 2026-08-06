@@ -114,11 +114,13 @@ Autopilot 不得增加或修改移动输入以外的控制。具体包括：
 ## 代码边界
 
 - `bot/control/autopilot_movement_behavior.gd` 是唯一动作适配器，只返回移动向量和空目标位置。
-- `bot/control/autopilot_controller.gd` 安排规划，安装、更新和恢复 `MovementBehavior`，并把合法观察与只读
-  规划结果交给采样器；持久化不能成为读取额外场景状态的入口。
+- `bot/control/autopilot_controller.gd` 安排规划并安装、更新和恢复 `MovementBehavior`；启用采样时，它只把
+  已经取得的合法观察与只读规划结果交给记录器。
 - `bot/control/planning_worker.gd` 只接收控制器提交的脱离场景值快照和帧预算上下文，在工作线程创建并
   独占规划器状态，然后返回值结果；它不读取场景树，也不应用计划结果。
-- `bot/control/decision_telemetry.gd` 只序列化控制器已经取得的观察和规划结果，不读取场景节点，也不参与
+- `bot/sampling/battle_sample_recorder.gd` 在 bot 控制下只接收控制器已经取得的值，在 human 控制下只读取
+  `ObservationService` 公开的观察；持久化不能成为额外的场景读取入口。
+- `bot/sampling/battle_sample_writer.gd` 只转换和写入记录器提交的值，不读取场景节点，也不参与采样准入、
   计划生成或动作选择。
 - `bot/planning` 只消费不含场景节点的观察字典；武器结果估计只能产生只读结果。
 - `bot/observation` 负责在数据进入公共观察前执行外部可见性约束并移除场景节点。

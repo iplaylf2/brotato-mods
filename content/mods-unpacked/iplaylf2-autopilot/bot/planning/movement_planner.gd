@@ -153,8 +153,8 @@ func plan(observation: Dictionary) -> Dictionary:
 		else null
 	)
 	plan.status = "ready"
-	# Per-enemy values are an execution cache, not telemetry. Keeping the cache out
-	# of the returned plan avoids duplicating an O(enemy_count) dictionary whenever
+	# Per-enemy values are an execution cache, not part of the returned decision.
+	# Keeping the cache out avoids duplicating an O(enemy_count) dictionary whenever
 	# a sampled decision is serialized.
 	plan.context = context.duplicate(false)
 	plan.context.erase("enemy_completion_value_ledger")
