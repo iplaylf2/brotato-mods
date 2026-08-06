@@ -131,7 +131,7 @@
   `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样的有限目标容量守恒。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
   `bot/planning/engagement/damage_completion_work_model.gd` 统一把剩余生命和单次伤害换算为离散击打工作量，
-  并把未知攻击相位下的连续容量换算为截止前完成概率；
+  并把首个已知攻击机会之后按长期速率累计的连续容量换算为截止前完成代理；
   `bot/planning/engagement/neutral_completion_work_model.gd` 把树木最后一次观测的剩余生命、命中状态和
   玩家的一击完成状态统一解释为有效攻击工作量，供波次容量与局部武器结果共享。
 - `bot/planning/engagement/enemy_completion_value_model.gd` 拥有敌人完成状态转移的价值账本；
@@ -174,7 +174,8 @@
   `bot/planning/motion/projectile_motion_predictor.gd` 提供；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止
   策略仍归调用方。
-- `bot/control/decision_telemetry.gd` 拥有采样频率、JSON Lines 编码、画像压缩、落盘和分片策略；
+- `bot/control/decision_telemetry.gd` 拥有采样频率、独占写入线程、JSON Lines 编码、画像压缩、落盘和分片策略；
+  存储失败时由该边界停止接受记录并保留可回收的线程生命周期，不把遥测失败提升为移动控制失败；
   `MovementPlanner` 拥有规划结果及诊断语义。采样器省略重复的机制配置与规则证据，但保留解释路径风险
   所需的攻击因果字段和当前攻击时间窗，并降低同步刷新频率；规划视图省略已确认不存在的永久历史记录，
   公共观察仍保留它们。两项优化都不改变规划所消费的当前机会或保留字段的语义值。

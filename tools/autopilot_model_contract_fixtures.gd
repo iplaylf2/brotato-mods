@@ -50,7 +50,14 @@ func planning_observation(enemy_tracks: Array) -> Dictionary:
 
 func weapon_attack_model() -> Dictionary:
 	return {
-		"timing": {"expected_attack_interval_seconds": 1.0, "permitted_while_moving": true},
+		"timing":
+		{
+			"expected_attack_interval_seconds": 1.0,
+			"current_cooldown_seconds": 0.0,
+			"attack_in_progress": false,
+			"seconds_until_next_attack": 0.0,
+			"permitted_while_moving": true,
+		},
 		"delivery":
 		{
 			"minimum_targeting_distance": 0.0,

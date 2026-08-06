@@ -63,7 +63,8 @@ func value_at(
 			observed_weapon.attack_model,
 			targets,
 			completion_horizon_seconds,
-			range_transition_distance
+			range_transition_distance,
+			forecast_seconds
 		)
 	var negative_value_cap := 0.0
 	var positive_value_cap := 0.0
@@ -117,7 +118,8 @@ func _weapon_completion_value(
 	attack_model: Dictionary,
 	targets: Array,
 	completion_horizon_seconds: float,
-	range_transition_distance: float
+	range_transition_distance: float,
+	elapsed_seconds: float
 ) -> float:
 	var delivery: Dictionary = attack_model.delivery
 	var minimum_distance: float = max(0.0, delivery.minimum_targeting_distance)
@@ -174,12 +176,13 @@ func _weapon_completion_value(
 			}
 		)
 
-	var attack_interval: float = max(0.05, attack_model.timing.expected_attack_interval_seconds)
-	var primary_path_count: float = (
-		max(1.0, float(paths.count))
-		* clamp(paths.primary_probability_floor, 0.05, 1.0)
+	var primary_path_count: float = float(paths.count) * float(paths.primary_probability_floor)
+	var base_hit_capacity: float = (
+		primary_path_count
+		* _weapon_attack_capacity_model.expected_attack_count(
+			attack_model, completion_horizon_seconds, elapsed_seconds
+		)
 	)
-	var base_hit_capacity: float = primary_path_count * completion_horizon_seconds / attack_interval
 	var primary_value: float = (
 		primary.confidence
 		* _completion_value_for_capacity(

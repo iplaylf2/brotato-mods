@@ -485,12 +485,43 @@ func _check_weapon_outcome_contracts() -> void:
 		"state_factors": {"health_inventory_value": {}},
 		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 0.0, 2: 0.0}),
 	}
+	observation.player_state.weapons[0].attack_model.timing.seconds_until_next_attack = 0.5
+	observation.player_state.weapons[0].attack_model.impact.damage = 5.0
 	var outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
 	field.accumulate_outcome(observation, action, outcome, context)
 	_expect(
 		is_equal_approx(outcome.expected_weapon_damage, 5.0),
 		"weapon benefit and forecast collision cost must use the same action horizon"
 	)
+	observation.physics_frame += 1
+	observation.enemy_tracks = [low_value_track]
+	observation.player_state.weapons[0].attack_model.timing.seconds_until_next_attack = 1.0
+	var cooling_down_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(observation, action, cooling_down_outcome, context)
+	_expect(
+		is_equal_approx(cooling_down_outcome.expected_weapon_damage, 0.0),
+		"a weapon whose visible cooldown exceeds the forecast must not prepay an attack"
+	)
+	observation.physics_frame += 1
+	low_value_track.relative_position = Vector2(300.0, 0.0)
+	observation.player_state.weapons[0].attack_model.timing.seconds_until_next_attack = 0.0
+	var lock_boundary_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(observation, action, lock_boundary_outcome, context)
+	_expect(
+		lock_boundary_outcome.expected_weapon_damage > 0.0,
+		"the exact vanilla maximum lock distance must remain attackable"
+	)
+	low_value_track.relative_position = Vector2(300.01, 0.0)
+	observation.physics_frame += 1
+	var outside_lock_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(observation, action, outside_lock_outcome, context)
+	_expect(
+		is_equal_approx(outside_lock_outcome.expected_weapon_damage, 0.0),
+		"a target center beyond the exact vanilla lock distance must remain unavailable"
+	)
+	low_value_track.relative_position = Vector2(100.0, 0.0)
+	observation.enemy_tracks = [low_value_track, high_value_track]
+	observation.player_state.weapons[0].attack_model.timing.seconds_until_next_attack = 0.5
 	_expect(
 		(
 			outcome.expected_enemy_completion_equivalents > 0.0
@@ -506,7 +537,12 @@ func _check_weapon_outcome_contracts() -> void:
 		"automatic weapon reward delta must follow the nearest target's completion fraction"
 	)
 	observation.physics_frame = 4
-	observation.player_state.weapons.push_back({"slot": 1, "attack_model": _weapon_attack_model()})
+	observation.player_state.weapons.push_back(
+		{
+			"slot": 1,
+			"attack_model": observation.player_state.weapons[0].attack_model.duplicate(true),
+		}
+	)
 	var shared_delivery_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
 	field.accumulate_outcome(observation, action, shared_delivery_outcome, context)
 	_expect(
@@ -516,9 +552,12 @@ func _check_weapon_outcome_contracts() -> void:
 		"weapons sharing target geometry must retain their independent attack capacity"
 	)
 	_expect(
-		is_equal_approx(
-			shared_delivery_outcome.expected_enemy_completion_equivalents,
-			shared_delivery_outcome.expected_enemy_hits
+		(
+			shared_delivery_outcome.expected_enemy_completion_equivalents > 0.0
+			and (
+				shared_delivery_outcome.expected_enemy_completion_equivalents
+				<= shared_delivery_outcome.expected_enemy_hits
+			)
 		),
 		"enemy completion mass must not exceed the finite enemy contacts that can realize it"
 	)

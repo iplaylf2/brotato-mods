@@ -177,11 +177,7 @@ func _apply_plan_results(results: Array) -> void:
 			)
 		_current_plans[player_index] = plan
 		_decision_telemetry.record_decision(
-			player_index,
-			observation,
-			plan,
-			_previous_movements[player_index],
-			_replan_interval_seconds
+			player_index, observation, plan, _previous_movements[player_index]
 		)
 		var movement: Vector2 = plan.movement
 		_actuators[player_index].set_movement(movement)

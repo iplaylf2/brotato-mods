@@ -1,8 +1,8 @@
 extends SceneTree
 
-# Executes the real MovementPlanner through its initial and subsequent background
-# cycles. This covers planner construction, mutable state ownership, value-only
-# request transfer, result handoff, and shutdown.
+# Exercises Autopilot's planning-handoff contract with the real MovementPlanner:
+# only one request may own the planner graph at a time, completions must remain
+# paired with their observations, and shutdown must close the handoff boundary.
 
 var _worker: Reference
 
@@ -17,6 +17,9 @@ func _init() -> void:
 		"res://mods-unpacked/iplaylf2-autopilot/bot/control/planning_worker.gd"
 	)
 	_worker = worker_script.new()
+	if _worker.submit([]):
+		_fail("a stopped worker must reject planning requests")
+		return
 	if not _worker.start(1):
 		_fail("worker must start")
 		return
@@ -32,6 +35,12 @@ func _init() -> void:
 			]
 		):
 			_fail("worker must accept cycle %s" % cycle)
+			return
+		if _worker.submit([]):
+			_fail("worker must reject an overlapping planning cycle")
+			return
+		if not _worker.is_busy():
+			_fail("an accepted planning cycle must own the handoff until collected")
 			return
 		while true:
 			var completion: Dictionary = _worker.poll()
@@ -52,7 +61,16 @@ func _init() -> void:
 					return
 				break
 			OS.delay_usec(100)
+		if _worker.is_busy():
+			_fail("collecting a completion must release the planning handoff")
+			return
+		if _worker.poll().ready:
+			_fail("a completion must be consumable exactly once")
+			return
 	_worker.shutdown()
+	if _worker.submit([]):
+		_fail("a shut-down worker must reject planning requests")
+		return
 	quit(0)
 
 

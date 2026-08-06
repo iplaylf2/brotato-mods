@@ -11,6 +11,11 @@ const MAX_FILE_BYTES := 32 * 1024 * 1024
 const FLUSH_EVERY_SAMPLES := 16
 
 var _file: File = null
+var _writer_thread: Thread = null
+var _writer_mutex: Mutex = Mutex.new()
+var _writer_semaphore: Semaphore = Semaphore.new()
+var _pending_writes := []
+var _writer_stop_requested := false
 var _session_id := ""
 var _part_index := 0
 var _player_count := 0
@@ -20,11 +25,14 @@ var _decisions_until_sample := []
 var _samples_since_flush := 0
 var _sample_every_decisions := 1
 var _active := false
+var _accepting_records := false
 var _current_path := ""
+var _control_interval_seconds := 0.0
 
 
 func start(player_count: int, control_interval_seconds: float) -> void:
 	_player_count = player_count
+	_control_interval_seconds = control_interval_seconds
 	_sample_every_decisions = max(
 		1, int(round(SAMPLE_INTERVAL_SECONDS / max(0.001, control_interval_seconds)))
 	)
@@ -48,7 +56,21 @@ func start(player_count: int, control_interval_seconds: float) -> void:
 			MOD_ID
 		)
 		return
-	_active = _open_part(control_interval_seconds, false)
+	if not _open_part(control_interval_seconds, false):
+		return
+	_writer_stop_requested = false
+	_pending_writes.clear()
+	_writer_thread = Thread.new()
+	if _writer_thread.start(self, "_run_writer") != OK:
+		_file.close()
+		_file = null
+		_writer_thread = null
+		ModLoaderLog.error("Could not start the decision telemetry writer.", MOD_ID)
+		return
+	_writer_mutex.lock()
+	_accepting_records = true
+	_writer_mutex.unlock()
+	_active = true
 	if _active:
 		ModLoaderLog.info(
 			(
@@ -60,13 +82,9 @@ func start(player_count: int, control_interval_seconds: float) -> void:
 
 
 func record_decision(
-	player_index: int,
-	observation: Dictionary,
-	plan: Dictionary,
-	previous_movement: Vector2,
-	control_interval_seconds: float
+	player_index: int, observation: Dictionary, plan: Dictionary, previous_movement: Vector2
 ) -> void:
-	if not _active or player_index < 0 or player_index >= _player_count:
+	if not _is_accepting_records() or player_index < 0 or player_index >= _player_count:
 		return
 	_decision_counts[player_index] += 1
 	var should_sample: bool = _decisions_until_sample[player_index] <= 0
@@ -78,7 +96,7 @@ func record_decision(
 
 	_decisions_until_sample[player_index] = _sample_every_decisions - 1
 	_sample_counts[player_index] += 1
-	_write_record(
+	_enqueue_record(
 		{
 			"record_type": "decision_sample",
 			"session_id": _session_id,
@@ -87,69 +105,89 @@ func record_decision(
 			"sample_index": _sample_counts[player_index],
 			"physics_frame": observation.get("physics_frame"),
 			"previous_movement": previous_movement,
-			"observation": _compact_observation(observation),
-			"decision": _compact_plan(plan),
+			# Planning observations and plans are detached value graphs. Defer their
+			# compaction with JSON conversion so the physics callback only enqueues.
+			"observation": observation,
+			"decision": plan,
 		}
 	)
 	_samples_since_flush += 1
+	var flush_after_write := false
 	# Flush each player's first recorded plan so an abnormal exit cannot leave an
 	# otherwise completed first decision buffered behind the regular batch policy.
 	if _sample_counts[player_index] == 1 or _samples_since_flush >= FLUSH_EVERY_SAMPLES:
-		_file.flush()
+		flush_after_write = true
 		_samples_since_flush = 0
-	if _file.get_position() >= MAX_FILE_BYTES:
-		_rotate(control_interval_seconds)
+	if flush_after_write:
+		_enqueue_flush()
 
 
 func close(final_player_states := []) -> void:
 	if not _active:
 		return
-	_write_record(
-		{
-			"record_type": "session_end",
-			"session_id": _session_id,
-			"decision_counts": _decision_counts,
-			"sample_counts": _sample_counts,
-			"final_player_states": final_player_states,
-		}
-	)
-	_file.flush()
-	_file.close()
-	_file = null
+	if _is_accepting_records():
+		_enqueue_record(
+			{
+				"record_type": "session_end",
+				"session_id": _session_id,
+				"decision_counts": _decision_counts,
+				"sample_counts": _sample_counts,
+				"final_player_states": final_player_states,
+			}
+		)
+	_writer_mutex.lock()
+	_accepting_records = false
+	_writer_stop_requested = true
+	_writer_mutex.unlock()
+	_writer_semaphore.post()
+	_writer_thread.wait_to_finish()
+	_writer_thread = null
+	_pending_writes.clear()
 	_active = false
 
 
 func get_current_path() -> String:
-	return _current_path
+	_writer_mutex.lock()
+	var path := _current_path
+	_writer_mutex.unlock()
+	return path
 
 
-func _rotate(control_interval_seconds: float) -> void:
-	_write_record(
+func _rotate(control_interval_seconds: float) -> bool:
+	if not _write_record_now(
 		{
 			"record_type": "part_end",
 			"session_id": _session_id,
 			"part_index": _part_index,
 		}
-	)
-	_file.flush()
+	):
+		_file.close()
+		_file = null
+		return false
+	if not _flush_now():
+		_file.close()
+		_file = null
+		return false
 	_file.close()
 	_file = null
 	_part_index += 1
-	_active = _open_part(control_interval_seconds, true)
+	return _open_part(control_interval_seconds, true)
 
 
 func _open_part(control_interval_seconds: float, continued: bool) -> bool:
+	_writer_mutex.lock()
 	_current_path = "%s/%s-part-%03d.jsonl" % [SAMPLE_DIRECTORY, _session_id, _part_index]
+	var path := _current_path
+	_writer_mutex.unlock()
 	_file = File.new()
-	var open_error := _file.open(_current_path, File.WRITE)
+	var open_error := _file.open(path, File.WRITE)
 	if open_error != OK:
 		ModLoaderLog.error(
-			"Could not open the decision sample file %s (error %s)." % [_current_path, open_error],
-			MOD_ID
+			"Could not open the decision sample file %s (error %s)." % [path, open_error], MOD_ID
 		)
 		_file = null
 		return false
-	_write_record(
+	if not _write_record_now(
 		{
 			"record_type": "session_start",
 			"session_id": _session_id,
@@ -165,20 +203,103 @@ func _open_part(control_interval_seconds: float, continued: bool) -> bool:
 				"maximum_part_bytes": MAX_FILE_BYTES,
 			},
 		}
-	)
-	_file.flush()
+	):
+		_file.close()
+		_file = null
+		return false
+	if _flush_now():
+		return true
+	_file.close()
+	_file = null
+	return false
+
+
+func _is_accepting_records() -> bool:
+	_writer_mutex.lock()
+	var accepting := _accepting_records
+	_writer_mutex.unlock()
+	return accepting
+
+
+func _enqueue_record(record: Dictionary) -> void:
+	_writer_mutex.lock()
+	_pending_writes.push_back(record)
+	_writer_mutex.unlock()
+	_writer_semaphore.post()
+
+
+func _enqueue_flush() -> void:
+	_writer_mutex.lock()
+	_pending_writes.push_back(null)
+	_writer_mutex.unlock()
+	_writer_semaphore.post()
+
+
+func _run_writer(_unused) -> void:
+	while true:
+		_writer_semaphore.wait()
+		_writer_mutex.lock()
+		var writes: Array = _pending_writes
+		_pending_writes = []
+		var should_stop := _writer_stop_requested
+		_writer_mutex.unlock()
+		for record in writes:
+			if record == null:
+				if not _flush_now():
+					_stop_accepting_after_writer_failure()
+					return
+				continue
+			if not _write_record_now(record):
+				_stop_accepting_after_writer_failure()
+				return
+			if _file.get_position() >= MAX_FILE_BYTES:
+				if not _rotate(_control_interval_seconds):
+					_stop_accepting_after_writer_failure()
+					return
+		if should_stop:
+			_flush_now()
+			_file.close()
+			_file = null
+			return
+
+
+func _stop_accepting_after_writer_failure() -> void:
+	_writer_mutex.lock()
+	_accepting_records = false
+	_writer_mutex.unlock()
+	if _file != null:
+		_file.close()
+		_file = null
+
+
+func _write_record_now(record: Dictionary) -> bool:
+	var persisted_record := record
+	if record.get("record_type", "") == "decision_sample":
+		persisted_record = record.duplicate(false)
+		persisted_record.observation = _compact_observation(record.observation)
+		persisted_record.decision = _compact_plan(record.decision)
+	_file.store_line(JSON.print(_to_json_value(persisted_record)))
+	var write_error := _file.get_error()
+	if write_error != OK:
+		ModLoaderLog.error("Could not write decision telemetry (error %s)." % write_error, MOD_ID)
+		return false
 	return true
 
 
-func _write_record(record: Dictionary) -> void:
-	_file.store_line(JSON.print(_to_json_value(record)))
+func _flush_now() -> bool:
+	_file.flush()
+	var flush_error := _file.get_error()
+	if flush_error != OK:
+		ModLoaderLog.error("Could not flush decision telemetry (error %s)." % flush_error, MOD_ID)
+		return false
+	return true
 
 
 func _compact_observation(observation: Dictionary) -> Dictionary:
 	var result: Dictionary = observation.duplicate(false)
 	# behavior_profile is the planner contract. The evidence and stable profile
 	# nested under last_measurement duplicate that same compiled mechanic for every
-	# tracked enemy and made crowded-wave samples dominate frame time.
+	# tracked enemy, so persisting both would inflate sample size and writer work.
 	var tracks := []
 	for observed_track in result.get("enemy_tracks", []):
 		var track: Dictionary = observed_track.duplicate(false)
@@ -196,7 +317,7 @@ func _compact_observation(observation: Dictionary) -> Dictionary:
 func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 	# Most stable attack configuration repeats across samples. Keep the current
 	# timing window and the causal fields needed to explain path risk; omit
-	# unrelated attack configuration and rule evidence from main-thread encoding.
+	# unrelated attack configuration and rule evidence from persisted samples.
 	var projectile_attack: Dictionary = profile.get("projectile_attack", {})
 	var charge_attack: Dictionary = profile.get("charge_attack", {})
 	var target_response: Dictionary = profile.get("target_position_response", {})
@@ -240,9 +361,8 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 
 
 func _compact_plan(plan: Dictionary) -> Dictionary:
-	# JSON conversion already constructs a detached value graph. A second deep
-	# copy here only extends the sampled physics frame and duplicates immutable
-	# planning state.
+	# JSON conversion constructs the detached persisted graph. A second deep copy
+	# would only duplicate immutable planning state in the writer queue.
 	return plan.duplicate(false)
 
 

@@ -136,13 +136,21 @@ func _estimate_outcome_along_path(
 	# terminal target arrangement to every expected attack would prepay damage that
 	# cannot occur while the player is still approaching.
 	_accumulate_outcome_at_path_sample(
-		observation, Vector2.ZERO, 0.0, forecast_seconds / 6.0, transition_width, is_moving, result
+		observation,
+		Vector2.ZERO,
+		0.0,
+		forecast_seconds / 6.0,
+		forecast_seconds,
+		transition_width,
+		is_moving,
+		result
 	)
 	_accumulate_outcome_at_path_sample(
 		observation,
 		terminal_displacement * 0.5,
 		forecast_seconds * 0.5,
 		forecast_seconds * 4.0 / 6.0,
+		forecast_seconds,
 		transition_width,
 		is_moving,
 		result
@@ -152,6 +160,7 @@ func _estimate_outcome_along_path(
 		terminal_displacement,
 		forecast_seconds,
 		forecast_seconds / 6.0,
+		forecast_seconds,
 		transition_width,
 		is_moving,
 		result
@@ -164,6 +173,7 @@ func _accumulate_outcome_at_path_sample(
 	player_displacement: Vector2,
 	time: float,
 	duration_weight: float,
+	forecast_seconds: float,
 	transition_width: float,
 	is_moving: bool,
 	result: Dictionary
@@ -177,7 +187,11 @@ func _accumulate_outcome_at_path_sample(
 				attack_model, target_samples, transition_width
 			)
 		_accumulate_weapon_outcome(
-			attack_model, coverage_by_delivery[delivery_key], duration_weight, result
+			attack_model,
+			coverage_by_delivery[delivery_key],
+			duration_weight,
+			forecast_seconds,
+			result
 		)
 
 
@@ -226,12 +240,17 @@ func _sample_targets(observation: Dictionary, player_displacement: Vector2, time
 
 
 func _accumulate_weapon_outcome(
-	attack_model: Dictionary, coverage: Dictionary, exposure_seconds: float, outcome: Dictionary
+	attack_model: Dictionary,
+	coverage: Dictionary,
+	exposure_seconds: float,
+	forecast_seconds: float,
+	outcome: Dictionary
 ) -> void:
-	var attack_interval_seconds: float = max(
-		0.05, attack_model.timing.expected_attack_interval_seconds
+	var expected_attack_count: float = (
+		_weapon_attack_capacity_model.expected_attack_count(attack_model, forecast_seconds)
+		* exposure_seconds
+		/ max(0.0001, forecast_seconds)
 	)
-	var expected_attack_count: float = exposure_seconds / attack_interval_seconds
 	if expected_attack_count <= 0.0:
 		return
 	if coverage.target_availability <= 0.0:
@@ -293,7 +312,7 @@ func _summarize_target_coverage(
 	for sample in target_samples:
 		var target: Dictionary = sample.target
 		var coverage: float = (
-			_range_coverage(sample.distance, minimum_distance, maximum_distance, transition_width)
+			_range_coverage(sample.distance, minimum_distance, maximum_distance)
 			* clamp(target.confidence, 0.0, 1.0)
 		)
 		if coverage <= 0.0:
@@ -307,9 +326,9 @@ func _summarize_target_coverage(
 		)
 	var nearer_targets_unavailable_probability := 1.0
 	for covered in covered_samples:
-		# Vanilla chooses the nearest target. Smooth range coverage represents the
-		# uncertainty at a lock boundary; a farther target is selected only when all
-		# nearer targets are unavailable.
+		# Vanilla chooses the nearest target inside its exact range. A farther target
+		# receives probability only from uncertainty that nearer remembered targets
+		# still exist, never from a softened targeting boundary.
 		var selection_weight: float = covered.coverage * nearer_targets_unavailable_probability
 		covered.selection_weight = selection_weight
 		total_selection_weight += selection_weight
@@ -477,26 +496,17 @@ func _direct_path_intersection(
 	return best_intersection
 
 
-func _range_coverage(
-	distance: float, minimum_distance: float, maximum_distance: float, transition_width: float
-) -> float:
-	var upper_coverage: float = clamp(
-		(maximum_distance - distance) / max(1.0, transition_width), 0.0, 1.0
-	)
-	if minimum_distance <= 0.0:
-		return upper_coverage
-	var lower_coverage: float = clamp(
-		(distance - minimum_distance) / max(1.0, transition_width), 0.0, 1.0
-	)
-	return min(lower_coverage, upper_coverage)
+func _range_coverage(distance: float, minimum_distance: float, maximum_distance: float) -> float:
+	# Visible target centers and the vanilla lock boundary are both exact. A
+	# movement-derived soft band shifted usable range inward and could also keep
+	# otherwise certain, mutually exclusive nearest targets alive for unnecessary
+	# direct-path intersections.
+	return 1.0 if distance >= minimum_distance and distance <= maximum_distance else 0.0
 
 
 func _expected_target_hits(attack_model: Dictionary, coverage: Dictionary) -> Dictionary:
 	var paths: Dictionary = attack_model.delivery.paths
-	var primary_hits: float = (
-		max(1.0, float(paths.count))
-		* clamp(paths.primary_probability_floor, 0.05, 1.0)
-	)
+	var primary_hits: float = float(paths.count) * float(paths.primary_probability_floor)
 	var direct_mass: Dictionary = coverage.additional_direct_target_mass
 	var direct_capacity: float = min(max(0.0, float(paths.hit_capacity) - 1.0), direct_mass.total)
 	var direct_scale: float = direct_capacity / max(0.0001, direct_mass.total)
@@ -535,10 +545,7 @@ func _expected_target_hits(attack_model: Dictionary, coverage: Dictionary) -> Di
 
 func _expected_damage_per_attack(attack_model: Dictionary, coverage: Dictionary) -> float:
 	var paths: Dictionary = attack_model.delivery.paths
-	var primary_hits: float = (
-		max(1.0, float(paths.count))
-		* clamp(paths.primary_probability_floor, 0.05, 1.0)
-	)
+	var primary_hits: float = float(paths.count) * float(paths.primary_probability_floor)
 	var impact_damage: float = _weapon_attack_capacity_model.expected_damage_per_hit(attack_model)
 	var primary_damage: float = impact_damage * primary_hits
 	var additional_covered_targets: float = coverage.additional_direct_target_mass.total

@@ -9,6 +9,22 @@ func expected_damage_per_hit(attack_model: Dictionary) -> float:
 	return attack_model.impact.damage * _critical_damage_multiplier(attack_model)
 
 
+func expected_attack_count(
+	attack_model: Dictionary, horizon_seconds: float, elapsed_seconds: float = 0.0
+) -> float:
+	var timing: Dictionary = attack_model.timing
+	var interval_seconds: float = timing.expected_attack_interval_seconds
+	var horizon := max(0.0, horizon_seconds)
+	var seconds_until_ready := max(
+		0.0, float(timing.seconds_until_next_attack) - max(0.0, elapsed_seconds)
+	)
+	if seconds_until_ready > horizon:
+		return 0.0
+	# The compiled current cooldown and visible animation phase fix the first
+	# opportunity. Later random cooldowns remain an expectation at the long-run rate.
+	return 1.0 + max(0.0, horizon - seconds_until_ready) / interval_seconds
+
+
 func expected_primary_damage_rate(weapons: Array, is_moving: bool = false) -> float:
 	var result := 0.0
 	for observed_weapon in weapons:
@@ -18,7 +34,7 @@ func expected_primary_damage_rate(weapons: Array, is_moving: bool = false) -> fl
 		result += (
 			expected_damage_per_hit(attack_model)
 			* _expected_primary_hits_per_attack(attack_model)
-			/ max(0.05, attack_model.timing.expected_attack_interval_seconds)
+			/ attack_model.timing.expected_attack_interval_seconds
 		)
 	return result
 
@@ -31,7 +47,7 @@ func expected_primary_hit_rate(weapons: Array, is_moving: bool = false) -> float
 			continue
 		result += (
 			_expected_primary_hits_per_attack(attack_model)
-			/ max(0.05, attack_model.timing.expected_attack_interval_seconds)
+			/ attack_model.timing.expected_attack_interval_seconds
 		)
 	return result
 
@@ -45,7 +61,7 @@ func expected_primary_lifesteal_rate(weapons: Array, is_moving: bool = false) ->
 		result += (
 			_expected_primary_hits_per_attack(attack_model)
 			* clamp(attack_model.impact.lifesteal, 0.0, 1.0)
-			/ max(0.05, attack_model.timing.expected_attack_interval_seconds)
+			/ attack_model.timing.expected_attack_interval_seconds
 		)
 	return result
 
@@ -57,6 +73,6 @@ func _critical_damage_multiplier(attack_model: Dictionary) -> float:
 
 func _expected_primary_hits_per_attack(attack_model: Dictionary) -> float:
 	return (
-		max(1.0, float(attack_model.delivery.paths.count))
-		* clamp(attack_model.delivery.paths.primary_probability_floor, 0.05, 1.0)
+		float(attack_model.delivery.paths.count)
+		* float(attack_model.delivery.paths.primary_probability_floor)
 	)

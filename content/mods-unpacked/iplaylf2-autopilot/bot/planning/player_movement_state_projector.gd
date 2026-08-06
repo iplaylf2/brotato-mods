@@ -46,9 +46,7 @@ func project_attack_model(
 		_attack_speed_cooldown_factor(current_attack_speed + attack_speed_delta)
 		/ _attack_speed_cooldown_factor(current_attack_speed)
 	)
-	projected.timing.expected_attack_interval_seconds = max(
-		0.05, projected.timing.expected_attack_interval_seconds * attack_speed_factor
-	)
+	projected.timing.expected_attack_interval_seconds *= attack_speed_factor
 	projected.impact.critical_chance = clamp(
 		projected.impact.critical_chance + stat_deltas.get("critical_chance", 0.0) / 100.0, 0.0, 1.0
 	)

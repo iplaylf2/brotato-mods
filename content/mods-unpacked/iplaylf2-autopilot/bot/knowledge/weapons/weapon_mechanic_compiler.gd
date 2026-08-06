@@ -13,13 +13,14 @@ const StatMetadata := preload(
 const VANILLA_TARGETING_RANGE_ALLOWANCE := 50.0
 
 var _stat_metadata: Reference = StatMetadata.new()
+var _shooting_started_physics_frame_by_weapon_id := {}
 
 
 func compile(
 	weapon: Node, stats: Resource, player_index: int, attacks_allowed_while_moving: bool
 ) -> Dictionary:
 	return {
-		"timing": _adapt_timing(stats, player_index, attacks_allowed_while_moving),
+		"timing": _adapt_timing(weapon, stats, player_index, attacks_allowed_while_moving),
 		"delivery": _adapt_delivery(weapon, stats),
 		"impact": _adapt_impact(stats),
 		"rules": _adapt_rules(weapon, stats, player_index),
@@ -27,7 +28,7 @@ func compile(
 
 
 func _adapt_timing(
-	stats: Resource, player_index: int, attacks_allowed_while_moving: bool
+	weapon: Node, stats: Resource, player_index: int, attacks_allowed_while_moving: bool
 ) -> Dictionary:
 	var reload_every: int = stats.additional_cooldown_every_x_shots
 	var reload_multiplier: float = stats.additional_cooldown_multiplier
@@ -37,11 +38,46 @@ func _adapt_timing(
 			(float(reload_every - 1) + reload_multiplier)
 			/ reload_every
 		)
+	var expected_attack_interval_seconds: float = stats.get_cooldown_value(
+		player_index, expected_attack_interval_multiplier
+	)
+	# Weapon exposes its current cooldown in 60 Hz ticks. Preserve it together with
+	# the visible attack phase so planning can consume the known vanilla rhythm
+	# without replacing either current fact with a stationary average.
+	var current_cooldown_seconds := max(0.0, float(weapon._current_cooldown) / 60.0)
+	var seconds_until_next_attack := _seconds_until_next_attack(
+		weapon, stats, player_index, current_cooldown_seconds
+	)
 	return {
-		"expected_attack_interval_seconds":
-		stats.get_cooldown_value(player_index, expected_attack_interval_multiplier),
+		"expected_attack_interval_seconds": expected_attack_interval_seconds,
+		"current_cooldown_seconds": current_cooldown_seconds,
+		"attack_in_progress": weapon._is_shooting,
+		"seconds_until_next_attack": seconds_until_next_attack,
 		"permitted_while_moving": attacks_allowed_while_moving,
 	}
+
+
+func _seconds_until_next_attack(
+	weapon: Node, stats: Resource, player_index: int, current_cooldown_seconds: float
+) -> float:
+	var weapon_id := weapon.get_instance_id()
+	if not weapon._is_shooting:
+		_shooting_started_physics_frame_by_weapon_id.erase(weapon_id)
+		return current_cooldown_seconds
+	var physics_frame := int(Engine.get_physics_frames())
+	if not _shooting_started_physics_frame_by_weapon_id.has(weapon_id):
+		_shooting_started_physics_frame_by_weapon_id[weapon_id] = physics_frame
+	var elapsed_seconds := (
+		float(physics_frame - _shooting_started_physics_frame_by_weapon_id[weapon_id])
+		/ float(Engine.iterations_per_second)
+	)
+	var total_animation_seconds: float = stats.get_cooldown_value(player_index, 0.0)
+	if stats is MeleeWeaponStats and weapon._shooting_behavior.shooting_data != null:
+		# Melee updates this public-facing animation rhythm with the committed target
+		# distance, so prefer the already revealed attack's actual stable duration.
+		total_animation_seconds = (weapon._shooting_behavior.shooting_data.get_shooting_total_duration())
+	var remaining_animation_seconds := max(0.0, total_animation_seconds - elapsed_seconds)
+	return current_cooldown_seconds + remaining_animation_seconds
 
 
 func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:
@@ -71,7 +107,7 @@ func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:
 	}
 	if stats is RangedWeaponStats:
 		result.paths = {
-			"count": stats.nb_projectiles,
+			"count": max(0, stats.nb_projectiles),
 			"angular_half_extent": 0.0,
 			"corridor_half_width": 0.0,
 			"direction_error": max(0.02, stats.projectile_spread + max(0.0, 1.0 - stats.accuracy)),
