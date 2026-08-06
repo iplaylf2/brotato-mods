@@ -51,6 +51,7 @@ func _initialize_runtime() -> void:
 	setting_error = _mod_options.connect("setting_changed", self, "_on_mod_options_setting_changed")
 	if setting_error != OK:
 		ModLoaderLog.error("Could not subscribe to Mod Options setting changes.", MOD_ID)
+	_mod_options.load_config(ModLoaderMod.get_mod_data(MOD_ID))
 
 
 func is_enabled() -> bool:
@@ -94,7 +95,7 @@ func _apply_config(config: ModConfig) -> void:
 func _get_or_repair_current_config() -> ModConfig:
 	var config: ModConfig = ModLoaderConfig.get_current_config(MOD_ID)
 	if config != null:
-		return config
+		return _add_missing_setting_defaults(config)
 
 	config = ModLoaderConfig.get_default_config(MOD_ID)
 	if config == null:
@@ -113,6 +114,30 @@ func _get_or_repair_current_config() -> ModConfig:
 		MOD_ID
 	)
 	return config
+
+
+func _add_missing_setting_defaults(config: ModConfig) -> ModConfig:
+	var default_config: ModConfig = ModLoaderConfig.get_default_config(MOD_ID)
+	if default_config == null:
+		return config
+
+	var added_defaults := false
+	for setting_name in [ENABLED_SETTING, SAMPLING_ENABLED_SETTING]:
+		if config.data.has(setting_name):
+			continue
+		config.data[setting_name] = default_config.data.get(setting_name, false)
+		added_defaults = true
+
+	if not added_defaults:
+		return config
+
+	var updated_config: ModConfig = ModLoaderConfig.update_config(config)
+	if updated_config == null:
+		ModLoaderLog.error("Could not add missing Autopilot setting defaults.", MOD_ID)
+		return null
+
+	ModLoaderLog.info("Added missing defaults to the current Autopilot configuration.", MOD_ID)
+	return updated_config
 
 
 func _save_setting(setting_name: String, value) -> bool:
