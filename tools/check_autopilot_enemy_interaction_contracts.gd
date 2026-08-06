@@ -13,6 +13,8 @@ func run(fixtures: Reference) -> bool:
 	_check_hostile_edge_confinement()
 	_check_spawn_warning_opportunity()
 	_check_maneuver_space_pressure()
+	_check_charge_collision_time_and_aim_distribution()
+	_check_health_conditioned_information_value()
 	return not _failed
 
 
@@ -275,6 +277,82 @@ func _check_maneuver_space_pressure() -> void:
 			and channels.maneuver_constraint > 0.0
 		),
 		"reachable enemy disks must consume maneuver space before contact"
+	)
+
+
+func _check_charge_collision_time_and_aim_distribution() -> void:
+	var model_path := PLANNING_PATH + "collision/velocity_obstacle_collision_model.gd"
+	var collision_model: Reference = load(model_path).new()
+	var charger: Dictionary = _fixtures.enemy_track(Vector2(-200.0, 0.0), Vector2.ZERO, false)
+	charger.behavior_profile.charge_attack = {
+		"active": true,
+		"confidence": 1.0,
+		"minimum_range": 0.0,
+		"maximum_range": 300.0,
+		"maximum_charge_speed": 500.0,
+		"maximum_duration_seconds": 0.75,
+		"maximum_travel_distance": 375.0,
+		"interval": {"minimum_seconds": 0.5, "maximum_seconds": 0.75},
+		"targeting":
+		{
+			"player_probability": 0.0,
+			"random_player_region_probability": 1.0,
+			"forward_overshoot_distance": 60.0,
+			"random_offset_half_extent": 60.0,
+		},
+	}
+	charger.behavior_profile.next_charge_attack_window = {
+		"is_exact": true, "earliest_seconds": 0.0, "latest_seconds": 0.0
+	}
+	var observation: Dictionary = _fixtures.planning_observation([charger])
+	var toward_action := {
+		"movement": Vector2.LEFT,
+		"forecast_seconds": 0.4,
+		"samples":
+		[
+			{"time": 0.1, "displacement": Vector2(-10.0, 0.0)},
+			{"time": 0.4, "displacement": Vector2(-40.0, 0.0)},
+		],
+	}
+	var lateral_action: Dictionary = toward_action.duplicate(true)
+	lateral_action.movement = Vector2.UP
+	lateral_action.samples = [
+		{"time": 0.1, "displacement": Vector2(0.0, -10.0)},
+		{"time": 0.4, "displacement": Vector2(0.0, -40.0)},
+	]
+	var toward: Dictionary = collision_model.evaluate(observation, toward_action, 0.1)
+	var lateral: Dictionary = collision_model.evaluate(observation, lateral_action, 0.1)
+	_expect(
+		(
+			toward.enemy_charge_obstacle_risk > lateral.enemy_charge_obstacle_risk
+			and toward.forecast_hostile_velocity_obstacle_risk > 0.0
+			and is_equal_approx(toward.committed_hostile_velocity_obstacle_risk, 0.0)
+		),
+		(
+			"prospective charge risk must preserve candidate-dependent lateral risk and become "
+			+ "committed only when travel time reaches the control prefix"
+		)
+	)
+
+
+func _check_health_conditioned_information_value() -> void:
+	var utility_script: Script = load(PLANNING_PATH + "movement_utility_model.gd")
+	var full_health_observation: Dictionary = _fixtures.planning_observation([])
+	var full_health_information: float = utility_script.new().build_context(
+		full_health_observation
+	).state_factors.information_value_per_viewport
+	var depleted_observation: Dictionary = full_health_observation.duplicate(true)
+	depleted_observation.physics_frame += 1
+	depleted_observation.player_state.health = {"current": 1.0, "maximum": 20.0, "ratio": 0.05}
+	var depleted_information: float = utility_script.new().build_context(
+		depleted_observation
+	).state_factors.information_value_per_viewport
+	_expect(
+		depleted_information > full_health_information * 2.0,
+		(
+			"unobserved map coverage must inherit the marginal value of latent recovery "
+			+ "when current health supply is scarce"
+		)
 	)
 
 

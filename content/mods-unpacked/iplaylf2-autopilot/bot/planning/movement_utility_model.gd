@@ -265,4 +265,16 @@ func _information_value_per_viewport(
 		)
 		observation_count += observation.enemy_tracks.size()
 	var empirical_opportunity_value: float = observed_value / max(1, observation_count)
-	return max(1.0, empirical_opportunity_value) * remaining_ratio
+	# Unobserved space can contain replenishment even when no source is currently
+	# visible. Price that information by one consumable-sized latent recovery
+	# opportunity, whose value rises as the health inventory becomes scarce.
+	# Geometry and environmental exposure still decide whether revealing it is
+	# worth the route; this adds no health threshold or exploration mode.
+	var latent_recovery_opportunity_value: float = (
+		health_inventory_value.maximum_consumable_recovery
+		* health_inventory_value.replenishment_unit_value
+	)
+	return (
+		max(1.0, max(empirical_opportunity_value, latent_recovery_opportunity_value))
+		* remaining_ratio
+	)

@@ -319,6 +319,7 @@ func _compact_observation(observation: Dictionary) -> Dictionary:
 		var measurement: Dictionary = track.get("last_measurement", {}).duplicate(false)
 		measurement.erase("stable_mechanic_profile")
 		measurement.erase("next_volley_window")
+		measurement.erase("next_charge_attack_window")
 		track.last_measurement = measurement
 		tracks.push_back(track)
 	result.enemy_tracks = tracks
@@ -355,7 +356,13 @@ func _compact_behavior_profile(profile: Dictionary) -> Dictionary:
 		{
 			"active": charge_attack.get("active", false),
 			"confidence": charge_attack.get("confidence", 0.0),
+			"minimum_range": charge_attack.get("minimum_range", 0.0),
+			"maximum_range": charge_attack.get("maximum_range", 0.0),
+			"maximum_charge_speed": charge_attack.get("maximum_charge_speed", 0.0),
+			"maximum_duration_seconds": charge_attack.get("maximum_duration_seconds", 0.0),
+			"targeting": charge_attack.get("targeting", {}).duplicate(false),
 		},
+		"next_charge_attack_window": profile.get("next_charge_attack_window", {}).duplicate(false),
 		"target_position_response":
 		{
 			"responds_to_target_position":

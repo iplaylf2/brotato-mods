@@ -26,6 +26,12 @@ const WeaponOutcomeConservationModel := preload(
 		+ "weapon_outcome_conservation_model.gd"
 	)
 )
+const WeaponPathContactModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "weapon_path_contact_model.gd"
+	)
+)
 const OUTCOME_FIELDS := [
 	"expected_attack_hits",
 	"expected_enemy_hits",
@@ -45,6 +51,7 @@ var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _weapon_outcome_conservation_model: Reference = WeaponOutcomeConservationModel.new()
+var _weapon_path_contact_model: Reference = WeaponPathContactModel.new()
 var _prepared_physics_frame := -1
 var _prepared_targets := []
 var _prepared_target_capacity := {}
@@ -298,6 +305,8 @@ func _summarize_target_coverage(
 	var total_selection_weight := 0.0
 	var enemy_selection_weight := 0.0
 	var tree_selection_weight := 0.0
+	var enemy_primary_contact_weight := 0.0
+	var tree_primary_contact_weight := 0.0
 	var covered_enemy_mass := 0.0
 	var covered_tree_mass := 0.0
 	var covered_target_mass := 0.0
@@ -321,6 +330,10 @@ func _summarize_target_coverage(
 			{
 				"sample": sample,
 				"coverage": coverage,
+				"primary_contact":
+				_weapon_path_contact_model.primary_contact_fraction(
+					attack_model, sample.relative_position, target.radius, transition_width
+				),
 				"selection_weight": 0.0,
 			}
 		)
@@ -337,6 +350,7 @@ func _summarize_target_coverage(
 		var target: Dictionary = covered.sample.target
 		if target.weapon_response.hit_limit_progress_per_hit <= 0.0:
 			enemy_selection_weight += selection_weight
+			enemy_primary_contact_weight += selection_weight * covered.primary_contact
 			covered_enemy_mass += covered.coverage
 			weighted_enemy_reward_delta_value += (
 				selection_weight
@@ -357,6 +371,7 @@ func _summarize_target_coverage(
 			)
 		else:
 			tree_selection_weight += selection_weight
+			tree_primary_contact_weight += selection_weight * covered.primary_contact
 			covered_tree_mass += covered.coverage
 			weighted_tree_completion_value_per_hit += (
 				covered.coverage
@@ -382,6 +397,15 @@ func _summarize_target_coverage(
 		"covered_tree_mass": covered_tree_mass,
 		"enemy_selection_share": enemy_selection_share,
 		"tree_selection_share": tree_selection_share,
+		"enemy_primary_contact_share":
+		enemy_primary_contact_weight / max(0.0001, total_selection_weight),
+		"tree_primary_contact_share":
+		tree_primary_contact_weight / max(0.0001, total_selection_weight),
+		"primary_contact_share":
+		(
+			(enemy_primary_contact_weight + tree_primary_contact_weight)
+			/ max(0.0001, total_selection_weight)
+		),
 		"mean_enemy_reward_delta_value":
 		weighted_enemy_reward_delta_value / max(0.0001, enemy_selection_weight),
 		"mean_enemy_burden_relief_value":
@@ -447,7 +471,7 @@ func _additional_direct_target_mass(
 			var secondary: Dictionary = covered_samples[secondary_index]
 			var contact_mass: float = (
 				secondary.coverage
-				* _direct_path_intersection(
+				* _weapon_path_contact_model.additional_contact_fraction(
 					attack_model,
 					aim_position,
 					secondary.sample.relative_position,
@@ -464,36 +488,6 @@ func _additional_direct_target_mass(
 			result[channel] += contact_mass
 			result.total += contact_mass
 	return result
-
-
-func _direct_path_intersection(
-	attack_model: Dictionary,
-	aim_position: Vector2,
-	target_position: Vector2,
-	target_radius: float,
-	transition_width: float
-) -> float:
-	var paths: Dictionary = attack_model.delivery.paths
-	var path_count := int(paths.count)
-	var angular_half_extent: float = paths.angular_half_extent
-	var maximum_distance: float = paths.maximum_travel_distance
-	var best_intersection := 0.0
-	for path_index in path_count:
-		var path_angle := 0.0
-		if path_count > 1:
-			path_angle = lerp(
-				-angular_half_extent, angular_half_extent, float(path_index) / float(path_count - 1)
-			)
-		var direction: Vector2 = aim_position.normalized().rotated(path_angle)
-		var forward_distance: float = target_position.dot(direction)
-		if forward_distance < -target_radius or forward_distance > maximum_distance + target_radius:
-			continue
-		var lateral_distance: float = abs(target_position.cross(direction))
-		var clearance: float = lateral_distance - paths.corridor_half_width - target_radius
-		best_intersection = max(
-			best_intersection, clamp(1.0 - clearance / max(1.0, transition_width), 0.0, 1.0)
-		)
-	return best_intersection
 
 
 func _range_coverage(distance: float, minimum_distance: float, maximum_distance: float) -> float:
@@ -523,7 +517,7 @@ func _expected_target_hits(attack_model: Dictionary, coverage: Dictionary) -> Di
 	var enemy_hits: float = (
 		primary_hits
 		* (
-			coverage.enemy_selection_share
+			coverage.enemy_primary_contact_share
 			+ direct_mass.enemy * direct_scale
 			+ redirect_stages * enemy_redirect_share
 		)
@@ -531,7 +525,7 @@ func _expected_target_hits(attack_model: Dictionary, coverage: Dictionary) -> Di
 	var tree_hits: float = (
 		primary_hits
 		* (
-			coverage.tree_selection_share
+			coverage.tree_primary_contact_share
 			+ direct_mass.tree * direct_scale
 			+ redirect_stages * tree_redirect_share
 		)
@@ -547,7 +541,7 @@ func _expected_damage_per_attack(attack_model: Dictionary, coverage: Dictionary)
 	var paths: Dictionary = attack_model.delivery.paths
 	var primary_hits: float = float(paths.count) * float(paths.primary_probability_floor)
 	var impact_damage: float = _weapon_attack_capacity_model.expected_damage_per_hit(attack_model)
-	var primary_damage: float = impact_damage * primary_hits
+	var primary_damage: float = impact_damage * primary_hits * coverage.primary_contact_share
 	var additional_covered_targets: float = coverage.additional_direct_target_mass.total
 	var direct_stages: float = min(
 		max(0.0, float(paths.hit_capacity) - 1.0), additional_covered_targets
@@ -563,7 +557,11 @@ func _expected_damage_per_attack(attack_model: Dictionary, coverage: Dictionary)
 	)
 	return (
 		primary_damage * delivery_multiplier
-		+ primary_hits * _expected_rule_damage_per_hit(attack_model, coverage, impact_damage)
+		+ (
+			primary_hits
+			* coverage.primary_contact_share
+			* _expected_rule_damage_per_hit(attack_model, coverage, impact_damage)
+		)
 	)
 
 

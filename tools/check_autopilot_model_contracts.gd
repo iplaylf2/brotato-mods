@@ -549,6 +549,19 @@ func _check_weapon_outcome_contracts() -> void:
 		is_equal_approx(outside_lock_outcome.expected_weapon_damage, 0.0),
 		"a target center beyond the exact vanilla lock distance must remain unavailable"
 	)
+	low_value_track.relative_position = Vector2(280.0, 0.0)
+	observation.physics_frame += 1
+	observation.player_state.weapons[0].attack_model.delivery.paths.maximum_travel_distance = 250.0
+	var outside_path_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(observation, action, outside_path_outcome, context)
+	_expect(
+		is_equal_approx(outside_path_outcome.expected_weapon_damage, 0.0),
+		(
+			"an automatically selected target outside the delivered weapon path must not "
+			+ "be counted as a hit"
+		)
+	)
+	observation.player_state.weapons[0].attack_model.delivery.paths.maximum_travel_distance = 300.0
 	low_value_track.relative_position = Vector2(100.0, 0.0)
 	observation.enemy_tracks = [low_value_track, high_value_track]
 	observation.player_state.weapons[0].attack_model.timing.seconds_until_next_attack = 0.5
@@ -686,6 +699,22 @@ func _check_navigation_weapon_completion_value() -> void:
 		"a single-target weapon must retain its selected primary target's completion value"
 	)
 	observation.physics_frame += 1
+	var outside_path_primary: Dictionary = primary.duplicate(true)
+	outside_path_primary.relative_position = Vector2(280.0, 0.0)
+	observation.enemy_tracks = [outside_path_primary]
+	observation.player_state.weapons[0].attack_model.delivery.paths.maximum_travel_distance = 250.0
+	context.enemy_completion_value_ledger = _completion_value_ledger({1: 10.0})
+	_expect(
+		is_equal_approx(value_model.value_at(observation, context, Vector2.ZERO, 1.0), 0.0),
+		(
+			"navigation completion value must not treat a selected target beyond the "
+			+ "delivered weapon path as a hit"
+		)
+	)
+	observation.physics_frame += 1
+	observation.enemy_tracks = [primary, follower]
+	observation.player_state.weapons[0].attack_model.delivery.paths.maximum_travel_distance = 300.0
+	context.enemy_completion_value_ledger = _completion_value_ledger({1: 10.0, 2: 10.0})
 	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 2.0
 	observation.wave_state.seconds_remaining = 1.0
 	_expect(

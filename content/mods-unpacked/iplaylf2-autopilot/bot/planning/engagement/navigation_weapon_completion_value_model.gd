@@ -22,11 +22,18 @@ const DamageCompletionWorkModel := preload(
 		+ "damage_completion_work_model.gd"
 	)
 )
+const WeaponPathContactModel := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
+		+ "weapon_path_contact_model.gd"
+	)
+)
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
+var _weapon_path_contact_model: Reference = WeaponPathContactModel.new()
 var _prepared_physics_frame := -1
 var _prepared_targets := []
 
@@ -136,6 +143,9 @@ func _weapon_completion_value(
 		)
 	if primary.empty() or primary.relative_position.length_squared() <= 0.0:
 		return 0.0
+	var primary_contact: float = _weapon_path_contact_model.primary_contact_fraction(
+		attack_model, primary.relative_position, primary.radius, 1.0
+	)
 	var paths: Dictionary = delivery.paths
 	var direct_capacity: float = max(0.0, float(paths.hit_capacity) - 1.0)
 	var redirect_capacity: float = max(0.0, float(delivery.redirects.count))
@@ -186,7 +196,10 @@ func _weapon_completion_value(
 	var primary_value: float = (
 		primary.confidence
 		* _completion_value_for_capacity(
-			primary.target, damage_per_hit, 1.0, base_hit_capacity * primary.selection_coverage
+			primary.target,
+			damage_per_hit,
+			1.0,
+			base_hit_capacity * primary.selection_coverage * primary_contact
 		)
 	)
 	var direct_share: float = min(direct_capacity, direct_mass)
@@ -202,12 +215,14 @@ func _weapon_completion_value(
 		)
 		var redirect_hits: float = (
 			base_hit_capacity
+			* primary_contact
 			* redirect_share
 			* entry.redirect_mass
 			/ max(0.0001, redirect_mass)
 		)
 		var area_hits: float = (
 			base_hit_capacity
+			* primary_contact
 			* area_share
 			* entry.area_mass
 			/ max(0.0001, area_mass)
