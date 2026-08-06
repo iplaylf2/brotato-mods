@@ -4,6 +4,15 @@
 观察与规划字段的语义仍由 [架构文档](architecture.md) 定义，允许持久化的信息仍受
 [玩家权限边界](fair-play.md) 约束；本文不重复定义算法或扩大观察范围。
 
+按任务选择阅读入口：
+
+| 任务 | 入口 |
+| --- | --- |
+| 解析或迁移采样文件 | [采样产物](#采样产物) |
+| 判断样本能够支持哪些结论 | [样本适用范围](#样本适用范围)、[样本能解释什么](#样本能解释什么) |
+| 调整模型参数或派生关系 | [参数证据等级](#参数证据等级)、[仍需校准的假设](#仍需校准的假设) |
+| 复盘移动、交战、生存或性能 | [复盘方法](#复盘方法) |
+
 ## 采样产物
 
 开启 **Record Battle Samples** 后，Autopilot 将 JSON Lines 写入
@@ -84,7 +93,8 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 - 新选动作的提交期终点通常落在下一条定期样本之前，不能假定采样记录了该终点；
 - 更长预测窗的环境暴露、碰撞、拾取、规则和武器结果都是“持续采用该候选动作”时的同窗条件预测；碰撞由
   `forecast_expected_health_loss` 形成条件生命成本，本次提交期子集以 `expected_health_loss` 保留为执行
-  诊断；控制器仍只提交一个控制期，动作窗外的机会由导航轨迹价值表达；
+  诊断并参与提交期对局延续价值的风险换算；控制器仍只提交一个控制期，动作窗外的机会由导航轨迹价值
+  表达；
 - 不可见实体的真实位置仍然未知。原版持续血条公开的存活与当前生命属于直接观察；首次看到的必掉产物
   只有在其机制支持域内已追踪来源唯一时，才能结清对应轨迹，存在多个合法来源时仍保持未知。两类观察
   都不能充当位置测量：持续血条不刷新视觉位置，必掉产物也不把产物位置写回敌人轨迹。
@@ -110,8 +120,9 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 受截止控制的额外工作不会启动，`planning_duration_budget_usec = 0`，且预算利用率为 `null`。此时
 `budget_pressure = 0`，不会把未知余量误判为过载。存在帧样本但实测余量为零时，压力为 `1`；余量为正
 但尚无规划耗时估计时，压力同样为 `0`；余量为正且已有估计时，压力由此前规划耗时 EMA 相对本轮余量
-的比例平方得到。`decision.search_work_allocation` 记录固定的导航覆盖，以及可变的细分保真度和离散工作
-额度；几何动作方向基线另见 `decision.model.derived.geometry_direction_count`。这些字段只解释搜索覆盖和
+的比例平方得到。`decision.search_work_allocation` 记录随压力在四至八个均匀方向间收缩的导航覆盖，以及
+可变的细分保真度和离散工作额度；几何动作方向基线另见
+`decision.model.derived.geometry_direction_count`。这些字段只解释搜索覆盖和
 可选工作，不代表碰撞采样精度、动作结果优劣或目标价值。导航基线只包含均匀方向；机会聚合方向和角区间
 细分均受截止准入控制。只有经过完整轨迹评价并胜出的方向才会补入动作基线，未经评价的搜索提案不影响
 行为。
@@ -209,8 +220,9 @@ TTC e-fold time               = Tlocal_effective
 TTC cutoff                    = Tnav_effective
 ```
 
-动作方向数取满足相邻控制期端点弦长不超过 `r` 的最小偶数，并完整保留为每轮局部动作基线。全局导航
-保留八个均匀方向；机会聚合方向只作为预算内搜索提案，经过轨迹评价并胜出后才会进入局部候选。
+动作方向数取满足相邻控制期端点弦长不超过 `r` 的最小偶数，并完整保留为每轮局部动作基线。近似战略
+导航随预算压力保留四至八个均匀方向；机会聚合方向只作为预算内搜索提案，经过轨迹评价并胜出后才会进入
+局部候选。
 动作时间采样数同时满足相邻玩家位移不超过 `2r`、每个控制期至少一个样本、
 确定性曲线弹相位步长不超过 `π/2`，且不随预算压力降低。由几何派生的方向基线数和时间采样数会随角色
 尺寸、速度、物理频率与可见弹道变化。导航轨迹按默认局部移动距离确定采样间距，并为任何非空时域至少
@@ -225,19 +237,19 @@ TTC cutoff                    = Tnav_effective
 补给库存使用清场时域，即时生存缓冲使用下一控制期。设当前生命为 `H`、玩家完整动作集合、当前击退与
 威胁运动在下一控制期内形成的联合可达域中，最强接触或投射物一击经护甲折算后的伤害储备为 `R`、
 清场前按到达时间、存在置信度和目标完成份额折算的生命补充为 `S`、同期被动流失为 `D`、材料等价风险
-尺度为 `K`，动作预测窗长度为 `T`，该窗内的预期生命损失为 `L`，当前持有材料与已有道具、武器按公共
-价格代理形成的对局延续价值为 `C`，完整动作预测窗内的单次终止风险为 `p`，则：
+尺度为 `K`，完整动作预测窗与实际提交期长度分别为 `Tf`、`Tc`，两者的预期生命损失分别为 `Lf`、`Lc`，
+当前持有材料与已有道具、武器按公共价格代理形成的对局延续价值为 `C`，提交期内的单次终止风险为 `pc`，则：
 
 ```text
 immediate_survival_buffer       = B  = max(1, H - R)
 projected_health_inventory      = I  = max(1, B + S - D)
 marginal_health_unit_value           = K / I
 terminal_health_loss_unit_value      = K / B
-survivable_action_loss          = Ls = min(L, max(0, B - 1))
+survivable_action_loss          = Ls = min(Lf, max(0, B - 1))
 continuation_horizon_ratio(t)    = q(t) = clamp((本波剩余时间 - t) / 最大导航时域, 0, 1)
-survivable_loss_value                = q(T) × integral[x=0..Ls] K / max(1, B - x) dx
-terminal_loss_value                  = max(0, L - Ls) × terminal_health_loss_unit_value
-run_continuation_value_at_risk        = max(p, q(T) × clamp(L / B, 0, 1)) × C
+survivable_loss_value                = q(Tf) × integral[x=0..Ls] K / max(1, B - x) dx
+terminal_loss_value                  = max(0, Lf - Ls) × terminal_health_loss_unit_value
+committed_run_continuation_value_at_risk = max(pc, q(Tc) × clamp(Lc / B, 0, 1)) × C
 ```
 
 已观察消耗品按到达后仍可利用的波次比例和存在置信度计入 `S`；概率掉落按共享攻击容量约束后的目标完成
@@ -245,8 +257,9 @@ run_continuation_value_at_risk        = max(p, q(T) × clamp(L / B, 0, 1)) × C
 兑现，也裁剪非致命生命在清场前还能提供多久的延续价值；它不改变耗尽即时缓冲的终止成本。
 
 `S` 是整波补给总量，不证明其中任何一份会先于当前局部威胁兑现，因此只改变波次尺度的延续库存与补给
-机会。局部预测窗中的碰撞损失按即时生存缓冲 `B` 的损失曲线和动作窗结束时的 `q(T)` 计价；局部与导航
-环境暴露按同一损失模型在当前时刻的 `q(0)` 计算一单位生命损失价值。
+机会。完整动作预测窗中的碰撞损失按即时生存缓冲 `B` 的损失曲线和动作窗结束时的 `q(Tf)` 计价；提交期
+生命损失与终止风险另按 `q(Tc)` 暴露对局延续价值；局部与导航环境暴露按同一损失模型在当前时刻的
+`q(0)` 计算一单位生命损失价值。
 导航只提交下一个控制期，整波未来补给不能扩大该控制期的即时生存缓冲。这样同一份未来果实或吸血不能在
 连续重规划中被反复借用来压低眼前的接触风险。
 
@@ -442,11 +455,14 @@ run_continuation_value_at_risk        = max(p, q(T) × clamp(L / B, 0, 1)) × C
 先同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、提交期诊断
 `terminal_collision_risk`、`expected_health_loss`，以及
 `field_utility_breakdown.forecast_health_inventory_loss_value` 与
-`field_utility_breakdown.forecast_run_continuation_value_at_risk`。联合检查
+`field_utility_breakdown.committed_run_continuation_value_at_risk`。联合检查
 `context.state_factors.run_continuation_value`、
 `selection_diagnostics.excluded_certain_terminal_candidate_count`、`viable_candidate_count` 和
 `selected_committed_terminal_collision_risk`。确定且可避免的提交期死亡应被排除；预测窗后段的概率终止
-应按当前对局延续价值连续变贵，但仍能与负担解除、目标完成、生命窃取和恢复在公共效用中交换。
+只保留生命消耗与环境暴露的连续成本，不能把后续仍可修正的直线路径当作已承诺死亡；提交期内的概率终止
+则按当前对局延续价值连续变贵，并仍能与负担解除、目标完成、生命窃取和恢复在公共效用中交换。当前碰撞
+证据没有保留足以扣除活动无敌前缀的命中时序，因此不能用无敌计时器按比例缩放聚合风险；若需要这项能力，
+必须先让几何证据公开命中时刻，并处理观察到动作提交之间的规划周转时间。
 
 没有窗内先后顺序证据的条件恢复仍可提高公共效用，但不能在实际兑现前降低同窗碰撞损失；恢复进入下一
 观察后，增加的当前生命会自然改变风险价格，而不需要固定的低血拾取规则。按低生命、对局延续价值、

@@ -75,7 +75,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			{
 				"integrated_environmental_exposure": -local_exposure_unit_value,
 				"forecast_health_inventory_loss_value": -1.0,
-				"forecast_run_continuation_value_at_risk": -1.0,
+				"committed_run_continuation_value_at_risk": -1.0,
 				"movement_damage_exposure_reduction": local_exposure_unit_value,
 			},
 			# Recovery first becomes liquid health. A consumable pickup also spends
@@ -158,36 +158,52 @@ func build_context(observation: Dictionary) -> Dictionary:
 func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	var scored_outcome := outcome.duplicate(false)
 	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
-	var post_forecast_seconds: float = max(
-		0.0, context.state_factors.wave_seconds_remaining - outcome.get("forecast_seconds", 0.0)
+	var forecast_seconds: float = max(0.0, outcome.get("forecast_seconds", 0.0))
+	var continuation_horizon_seconds: float = max(
+		0.01, context.state_factors.continuation_horizon_seconds
 	)
-	var continuation_horizon_ratio: float = (
-		post_forecast_seconds
-		/ max(0.01, context.state_factors.continuation_horizon_seconds)
+	var forecast_continuation_ratio: float = clamp(
+		(
+			(context.state_factors.wave_seconds_remaining - forecast_seconds)
+			/ continuation_horizon_seconds
+		),
+		0.0,
+		1.0
 	)
-	continuation_horizon_ratio = clamp(continuation_horizon_ratio, 0.0, 1.0)
 	var health_inventory_loss_value: float = _health_inventory_value_model.health_loss_value(
-		outcome.forecast_expected_health_loss, health_inventory_value, continuation_horizon_ratio
+		outcome.forecast_expected_health_loss, health_inventory_value, forecast_continuation_ratio
 	)
 	scored_outcome.forecast_health_inventory_loss_value = health_inventory_loss_value
 	var immediate_survival_buffer: float = max(
 		1.0, float(health_inventory_value.immediate_survival_buffer)
 	)
-	var continuation_capital_exposure: float = max(
-		clamp(float(outcome.get("forecast_terminal_collision_risk", 0.0)), 0.0, 1.0),
+	# Losing the run is an irreversible cost only inside the input prefix the
+	# controller will actually commit before replanning. The longer straight-line
+	# rollout still prices health loss and environmental exposure, but it cannot
+	# assume that later control corrections are unavailable.
+	var committed_seconds: float = min(
+		forecast_seconds, max(0.0, context.get("control_interval_seconds", forecast_seconds))
+	)
+	var committed_continuation_ratio: float = clamp(
 		(
-			continuation_horizon_ratio
+			(context.state_factors.wave_seconds_remaining - committed_seconds)
+			/ continuation_horizon_seconds
+		),
+		0.0,
+		1.0
+	)
+	var continuation_capital_exposure: float = max(
+		clamp(float(outcome.get("terminal_collision_risk", 0.0)), 0.0, 1.0),
+		(
+			committed_continuation_ratio
 			* clamp(
-				(
-					float(outcome.get("forecast_expected_health_loss", 0.0))
-					/ immediate_survival_buffer
-				),
+				float(outcome.get("expected_health_loss", 0.0)) / immediate_survival_buffer,
 				0.0,
 				1.0
 			)
 		)
 	)
-	scored_outcome.forecast_run_continuation_value_at_risk = (
+	scored_outcome.committed_run_continuation_value_at_risk = (
 		continuation_capital_exposure
 		* context.state_factors.run_continuation_value.total_value
 	)

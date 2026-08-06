@@ -373,10 +373,19 @@ func _check_planning_budget_and_search_allocation() -> void:
 		"background planning must draw on aggregate control-window frame headroom"
 	)
 	var allocator_script: Script = load(PLANNING_PATH + "planning_search_work_allocator.gd")
-	var search: Dictionary = allocator_script.new().allocate({"budget_pressure": 1.0}, 12)
+	var allocator: Reference = allocator_script.new()
+	var search: Dictionary = allocator.allocate({"budget_pressure": 1.0}, 12)
+	var unconstrained_search: Dictionary = allocator.allocate({"budget_pressure": 0.0}, 12)
 	_expect(
-		search.movement_refinement_limit == 0 and search.navigation_extra_evaluation_limit == 0,
-		"saturated budget pressure must remove optional navigation and refinement work"
+		(
+			search.movement_refinement_limit == 0
+			and search.navigation_extra_evaluation_limit == 0
+			and (
+				search.navigation_baseline_direction_count
+				< unconstrained_search.navigation_baseline_direction_count
+			)
+		),
+		"saturated pressure must reduce the strategic baseline and remove optional search work"
 	)
 
 
@@ -768,14 +777,16 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 	var evaluation: Dictionary = utility_model.evaluate(
 		{
 			"forecast_seconds": 0.7,
-			"forecast_expected_health_loss": 5.0,
-			"forecast_terminal_collision_risk": 0.0,
+			"forecast_expected_health_loss": 0.0,
+			"expected_health_loss": 5.0,
+			"terminal_collision_risk": 0.0,
 		},
 		{
-			"objective_weights": {"survival": {"forecast_run_continuation_value_at_risk": -1.0}},
+			"control_interval_seconds": 0.1,
+			"objective_weights": {"survival": {"committed_run_continuation_value_at_risk": -1.0}},
 			"state_factors":
 			{
-				"wave_seconds_remaining": 10.0,
+				"wave_seconds_remaining": 0.8,
 				"continuation_horizon_seconds": 1.0,
 				"health_inventory_value":
 				{
@@ -788,12 +799,12 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 	)
 	_expect(
 		(
-			is_equal_approx(evaluation.score, -10.0)
+			is_equal_approx(evaluation.score, -7.0)
 			and is_equal_approx(
-				evaluation.field_utility_breakdown.forecast_run_continuation_value_at_risk, -10.0
+				evaluation.field_utility_breakdown.committed_run_continuation_value_at_risk, -7.0
 			)
 		),
-		"sublethal buffer erosion must expose run capital through the common utility ledger"
+		"committed buffer erosion must use the committed prefix's remaining horizon"
 	)
 
 

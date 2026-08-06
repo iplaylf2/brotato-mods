@@ -6,6 +6,7 @@ extends Reference
 # baseline; this allocator owns the navigation baseline and optional work limits.
 
 const NAVIGATION_BASELINE_DIRECTION_COUNT := 8
+const NAVIGATION_MINIMUM_DIRECTION_COUNT := 4
 const MINIMUM_REFINEMENT_FIDELITY := 0.25
 
 
@@ -17,7 +18,11 @@ func allocate(compute_budget: Dictionary, movement_refinement_capacity: int) -> 
 		"budget_pressure": budget_pressure,
 		"minimum_refinement_fidelity": MINIMUM_REFINEMENT_FIDELITY,
 		"refinement_fidelity": refinement_fidelity,
-		"navigation_baseline_direction_count": NAVIGATION_BASELINE_DIRECTION_COUNT,
+		# Local action geometry retains its full collision-derived lattice. Strategic
+		# navigation is an approximate value field, so its uniform scan yields first
+		# when measured turnaround pressure is saturated; interpolation still gives
+		# every local action a continuation value.
+		"navigation_baseline_direction_count": _navigation_baseline_count(budget_pressure),
 		"navigation_extra_evaluation_limit":
 		_extra_work_limit(NAVIGATION_BASELINE_DIRECTION_COUNT, refinement_fidelity),
 		"movement_refinement_limit":
@@ -39,3 +44,15 @@ func _extra_work_limit(work_capacity: int, fidelity: float) -> int:
 		/ (1.0 - MINIMUM_REFINEMENT_FIDELITY)
 	)
 	return int(round(float(work_capacity) * extra_fraction))
+
+
+func _navigation_baseline_count(budget_pressure: float) -> int:
+	var retained: float = lerp(
+		float(NAVIGATION_BASELINE_DIRECTION_COUNT),
+		float(NAVIGATION_MINIMUM_DIRECTION_COUNT),
+		clamp(budget_pressure, 0.0, 1.0)
+	)
+	var even_count := int(round(retained / 2.0)) * 2
+	return int(
+		clamp(even_count, NAVIGATION_MINIMUM_DIRECTION_COUNT, NAVIGATION_BASELINE_DIRECTION_COUNT)
+	)

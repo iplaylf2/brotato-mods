@@ -114,8 +114,8 @@
   动作窗内的条件生命损失换算为即时缓冲成本。即时命中储备覆盖下一控制期内敌人与完整玩家动作集合
   的联合可达域，不只覆盖静止玩家。
 - `bot/planning/movement_action_selector.gd` 只排除存在替代动作时已落入下一提交期的确定终止碰撞，随后
-  最大化公共效用。预测窗内的概率终止风险和即时缓冲消耗由效用账本按对局延续价值定价；选择器不拥有
-  风险偏好、逃跑方向或敌人类别策略。
+  最大化公共效用。完整预测窗的即时缓冲消耗形成生命库存成本；提交期的概率终止风险和即时缓冲消耗另
+  按对局延续价值定价。选择器不拥有风险偏好、逃跑方向或敌人类别策略。
 - `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 
 ### 机会、规则与动作结果
@@ -172,7 +172,8 @@
   独占调度、失败时释放控制与结果提交。规划器不访问场景节点或可变观察状态。
 - `bot/planning/planning_compute_budget_policy.gd` 把帧预算上下文转换成统一最终截止与连续预算压力，并维护
   额外工作的耗时估计；`bot/planning/planning_search_work_allocator.gd` 把预算压力映射为导航额外评价和
-  移动细分额度，并公开固定导航基线。两者都不拥有局部动作基线、导航机会或行为效用。
+  移动细分额度，并在四至八个均匀方向间分配导航基线。两者都不拥有局部动作基线、导航机会或行为效用；
+  由碰撞几何派生的局部动作格点不随预算缩减。
 - `bot/planning/projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；弹道积分与位移上界仍由
   `bot/planning/motion/projectile_motion_predictor.gd` 提供；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止

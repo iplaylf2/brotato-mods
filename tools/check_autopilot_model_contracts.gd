@@ -15,7 +15,11 @@ func _init() -> void:
 		quit(1)
 		return
 	_check_target_response()
-	_check_swept_enemy_contact()
+	var collision_health_checks_path: String = tools_dir.plus_file(
+		"check_autopilot_collision_health_contracts.gd"
+	)
+	if not load(collision_health_checks_path).new().run(_fixtures):
+		_failed = true
 	_check_projectile_hitbox_ttc()
 	_check_navigation_horizon_consistency()
 	_check_trajectory_value_field()
@@ -66,78 +70,6 @@ func _check_target_response() -> void:
 	_expect(
 		stopped_position.distance_to(Vector2(50.0, 0.0)) < 0.01,
 		"a stop-close follower must not be modeled as moving away inside its preferred distance"
-	)
-
-
-func _check_swept_enemy_contact() -> void:
-	var influence_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
-	)
-	var influence: Reference = influence_script.new()
-	var impact_script: Script = load(PLANNING_PATH + "health/collision_health_impact_model.gd")
-	var impact: Reference = impact_script.new()
-	var observation := {
-		"physics_frame": 2,
-		"wave_state": {"seconds_remaining": 10.0},
-		"player_state":
-		{
-			"collision_radius": 10.0,
-			"runtime_stats":
-			{
-				"move_speed": 100.0,
-				"armor": 0.0,
-				"dodge_chance": 0.0,
-				"hit_protection": 0,
-				"minimum_invincibility_seconds": 0.2,
-			},
-			"health": {"current": 10.0, "maximum": 10.0, "ratio": 1.0},
-			"effect_rules": [],
-			"movement": {"knockback_velocity": Vector2.ZERO},
-		},
-		"enemy_tracks": [_enemy_track(Vector2(100.0, 15.0), Vector2(-1000.0, 0.0), false)],
-		"remembered_entities": [],
-		"visible_world":
-		{
-			"spawn_warnings": [],
-			"enemy_projectiles": [],
-			"structures": [],
-			"allied_agents": [],
-		},
-		"localization": {"map_bounds": _unknown_bounds()},
-	}
-	var action := {
-		"movement": Vector2.ZERO,
-		"forecast_seconds": 0.2,
-		"samples": [{"time": 0.2, "displacement": Vector2.ZERO, "movement": Vector2.ZERO}],
-	}
-	var weights := _influence_weights()
-	var outcome: Dictionary = influence.predict(
-		observation, action, weights, 0.1, _completion_value_ledger({1: 0.0})
-	)
-	_expect(
-		is_equal_approx(outcome.peak_path_collision_risk, 1.0),
-		"a swept collision-boundary crossing must be a complete contact opportunity"
-	)
-	_expect(
-		is_equal_approx(outcome.maximum_path_collision_raw_damage, 3.0),
-		"swept enemy contact must retain the colliding body's damage"
-	)
-	var single_impact: Dictionary = impact.evaluate(
-		observation, action, _path_collision_evidence(outcome), false
-	)
-	var second_track: Dictionary = observation.enemy_tracks[0].duplicate(true)
-	second_track.track_id = 2
-	observation.enemy_tracks.push_back(second_track)
-	observation.physics_frame += 1
-	var swarm_outcome: Dictionary = influence.predict(
-		observation, action, weights, 0.1, _completion_value_ledger({1: 0.0, 2: 0.0})
-	)
-	var swarm_impact: Dictionary = impact.evaluate(
-		observation, action, _path_collision_evidence(swarm_outcome), false
-	)
-	_expect(
-		is_equal_approx(swarm_impact.expected_health_loss, single_impact.expected_health_loss),
-		"simultaneous swept contacts must remain one complete hit under vanilla iframes"
 	)
 
 
@@ -724,12 +656,14 @@ func _check_cleanup_continuation_value() -> void:
 	var nonterminal_outcome := {
 		"forecast_seconds": 0.0,
 		"forecast_expected_health_loss": 1.0,
-		"forecast_terminal_collision_risk": 0.0,
+		"expected_health_loss": 1.0,
+		"terminal_collision_risk": 0.0,
 	}
 	var terminal_outcome := {
 		"forecast_seconds": 0.0,
 		"forecast_expected_health_loss": 0.0,
-		"forecast_terminal_collision_risk": 0.5,
+		"expected_health_loss": 0.0,
+		"terminal_collision_risk": 0.5,
 	}
 	var early_nonterminal: Dictionary = utility.evaluate(nonterminal_outcome, early_context)
 	var early_terminal: Dictionary = utility.evaluate(terminal_outcome, early_context)
@@ -738,7 +672,7 @@ func _check_cleanup_continuation_value() -> void:
 	var cleanup_context: Dictionary = utility.build_context(observation)
 	var cleanup_nonterminal: Dictionary = utility.evaluate(nonterminal_outcome, cleanup_context)
 	var cleanup_terminal: Dictionary = utility.evaluate(terminal_outcome, cleanup_context)
-	var risk_field := "forecast_run_continuation_value_at_risk"
+	var risk_field := "committed_run_continuation_value_at_risk"
 	_expect(
 		(
 			(
@@ -942,19 +876,6 @@ func _collision_evidence(
 		"velocity_contact_evidence_sum": contact_evidence_sum,
 		"velocity_raw_damage_evidence_sum": raw_damage_evidence_sum,
 		"maximum_velocity_raw_damage": maximum_raw_damage,
-	}
-
-
-func _path_collision_evidence(outcome: Dictionary) -> Dictionary:
-	return {
-		"path_collision_risk": outcome.peak_path_collision_risk,
-		"path_contact_evidence_seconds": outcome.path_contact_evidence_seconds,
-		"path_raw_damage_evidence_seconds": outcome.path_raw_damage_evidence_seconds,
-		"maximum_path_raw_damage": outcome.maximum_path_collision_raw_damage,
-		"velocity_collision_risk": 0.0,
-		"velocity_contact_evidence_sum": 0.0,
-		"velocity_raw_damage_evidence_sum": 0.0,
-		"maximum_velocity_raw_damage": 0.0,
 	}
 
 
