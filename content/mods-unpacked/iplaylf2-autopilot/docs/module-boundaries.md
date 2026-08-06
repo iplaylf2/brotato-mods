@@ -35,8 +35,8 @@
 
 - `motion` 拥有“规范运动观察与稳定响应 → 未来位置、可达包络与角向机动约束”的协议，供暴露、交会、
   事件与动作采样共同消费；
-- `collision` 拥有“路径或速度几何 → 交会证据与按来源接触机会”的协议；它不解释生命损失、
-  终止风险或动作价值；
+- `collision` 拥有“已解析路径交会 → 按来源接触机会”和“尚无受支持轨迹的未来实现 → 未解析交会证据”
+  两段协议；它不预测实体运动，也不解释生命损失、终止风险或动作价值；
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
 - `health` 拥有“接触机会与无时序聚合交会证据 → 条件生命损失与终止风险”、“当前生命、即时威胁与清场前补充 →
   生命库存及单位价值”、“任意来源生命损失与生命库存 → 材料等价成本”三段协议，结果供导航风险、拾取
@@ -111,16 +111,17 @@
 - `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、普通敌人与投射物的位置域碰撞证据、确定性
   目标定向齐射在弹体生成前的未来射击走廊、敌人与地图边界共同形成的角向机动约束、战斗支援伤害与
   消耗、友方减压、治疗和挡弹时序；
-  `bot/planning/collision/velocity_obstacle_collision_model.gd` 拥有投射物与队友 TTC，以及尚未揭示冲撞
-  目标分布的速度空间交会证据；
-  `bot/planning/collision/contact_opportunity_projector.gd` 将几何模型已判定的交会及其来源映射为预测接触机会契约，
-  不解释生命、风险偏好或动作价值。
+  `bot/planning/collision/unresolved_collision_risk_model.gd` 只拥有尚无受支持解析轨迹的碰撞证据：独立
+  控制玩家在当前速度延续假设下的 TTC，以及尚未揭示目标的冲撞分布；已有解析轨迹的实体不得再进入
+  该边界；
+  `bot/planning/collision/contact_opportunity_projector.gd` 将几何模型已判定的交会及其来源映射为预测
+  接触机会契约，不解释生命、风险偏好或动作价值。
 - `bot/planning/health/health_loss_value_model.gd` 是不依赖来源预测的叶模块，消费生命库存价值上下文，将任意
   来源的生命损失统一换算为液态生命库存成本；碰撞结果、伤害型拾取和导航机会可以共同依赖它，而不反向
   依赖波次完成或机会模型。
 - `bot/planning/health/contact_damage_state_model.gd` 按时间顺序从接触机会推进当前生命、当前无敌剩余时间、
   受伤后变长无敌时间、闪避和命中保护的状态分布；
-  `bot/planning/health/collision_health_impact_model.gd` 仅组合该逐次状态结果与尚未事件化的速度空间聚合证据；
+  `bot/planning/health/collision_health_impact_model.gd` 仅组合该逐次状态结果与尚无逐次时刻的未解析交会证据；
   `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
   `bot/planning/health/health_inventory_value_model.gd` 负责风险尺度、即时生存缓冲、预计生命库存和单位价值。
   即时命中储备覆盖下一控制期内敌人与完整玩家动作集合的联合可达域，不只覆盖静止玩家。
@@ -186,18 +187,23 @@
   候选选择同一个动作比较时域；
   `bot/planning/movement_action_selector.gd` 从已评分候选中排除可避免的提交期确定终止碰撞，再选择总效用
   最高者；
-  `MovementPlanner` 协调生成、预测、评分、细分与选择，不把新行为政策藏进选择器。
+  `bot/planning/actuation_state_projector.gd` 统一把值快照推进到后台结果预计抵达执行器的时刻，消费当前仍
+  生效的移动输入与运动预测，不解释风险偏好；`MovementPlanner` 协调生效时刻投影、生成、预测、评分、
+  细分与选择，不把新行为政策藏进选择器。
 
 ### 控制与计算预算
 
 - `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视与物理回调峰值估计，向规划
   边界公开帧预算上下文；`bot/control/planning_worker.gd` 独占工作线程、信号量、互斥交接和回收，并在该
-  线程创建、配置、执行和释放规划器；`bot/control/autopilot_controller.gd` 只提交值快照与预算上下文，
-  独占调度、失败时释放控制与结果提交。规划器不访问场景节点或可变观察状态。
-- `bot/planning/planning_compute_budget_policy.gd` 把帧预算上下文转换成统一最终截止与连续预算压力，并维护
+  线程创建、配置、执行和释放规划器；`bot/control/autopilot_controller.gd` 只提交值快照、当前仍生效的
+  移动输入、请求创建时刻与预算上下文，独占调度、失败时释放控制与结果提交。规划器不访问场景节点或
+  可变观察状态。
+- `bot/planning/planning_compute_budget_policy.gd` 以半个控制窗为预算上限，把帧预算上下文转换成统一最终
+  截止、规划开始后的延迟估计与连续预算压力，并维护
   额外工作的耗时估计；`bot/planning/planning_search_work_allocator.gd` 把预算压力映射为导航额外评价和
   移动细分额度，并在四至八个均匀方向间分配导航基线。两者都不拥有局部动作基线、导航机会或行为效用；
-  由碰撞几何派生的局部动作格点不随预算缩减。
+  由碰撞几何派生的局部动作格点不随预算缩减。`MovementPlanner` 把该估计与实际排队时间合成总延迟，
+  再调用 `ActuationStateProjector`。
 - `bot/planning/projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；弹道积分与位移上界仍由
   `bot/planning/motion/projectile_motion_predictor.gd` 提供；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止

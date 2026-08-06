@@ -379,9 +379,13 @@ func _check_planning_budget_and_search_allocation() -> void:
 	_expect(
 		(
 			budget.planning_duration_budget_usec > 16666.0 - 5000.0
-			and budget.planning_duration_budget_usec <= 100000.0
+			and budget.planning_duration_budget_usec <= 50000.0
 		),
-		"background planning must draw on aggregate control-window frame headroom"
+		"planning budget must not exceed half the control window"
+	)
+	_expect(
+		is_equal_approx(budget.expected_post_start_actuation_delay_usec, 16666.0),
+		"first-cycle actuation projection must include the result-polling physics frame"
 	)
 	var allocator_script: Script = load(PLANNING_PATH + "planning_search_work_allocator.gd")
 	var allocator: Reference = allocator_script.new()

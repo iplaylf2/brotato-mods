@@ -113,6 +113,7 @@ func _start_replan() -> void:
 		scheduled_planner_count, _replan_interval_seconds
 	)
 	var requests := []
+	var request_created_usec := OS.get_ticks_usec()
 	for player_index in _players.size():
 		var player: Node = _players[player_index]
 		if not is_instance_valid(player) or player.dead:
@@ -122,6 +123,8 @@ func _start_replan() -> void:
 			{
 				"player_index": player_index,
 				"observation": observation,
+				"active_movement": _previous_movements[player_index],
+				"request_created_usec": request_created_usec,
 				"frame_budget_context": frame_budget_context,
 			}
 		)

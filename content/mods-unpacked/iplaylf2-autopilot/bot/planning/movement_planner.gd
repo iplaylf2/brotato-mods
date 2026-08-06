@@ -39,6 +39,7 @@ const MovementGeometryModel := preload(
 const LocalEnemyInteractionProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/local_enemy_interaction_projector.gd"
 )
+const ActuationStateProjector := preload("actuation_state_projector.gd")
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
@@ -54,6 +55,7 @@ var _navigation_intent_planner: Reference = NavigationIntentPlanner.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _local_enemy_interaction_projector: Reference = LocalEnemyInteractionProjector.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
+var _actuation_state_projector: Reference = ActuationStateProjector.new()
 
 
 func _init() -> void:
@@ -68,7 +70,9 @@ func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
 	_compute_budget_policy.set_frame_budget_context(frame_budget_context)
 
 
-func plan(observation: Dictionary) -> Dictionary:
+func plan(
+	observation: Dictionary, active_movement: Vector2, request_created_usec: int
+) -> Dictionary:
 	if observation.empty() or not observation.has("player_state"):
 		return _empty_plan("observation_unavailable")
 	if observation.player_state.dead:
@@ -77,13 +81,25 @@ func plan(observation: Dictionary) -> Dictionary:
 	var planning_started_usec := OS.get_ticks_usec()
 	var phase_started_usec := planning_started_usec
 	var phase_duration_usec := {}
-	var projectile_filter: Dictionary = _projectile_filter.filter(observation)
+	var compute_budget: Dictionary = _compute_budget_policy.allocate(planning_started_usec)
+	var request_queue_delay_usec := max(0, planning_started_usec - request_created_usec)
+	compute_budget.request_queue_delay_usec = request_queue_delay_usec
+	# Queue time has already elapsed; the policy estimates only the remaining
+	# planning and result-polling delay from this point onward.
+	var expected_actuation_delay_seconds: float = (
+		float(compute_budget.expected_post_start_actuation_delay_usec + request_queue_delay_usec)
+		/ 1000000.0
+	)
+	var actuation_projection: Dictionary = _actuation_state_projector.project(
+		observation, active_movement, expected_actuation_delay_seconds
+	)
+	var projected_observation: Dictionary = actuation_projection.observation
+	var projectile_filter: Dictionary = _projectile_filter.filter(projected_observation)
 	var planning_observation: Dictionary = projectile_filter.filtered_observation
 	var context: Dictionary = _utility_model.build_context(planning_observation)
 	var movement_geometry: Dictionary = _movement_geometry.derive(planning_observation)
 	var timing: Dictionary = MovementTimingModel.derive(planning_observation)
 	context.control_interval_seconds = timing.control_interval_seconds
-	var compute_budget: Dictionary = _compute_budget_policy.allocate(planning_started_usec)
 	var search_work_allocation: Dictionary = _search_work_allocator.allocate(
 		compute_budget, int(movement_geometry.direction_count)
 	)
@@ -163,6 +179,11 @@ func plan(observation: Dictionary) -> Dictionary:
 	plan.wave_completion_forecast = context.wave_completion_forecast.duplicate(false)
 	plan.wave_completion_forecast.erase("completion_fraction_by_target_id")
 	plan.compute_budget = compute_budget.duplicate(true)
+	plan.actuation_projection = {
+		"delay_seconds": actuation_projection.delay_seconds,
+		"player_displacement": actuation_projection.player_displacement,
+		"active_movement": active_movement,
+	}
 	plan.search_work_allocation = search_work_allocation.duplicate(true)
 	plan.projectile_filter = projectile_filter.duplicate(false)
 	plan.projectile_filter.erase("filtered_observation")
@@ -172,7 +193,7 @@ func plan(observation: Dictionary) -> Dictionary:
 	plan.action_count = actions.size()
 	plan.refined_action_count = refined_action_count
 	plan.ranked_actions = _summarize_actions(ranked_actions, 3)
-	plan.model = _model_diagnostics(observation, plan, navigation_intent)
+	plan.model = _model_diagnostics(planning_observation, plan, navigation_intent)
 	return plan
 
 

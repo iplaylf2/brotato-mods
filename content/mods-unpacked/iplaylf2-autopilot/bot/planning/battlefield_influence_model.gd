@@ -2,7 +2,7 @@ extends Reference
 
 # Evaluates environmental exposure and position-domain collision evidence along
 # a candidate path. Allied suppression can reduce eligible exposure, while
-# collision evidence is unified with velocity-space risk by
+# collision evidence is unified with unresolved-motion risk by
 # MovementOutcomePredictor.
 
 const ObservedMotionPredictor := preload(

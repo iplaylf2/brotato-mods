@@ -9,10 +9,10 @@ const WeaponOutcomeForecastModel := preload("engagement/weapon_outcome_forecast_
 const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 )
-const VelocityObstacleCollisionModel := preload(
+const UnresolvedCollisionRiskModel := preload(
 	(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/collision/"
-		+ "velocity_obstacle_collision_model.gd"
+		+ "unresolved_collision_risk_model.gd"
 	)
 )
 const PlayerRuleOutcomePredictor := preload(
@@ -42,7 +42,7 @@ const PickupCollectionProjector := preload(
 
 var _weapon_outcome_forecast_model: Reference = WeaponOutcomeForecastModel.new()
 var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
-var _velocity_obstacle_collision_model: Reference = VelocityObstacleCollisionModel.new()
+var _unresolved_collision_risk_model: Reference = UnresolvedCollisionRiskModel.new()
 var _player_rule_outcome_predictor: Reference = PlayerRuleOutcomePredictor.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
@@ -55,7 +55,7 @@ var _pickup_collection_projector: Reference = PickupCollectionProjector.new()
 func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_weapon_outcome_forecast_model.set_enemy_motion_predictor(predictor)
 	_battlefield_influence_model.set_enemy_motion_predictor(predictor)
-	_velocity_obstacle_collision_model.set_enemy_motion_predictor(predictor)
+	_unresolved_collision_risk_model.set_enemy_motion_predictor(predictor)
 	_player_rule_outcome_predictor.set_enemy_motion_predictor(predictor)
 
 
@@ -121,7 +121,7 @@ func predict_base(
 	)
 	outcome.merge(battlefield_outcome, true)
 	outcome.merge(
-		_velocity_obstacle_collision_model.evaluate(
+		_unresolved_collision_risk_model.evaluate(
 			observation, action, planning_context.control_interval_seconds
 		),
 		true
@@ -130,9 +130,11 @@ func predict_base(
 		observation, action, planning_context.control_interval_seconds
 	)
 	_predict_action_outcomes(observation, action, outcome)
-	outcome.collision_risk = max(outcome.peak_path_collision_risk, outcome.velocity_obstacle_risk)
+	outcome.collision_risk = max(
+		outcome.peak_path_collision_risk, outcome.unresolved_collision_risk
+	)
 	outcome.hostile_collision_risk = max(
-		outcome.peak_path_collision_risk, outcome.hostile_velocity_obstacle_risk
+		outcome.peak_path_collision_risk, outcome.hostile_unresolved_collision_risk
 	)
 	var committed_impact: Dictionary = _collision_health_impact_model.evaluate(
 		observation,
@@ -179,12 +181,12 @@ func _committed_collision_evidence(outcome: Dictionary) -> Dictionary:
 		"path_contact_evidence_seconds": outcome.committed_path_contact_evidence_seconds,
 		"path_raw_damage_evidence_seconds": outcome.committed_path_raw_damage_evidence_seconds,
 		"maximum_path_raw_damage": outcome.committed_maximum_path_collision_raw_damage,
-		"velocity_collision_risk": outcome.committed_hostile_velocity_obstacle_risk,
-		"velocity_contact_evidence_sum":
-		outcome.committed_hostile_velocity_obstacle_contact_evidence_sum,
-		"velocity_raw_damage_evidence_sum":
-		outcome.committed_hostile_velocity_obstacle_raw_damage_evidence_sum,
-		"maximum_velocity_raw_damage": outcome.committed_maximum_velocity_obstacle_raw_damage,
+		"unresolved_collision_risk": outcome.committed_hostile_unresolved_collision_risk,
+		"unresolved_contact_evidence_sum":
+		outcome.committed_hostile_unresolved_contact_evidence_sum,
+		"unresolved_raw_damage_evidence_sum":
+		outcome.committed_hostile_unresolved_raw_damage_evidence_sum,
+		"maximum_unresolved_raw_damage": outcome.committed_maximum_unresolved_collision_raw_damage,
 		"contact_opportunities": outcome.committed_contact_opportunities,
 	}
 
@@ -195,12 +197,11 @@ func _forecast_collision_evidence(outcome: Dictionary) -> Dictionary:
 		"path_contact_evidence_seconds": outcome.path_contact_evidence_seconds,
 		"path_raw_damage_evidence_seconds": outcome.path_raw_damage_evidence_seconds,
 		"maximum_path_raw_damage": outcome.maximum_path_collision_raw_damage,
-		"velocity_collision_risk": outcome.forecast_hostile_velocity_obstacle_risk,
-		"velocity_contact_evidence_sum":
-		outcome.forecast_hostile_velocity_obstacle_contact_evidence_sum,
-		"velocity_raw_damage_evidence_sum":
-		outcome.forecast_hostile_velocity_obstacle_raw_damage_evidence_sum,
-		"maximum_velocity_raw_damage": outcome.forecast_maximum_velocity_obstacle_raw_damage,
+		"unresolved_collision_risk": outcome.forecast_hostile_unresolved_collision_risk,
+		"unresolved_contact_evidence_sum": outcome.forecast_hostile_unresolved_contact_evidence_sum,
+		"unresolved_raw_damage_evidence_sum":
+		outcome.forecast_hostile_unresolved_raw_damage_evidence_sum,
+		"maximum_unresolved_raw_damage": outcome.forecast_maximum_unresolved_collision_raw_damage,
 		"contact_opportunities": outcome.contact_opportunities,
 	}
 

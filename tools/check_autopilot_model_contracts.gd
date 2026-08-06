@@ -1,8 +1,6 @@
 extends SceneTree
 
 const PLANNING_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/planning/"
-const COLLISION_PATH := PLANNING_PATH + "collision/"
-const VELOCITY_COLLISION_MODEL_PATH := COLLISION_PATH + "velocity_obstacle_collision_model.gd"
 var _failed := false
 var _fixtures: Reference
 
@@ -23,7 +21,6 @@ func _init() -> void:
 	)
 	if not load(collision_health_checks_path).new().run(_fixtures):
 		_failed = true
-	_check_projectile_hitbox_ttc()
 	_check_navigation_horizon_consistency()
 	_check_trajectory_value_field()
 	var deadline_checks_path: String = tools_dir.plus_file(
@@ -131,45 +128,6 @@ func _check_maneuver_space_topology() -> void:
 			)
 		),
 		"a boundary and enemy blocking the same headings must not be charged twice"
-	)
-
-
-func _check_projectile_hitbox_ttc() -> void:
-	var collision_model: Reference = load(VELOCITY_COLLISION_MODEL_PATH).new()
-	var observation: Dictionary = _planning_observation([])
-	observation.player_state.collision_radius = 24.0
-	observation.player_state.runtime_stats.move_speed = 481.0
-	observation.visible_world.enemy_projectiles = [
-		{
-			"relative_position": Vector2(30.0, -100.0),
-			"velocity": Vector2.ZERO,
-			"acceleration": Vector2.ZERO,
-			"motion_confidence": 1.0,
-			"motion_model": {"kind": "linear"},
-			"contact_radius": 33.0,
-			"contact_damage": 13.0,
-		},
-	]
-	var action := {
-		"movement": Vector2.UP,
-		"forecast_seconds": 0.4,
-		"samples":
-		[
-			{"time": 0.1, "displacement": Vector2(0.0, -48.1), "movement": Vector2.UP},
-			{"time": 0.4, "displacement": Vector2(0.0, -192.4), "movement": Vector2.UP},
-		],
-	}
-	var outcome: Dictionary = collision_model.evaluate(observation, action, 0.1)
-	_expect(
-		outcome.minimum_time_to_collision < action.forecast_seconds,
-		"movement into an observed hostile hitbox must retain its finite collision time"
-	)
-	_expect(
-		(
-			outcome.projectile_velocity_obstacle_risk > 0.0
-			and outcome.forecast_maximum_velocity_obstacle_raw_damage == 13.0
-		),
-		"projectile TTC evidence must preserve both contact risk and hostile damage"
 	)
 
 

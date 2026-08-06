@@ -25,11 +25,14 @@ func _init() -> void:
 		return
 	for cycle in 2:
 		var observation := _planning_observation(cycle)
+		var request_created_usec := OS.get_ticks_usec()
 		if not _worker.submit(
 			[
 				{
 					"player_index": 0,
 					"observation": observation,
+					"active_movement": Vector2.ZERO,
+					"request_created_usec": request_created_usec,
 					"frame_budget_context": {"has_frame_time_sample": false},
 				}
 			]

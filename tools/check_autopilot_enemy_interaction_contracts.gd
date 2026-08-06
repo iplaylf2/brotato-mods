@@ -281,7 +281,7 @@ func _check_maneuver_space_pressure() -> void:
 
 
 func _check_charge_collision_time_and_aim_distribution() -> void:
-	var model_path := PLANNING_PATH + "collision/velocity_obstacle_collision_model.gd"
+	var model_path := PLANNING_PATH + "collision/unresolved_collision_risk_model.gd"
 	var collision_model: Reference = load(model_path).new()
 	var charger: Dictionary = _fixtures.enemy_track(Vector2(-200.0, 0.0), Vector2.ZERO, false)
 	charger.behavior_profile.charge_attack = {
@@ -325,8 +325,8 @@ func _check_charge_collision_time_and_aim_distribution() -> void:
 	_expect(
 		(
 			toward.enemy_charge_obstacle_risk > lateral.enemy_charge_obstacle_risk
-			and toward.forecast_hostile_velocity_obstacle_risk > 0.0
-			and is_equal_approx(toward.committed_hostile_velocity_obstacle_risk, 0.0)
+			and toward.forecast_hostile_unresolved_collision_risk > 0.0
+			and is_equal_approx(toward.committed_hostile_unresolved_collision_risk, 0.0)
 		),
 		(
 			"prospective charge risk must preserve candidate-dependent lateral risk and become "

@@ -114,7 +114,10 @@ func _compute(requests: Array) -> Array:
 			{
 				"player_index": player_index,
 				"observation": request.observation,
-				"plan": planner.plan(request.observation),
+				"plan":
+				planner.plan(
+					request.observation, request.active_movement, request.request_created_usec
+				),
 			}
 		)
 	return results

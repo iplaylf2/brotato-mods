@@ -1,13 +1,14 @@
 extends Reference
 
-# Converts measured physics-frame headroom into a deadline and a continuous
-# budget-pressure signal. It owns time admission only; optional search work
-# belongs to PlanningSearchWorkAllocator and collision sampling remains geometric.
+# Converts measured physics-frame headroom into a deadline, a continuous
+# budget-pressure signal, and the delay expected after planning starts. Optional
+# search work belongs to PlanningSearchWorkAllocator; collision sampling remains geometric.
 
 const PLANNING_DURATION_EMA_SAMPLE_WEIGHT := 0.25
 const WORK_UNIT_DURATION_EMA_SAMPLE_WEIGHT := 0.25
 const DEFAULT_WORK_UNIT_DURATION_USEC := 150.0
 const DEADLINE_GUARD_MULTIPLIER := 1.5
+const MAXIMUM_CONTROL_WINDOW_BUDGET_FRACTION := 0.5
 const WORK_NAVIGATION_EVALUATION := "navigation_evaluation"
 const WORK_MOVEMENT_REFINEMENT := "movement_refinement"
 
@@ -33,8 +34,15 @@ func allocate(planning_started_usec: int) -> Dictionary:
 		else planning_started_usec
 	)
 	var budget_pressure := _budget_pressure(planning_budget_usec)
+	var polling_allowance_usec: float = _frame_budget_context.get(
+		"physics_frame_capacity_usec", 0.0
+	)
+	var expected_post_start_actuation_delay_usec: float = (
+		(_planning_duration_usec_ema if _has_planning_duration_estimate else 0.0)
+		+ polling_allowance_usec
+	)
 	return {
-		"budget_model": "control_window_frame_headroom",
+		"budget_model": "half_control_window_cap",
 		"budget_pressure": budget_pressure,
 		"has_deadline": has_deadline,
 		"planning_started_usec": planning_started_usec,
@@ -48,6 +56,7 @@ func allocate(planning_started_usec: int) -> Dictionary:
 			if not _has_planning_duration_estimate or planning_budget_usec <= 0.0
 			else _planning_duration_usec_ema / planning_budget_usec
 		),
+		"expected_post_start_actuation_delay_usec": expected_post_start_actuation_delay_usec,
 		"physics_frame_capacity_usec":
 		_frame_budget_context.get("physics_frame_capacity_usec", 0.0),
 		"physics_process_peak_usec_ema":
@@ -126,4 +135,5 @@ func _planning_duration_budget_usec() -> float:
 	var window_frames: int = int(_frame_budget_context.get("planning_window_physics_frames", 1))
 	var planning_window: float = _frame_budget_context.get("planning_window_usec", frame_capacity)
 	var aggregate_headroom := max(0.0, frame_capacity - physics_process_peak) * window_frames
-	return min(planning_window, aggregate_headroom) / scheduled_planner_count
+	var freshness_budget := planning_window * MAXIMUM_CONTROL_WINDOW_BUDGET_FRACTION
+	return min(freshness_budget, aggregate_headroom) / scheduled_planner_count

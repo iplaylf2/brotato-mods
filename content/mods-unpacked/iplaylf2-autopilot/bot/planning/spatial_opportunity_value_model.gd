@@ -95,7 +95,9 @@ func _evaluate_point(
 			stationary_accessibility = 1.0
 		if not candidate_collection.empty():
 			candidate_accessibility = 1.0
-		var contribution: float = entry.value * (candidate_accessibility - stationary_accessibility)
+		var contribution: float = _optional_access_value_delta(
+			entry.value, stationary_accessibility, candidate_accessibility
+		)
 		var event_name := _pickup_event_name(pickup)
 		if not event_name.empty():
 			var stationary_rule_value := (
@@ -116,9 +118,11 @@ func _evaluate_point(
 					observation, context, pickup, player_displacement, forecast_seconds
 				)
 			)
-			result.rule_event_opportunity += (
-				candidate_rule_value * candidate_accessibility
-				- stationary_rule_value * stationary_accessibility
+			result.rule_event_opportunity += _optional_varying_access_value_delta(
+				stationary_rule_value,
+				candidate_rule_value,
+				stationary_accessibility,
+				candidate_accessibility
 			)
 		match pickup.kind:
 			"material":
@@ -228,23 +232,25 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 			candidate_value += _pickup_rule_event_value(
 				observation, context, pickup, Vector2.ZERO, 0.0
 			)
-		if is_zero_approx(candidate_value):
+		# Navigation prices the option to visit a pickup, while actual path
+		# collection belongs to MovementOutcomePredictor. A non-positive option
+		# must not create either attraction or a broad avoidance field.
+		if candidate_value <= 0.0:
 			continue
 		var pickup_entry := {
 			"pickup": pickup,
 			"value": base_value,
 		}
 		_prepared_pickups.push_back(pickup_entry)
-		if candidate_value > 0.0:
-			_append_prepared_candidate(
-				pickup.relative_position,
-				(
-					candidate_value
-					* _deadline_accessibility(
-						gap, deadline_reach_distance, characteristic_reach_distance
-					)
+		_append_prepared_candidate(
+			pickup.relative_position,
+			(
+				candidate_value
+				* _deadline_accessibility(
+					gap, deadline_reach_distance, characteristic_reach_distance
 				)
 			)
+		)
 	for warning in observation.visible_world.spawn_warnings:
 		var value: float = _spawn_warning_value(observation, context, warning)
 		if value == 0.0:
@@ -530,6 +536,33 @@ func _deadline_accessibility_delta(
 			stationary_gap, deadline_reach_distance, characteristic_reach_distance
 		)
 	)
+
+
+func _optional_access_value_delta(
+	value: float, stationary_accessibility: float, candidate_accessibility: float
+) -> float:
+	var accessibility_delta := candidate_accessibility - stationary_accessibility
+	# Accessibility is an option, not an obligation to collect. Losing access to a
+	# harmful pickup therefore cannot manufacture a reward; an action that actually
+	# crosses it is still charged by PlayerRuleOutcomePredictor.
+	if value < 0.0 and accessibility_delta < 0.0:
+		return 0.0
+	return value * accessibility_delta
+
+
+func _optional_varying_access_value_delta(
+	stationary_value: float,
+	candidate_value: float,
+	stationary_accessibility: float,
+	candidate_accessibility: float
+) -> float:
+	var value_delta := (
+		candidate_value * candidate_accessibility
+		- stationary_value * stationary_accessibility
+	)
+	if stationary_value <= 0.0 and candidate_value <= 0.0:
+		return min(0.0, value_delta)
+	return value_delta
 
 
 func _deadline_accessibility(

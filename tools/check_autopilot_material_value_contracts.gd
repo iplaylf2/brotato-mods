@@ -243,6 +243,27 @@ func _check_damaging_consumable_pricing() -> void:
 		),
 		"a damaging consumable must form negative navigation value without an identity policy"
 	)
+	var distant_poisoned_fruit: Dictionary = poisoned_fruit.duplicate(true)
+	distant_poisoned_fruit.relative_position = Vector2(300.0, 0.0)
+	observation.remembered_entities = [distant_poisoned_fruit]
+	observation.visible_world.consumables = [distant_poisoned_fruit]
+	var spatial_script: Script = load(PLANNING_PATH + "spatial_opportunity_value_model.gd")
+	var toward_poison: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2(100.0, 0.0), 1.0
+	)
+	var away_from_poison: Dictionary = spatial_script.new().point_value_delta(
+		observation, context, Vector2(-100.0, 0.0), 1.0
+	)
+	_expect(
+		(
+			is_zero_approx(toward_poison.recovery_opportunity)
+			and is_zero_approx(away_from_poison.recovery_opportunity)
+		),
+		(
+			"a harmful optional pickup must stay out of the navigation field in both "
+			+ "directions instead of driving retreat into a boundary"
+		)
+	)
 
 
 func _check_remembered_consumable_collection() -> void:

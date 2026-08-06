@@ -53,7 +53,145 @@ func run(fixtures: Reference) -> bool:
 	)
 	_check_additive_collision_damage(fixtures, impact)
 	_check_timestamped_contact_state(fixtures, impact)
+	_check_actuation_state_projection(fixtures)
+	_check_resolved_projectile_sweep(fixtures)
+	_check_collision_evidence_ownership(fixtures)
 	return not _failed
+
+
+func _check_actuation_state_projection(fixtures: Reference) -> void:
+	var projector: Reference = load(PLANNING_PATH + "actuation_state_projector.gd").new()
+	var observation: Dictionary = fixtures.planning_observation([])
+	observation.localization.odometry_position = Vector2.ZERO
+	observation.localization.map_position = Vector2(500.0, 400.0)
+	observation.localization.observation_cells = []
+	observation.player_state.runtime_stats.invincibility_seconds_remaining = 0.15
+	observation.visible_world.enemy_projectiles = [
+		{
+			"relative_position": Vector2(100.0, 0.0),
+			"velocity": Vector2(-100.0, 0.0),
+			"acceleration": Vector2.ZERO,
+			"motion_confidence": 0.0,
+			"contact_radius": 5.0,
+			"contact_damage": 3.0,
+			"motion_model": {"kind": "linear"},
+		}
+	]
+	var result: Dictionary = projector.project(observation, Vector2.RIGHT, 0.1)
+	var projected: Dictionary = result.observation
+	_expect(
+		(
+			projected.visible_world.enemy_projectiles[0].relative_position.distance_to(
+				Vector2(80.0, 0.0)
+			)
+			< 0.001
+		),
+		"projectile geometry must start where projectile and active player motion meet at actuation"
+	)
+	_expect(
+		projected.localization.map_position.distance_to(Vector2(510.0, 400.0)) < 0.001,
+		"actuation projection must advance player localization with the active input"
+	)
+	_expect(
+		(
+			is_equal_approx(projected.wave_state.seconds_remaining, 9.9)
+			and is_equal_approx(
+				projected.player_state.runtime_stats.invincibility_seconds_remaining, 0.05
+			)
+		),
+		"actuation projection must advance wave and invincibility clocks"
+	)
+	_expect(
+		observation.visible_world.enemy_projectiles[0].relative_position == Vector2(100.0, 0.0),
+		"actuation projection must not mutate the sampled observation retained for diagnostics"
+	)
+
+
+func _check_resolved_projectile_sweep(fixtures: Reference) -> void:
+	var influence_model: Reference = load(PLANNING_PATH + "battlefield_influence_model.gd").new()
+	var observation: Dictionary = fixtures.planning_observation([])
+	observation.player_state.collision_radius = 24.0
+	observation.player_state.runtime_stats.move_speed = 481.0
+	observation.visible_world.enemy_projectiles = [
+		{
+			"relative_position": Vector2(30.0, -100.0),
+			"velocity": Vector2.ZERO,
+			"acceleration": Vector2.ZERO,
+			"motion_confidence": 1.0,
+			"motion_model": {"kind": "linear"},
+			"contact_radius": 33.0,
+			"contact_damage": 13.0,
+		},
+	]
+	var action := {
+		"movement": Vector2.UP,
+		"forecast_seconds": 0.4,
+		"samples":
+		[
+			{"time": 0.1, "displacement": Vector2(0.0, -48.1), "movement": Vector2.UP},
+			{"time": 0.4, "displacement": Vector2(0.0, -192.4), "movement": Vector2.UP},
+		],
+	}
+	var outcome: Dictionary = influence_model.predict(
+		observation, action, _influence_weights(), 0.1, {}
+	)
+	_expect(
+		(
+			is_equal_approx(outcome.peak_projectile_contact_risk, 1.0)
+			and outcome.contact_opportunities.size() == 1
+			and outcome.contact_opportunities[0].raw_damage == 13.0
+		),
+		"resolved projectile sweep must preserve contact geometry, source, and damage"
+	)
+	var side_action: Dictionary = action.duplicate(true)
+	side_action.movement = Vector2.RIGHT
+	side_action.samples = [
+		{"time": 0.1, "displacement": Vector2(48.1, 0.0), "movement": Vector2.RIGHT},
+		{"time": 0.4, "displacement": Vector2(192.4, 0.0), "movement": Vector2.RIGHT},
+	]
+	var side_outcome: Dictionary = influence_model.predict(
+		observation, side_action, _influence_weights(), 0.1, {}
+	)
+	_expect(
+		(
+			is_zero_approx(side_outcome.peak_projectile_contact_risk)
+			and side_outcome.contact_opportunities.empty()
+		),
+		"a nearby side path must remain a non-contact option instead of inheriting broad risk"
+	)
+
+
+func _check_collision_evidence_ownership(fixtures: Reference) -> void:
+	var model_path := PLANNING_PATH + "collision/unresolved_collision_risk_model.gd"
+	var collision_model: Reference = load(model_path).new()
+	var moving_enemy: Dictionary = fixtures.enemy_track(
+		Vector2(-120.0, 0.0), Vector2(160.0, 0.0), false
+	)
+	var observation: Dictionary = fixtures.planning_observation([moving_enemy])
+	observation.visible_world.enemy_projectiles = [
+		{
+			"relative_position": Vector2(80.0, 0.0),
+			"velocity": Vector2(-200.0, 0.0),
+			"contact_radius": 10.0,
+			"contact_damage": 5.0,
+		}
+	]
+	var action := {
+		"movement": Vector2.RIGHT,
+		"forecast_seconds": 0.4,
+		"samples": [{"time": 0.4, "displacement": Vector2(40.0, 0.0)}],
+	}
+	var resolved_only: Dictionary = collision_model.evaluate(observation, action, 0.1)
+	_expect(
+		(
+			is_zero_approx(resolved_only.hostile_unresolved_collision_risk)
+			and is_zero_approx(resolved_only.unresolved_collision_risk)
+		),
+		(
+			"entities with supported motion paths must not leak into the unresolved "
+			+ "collision account"
+		)
+	)
 
 
 func _check_additive_collision_damage(fixtures: Reference, impact: Reference) -> void:
@@ -61,10 +199,10 @@ func _check_additive_collision_damage(fixtures: Reference, impact: Reference) ->
 	observation.player_state.health = {"current": 9.0, "maximum": 20.0, "ratio": 0.45}
 	var action := {"movement": Vector2.ZERO, "forecast_seconds": 0.4}
 	var single: Dictionary = impact.evaluate(
-		observation, action, _velocity_collision_evidence(0.5, 0.5, 3.0, 6.0), false
+		observation, action, _unresolved_collision_evidence(0.5, 0.5, 3.0, 6.0), false
 	)
 	var swarm: Dictionary = impact.evaluate(
-		observation, action, _velocity_collision_evidence(0.9, 2.0, 12.0, 6.0), false
+		observation, action, _unresolved_collision_evidence(0.9, 2.0, 12.0, 6.0), false
 	)
 	_expect(
 		swarm.expected_health_loss > single.expected_health_loss * 2.0,
@@ -80,7 +218,7 @@ func _check_additive_collision_damage(fixtures: Reference, impact: Reference) ->
 	observation.physics_frame += 1
 	observation.player_state.runtime_stats.hit_protection = 1
 	var partially_protected: Dictionary = impact.evaluate(
-		observation, action, _velocity_collision_evidence(0.9, 2.0, 12.0, 6.0), false
+		observation, action, _unresolved_collision_evidence(0.9, 2.0, 12.0, 6.0), false
 	)
 	_expect(
 		(
@@ -157,15 +295,15 @@ func _path_collision_evidence(outcome: Dictionary) -> Dictionary:
 		"path_contact_evidence_seconds": outcome.path_contact_evidence_seconds,
 		"path_raw_damage_evidence_seconds": outcome.path_raw_damage_evidence_seconds,
 		"maximum_path_raw_damage": outcome.maximum_path_collision_raw_damage,
-		"velocity_collision_risk": 0.0,
-		"velocity_contact_evidence_sum": 0.0,
-		"velocity_raw_damage_evidence_sum": 0.0,
-		"maximum_velocity_raw_damage": 0.0,
+		"unresolved_collision_risk": 0.0,
+		"unresolved_contact_evidence_sum": 0.0,
+		"unresolved_raw_damage_evidence_sum": 0.0,
+		"maximum_unresolved_raw_damage": 0.0,
 		"contact_opportunities": outcome.contact_opportunities,
 	}
 
 
-func _velocity_collision_evidence(
+func _unresolved_collision_evidence(
 	risk: float,
 	contact_evidence_sum: float,
 	raw_damage_evidence_sum: float,
@@ -176,15 +314,15 @@ func _velocity_collision_evidence(
 		"path_contact_evidence_seconds": 0.0,
 		"path_raw_damage_evidence_seconds": 0.0,
 		"maximum_path_raw_damage": 0.0,
-		"velocity_collision_risk": risk,
-		"velocity_contact_evidence_sum": contact_evidence_sum,
-		"velocity_raw_damage_evidence_sum": raw_damage_evidence_sum,
-		"maximum_velocity_raw_damage": maximum_raw_damage,
+		"unresolved_collision_risk": risk,
+		"unresolved_contact_evidence_sum": contact_evidence_sum,
+		"unresolved_raw_damage_evidence_sum": raw_damage_evidence_sum,
+		"maximum_unresolved_raw_damage": maximum_raw_damage,
 	}
 
 
 func _opportunity_collision_evidence(opportunities: Array) -> Dictionary:
-	var evidence := _velocity_collision_evidence(0.0, 0.0, 0.0, 0.0)
+	var evidence := _unresolved_collision_evidence(0.0, 0.0, 0.0, 0.0)
 	evidence.contact_opportunities = opportunities
 	return evidence
 

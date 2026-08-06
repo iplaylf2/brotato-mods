@@ -30,19 +30,18 @@ func evaluate(
 	var contact_damage_result: Dictionary = _contact_damage_state_model.evaluate(
 		observation, runtime_stats, contact_opportunities, positive_damage_is_terminal_rule
 	)
-	# Path opportunities already own their swept contacts. Only the analytic
-	# velocity account remains as a compatibility input until it also exposes
-	# timestamps; retaining the full aggregate here would charge path contact twice
-	# and would ignore observed active iframes.
-	var velocity_evidence := evidence.duplicate(false)
-	velocity_evidence.path_collision_risk = 0.0
-	velocity_evidence.path_contact_evidence_seconds = 0.0
-	velocity_evidence.path_raw_damage_evidence_seconds = 0.0
-	velocity_evidence.maximum_path_raw_damage = 0.0
-	var velocity_result := _evaluate_aggregate(
-		observation, action, velocity_evidence, runtime_stats, positive_damage_is_terminal_rule
+	# Path opportunities own resolved swept contacts. The remaining analytic
+	# velocity account describes prospective charge distributions without concrete
+	# timestamps; retaining the full path aggregate here would charge contact twice.
+	var unresolved_evidence := evidence.duplicate(false)
+	unresolved_evidence.path_collision_risk = 0.0
+	unresolved_evidence.path_contact_evidence_seconds = 0.0
+	unresolved_evidence.path_raw_damage_evidence_seconds = 0.0
+	unresolved_evidence.maximum_path_raw_damage = 0.0
+	var unresolved_result := _evaluate_aggregate(
+		observation, action, unresolved_evidence, runtime_stats, positive_damage_is_terminal_rule
 	)
-	return _merge_stronger_impact(velocity_result, contact_damage_result)
+	return _merge_stronger_impact(unresolved_result, contact_damage_result)
 
 
 func _evaluate_aggregate(
@@ -60,14 +59,14 @@ func _evaluate_aggregate(
 	# Swept position and analytic velocity evidence can describe the same
 	# contact, so retain the stronger account instead of adding them twice.
 	var contact_opportunity_count_estimate: float = max(
-		path_contact_opportunity_count_estimate, evidence.velocity_contact_evidence_sum
+		path_contact_opportunity_count_estimate, evidence.unresolved_contact_evidence_sum
 	)
 	var path_raw_damage_evidence_sum: float = max(
 		clamp(evidence.path_collision_risk, 0.0, 1.0) * evidence.maximum_path_raw_damage,
 		evidence.path_raw_damage_evidence_seconds / invincibility_seconds
 	)
 	var raw_damage_evidence_sum: float = max(
-		path_raw_damage_evidence_sum, evidence.velocity_raw_damage_evidence_sum
+		path_raw_damage_evidence_sum, evidence.unresolved_raw_damage_evidence_sum
 	)
 	var maximum_hit_count := max(1.0, action.forecast_seconds / invincibility_seconds)
 	var expected_contact_resolution_count := clamp(
@@ -84,7 +83,7 @@ func _evaluate_aggregate(
 	var armor_multiplier := _armor_damage_multiplier(runtime_stats.armor)
 	var mean_hit_damage := _armor_adjusted_damage(mean_raw_damage_per_hit, armor_multiplier)
 	var maximum_raw_hit_damage: float = max(
-		evidence.maximum_path_raw_damage, evidence.maximum_velocity_raw_damage
+		evidence.maximum_path_raw_damage, evidence.maximum_unresolved_raw_damage
 	)
 	var maximum_hit_damage := _armor_adjusted_damage(maximum_raw_hit_damage, armor_multiplier)
 	var dodge_failure_probability: float = clamp(1.0 - runtime_stats.dodge_chance, 0.0, 1.0)
@@ -92,7 +91,7 @@ func _evaluate_aggregate(
 	var current_health: float = observation.player_state.health.current
 	var collision_risk: float = max(
 		clamp(evidence.path_collision_risk, 0.0, 1.0),
-		clamp(evidence.velocity_collision_risk, 0.0, 1.0)
+		clamp(evidence.unresolved_collision_risk, 0.0, 1.0)
 	)
 	var has_terminal_hit_evidence := (
 		unprotected_hit_count > 0.0

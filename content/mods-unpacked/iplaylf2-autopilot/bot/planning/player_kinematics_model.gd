@@ -35,6 +35,10 @@ func predict_average_velocity(
 	return predict_displacement(observation, movement, time_seconds) / max(0.01, time_seconds)
 
 
+func predict_knockback_velocity(observation: Dictionary, time_seconds: float) -> Vector2:
+	return _observed_disturbance(observation) * exp(-KNOCKBACK_DECAY_RATE * max(0.0, time_seconds))
+
+
 func predict_command_speed(observation: Dictionary, is_moving: bool) -> float:
 	if not is_moving:
 		return 0.0

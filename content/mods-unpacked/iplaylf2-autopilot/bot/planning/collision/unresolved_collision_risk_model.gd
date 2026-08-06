@@ -1,9 +1,9 @@
 extends Reference
 
-# Analytic collision evidence for ballistic projectiles, allied bodies, and
-# prospective charge target distributions. Ordinary enemy contact follows curved
-# target response and is owned by BattlefieldInfluenceModel's swept path projection;
-# treating it as a second constant-velocity obstacle caused contradictory risk.
+# Collision evidence for motion whose future realization is not yet resolved:
+# independently controlled allied players and prospective charge target
+# distributions. Entities with a supported trajectory belong exclusively to
+# BattlefieldInfluenceModel's swept path projection.
 
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
@@ -14,16 +14,12 @@ const MovementGeometryModel := preload(
 const MovementTimingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
 )
-const ProjectileMotionPredictor := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
-)
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
-var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 
 
@@ -43,18 +39,15 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 	var enemy_charge_risk := 0.0
 	var forecast_enemy_charge_risk := 0.0
 	var committed_enemy_charge_risk := 0.0
-	var projectile_risk := 0.0
 	var ally_risk := 0.0
 	var maximum_collision_raw_damage := 0.0
-	var forecast_projectile_risk := 0.0
 	var forecast_maximum_collision_raw_damage := 0.0
-	var committed_projectile_risk := 0.0
 	var committed_maximum_collision_raw_damage := 0.0
 	var forecast_hostile_contact_evidence_sum := 0.0
 	var forecast_hostile_raw_damage_evidence_sum := 0.0
 	var committed_hostile_contact_evidence_sum := 0.0
 	var committed_hostile_raw_damage_evidence_sum := 0.0
-	var minimum_ttc := INF
+	var minimum_ally_ttc := INF
 
 	for track in observation.enemy_tracks:
 		var charge_attack: Dictionary = track.behavior_profile.get("charge_attack", {})
@@ -105,51 +98,6 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 				committed_maximum_collision_raw_damage, track.behavior_profile.contact_damage
 			)
 
-	for projectile in observation.visible_world.enemy_projectiles:
-		var predicted_projectile_position: Vector2 = _projectile_motion_predictor.predict_position(
-			projectile, local_horizon_seconds
-		)
-		var projectile_velocity: Vector2 = (
-			(predicted_projectile_position - projectile.relative_position)
-			/ max(0.01, local_horizon_seconds)
-		)
-		var ttc := _time_to_collision(
-			projectile.relative_position,
-			projectile_velocity - player_velocity,
-			geometry.player_radius + projectile.contact_radius
-		)
-		if (
-			ttc > navigation_horizon_seconds
-			or _intercepted_before_player(observation, projectile, ttc)
-		):
-			continue
-		minimum_ttc = min(minimum_ttc, ttc)
-		var projectile_contact_evidence := clamp(
-			_ttc_risk(ttc, max(0.01, local_horizon_seconds)), 0.0, 1.0
-		)
-		projectile_risk += 1.5 * projectile_contact_evidence
-		maximum_collision_raw_damage = max(maximum_collision_raw_damage, projectile.contact_damage)
-		if ttc <= action.forecast_seconds:
-			forecast_projectile_risk += 1.5 * projectile_contact_evidence
-			forecast_hostile_contact_evidence_sum += projectile_contact_evidence
-			forecast_hostile_raw_damage_evidence_sum += (
-				projectile_contact_evidence
-				* projectile.contact_damage
-			)
-			forecast_maximum_collision_raw_damage = max(
-				forecast_maximum_collision_raw_damage, projectile.contact_damage
-			)
-		if ttc <= committed_seconds:
-			committed_projectile_risk += 1.5 * projectile_contact_evidence
-			committed_hostile_contact_evidence_sum += projectile_contact_evidence
-			committed_hostile_raw_damage_evidence_sum += (
-				projectile_contact_evidence
-				* projectile.contact_damage
-			)
-			committed_maximum_collision_raw_damage = max(
-				committed_maximum_collision_raw_damage, projectile.contact_damage
-			)
-
 	for ally in observation.visible_world.get("allied_agents", []):
 		if ally.kind != "player":
 			continue
@@ -159,36 +107,30 @@ func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: fl
 			geometry.player_radius + ally.collision_radius
 		)
 		if ttc <= navigation_horizon_seconds:
-			minimum_ttc = min(minimum_ttc, ttc)
+			minimum_ally_ttc = min(minimum_ally_ttc, ttc)
 			# Do not assume a human or independently controlled ally will reciprocate.
 			ally_risk += _ttc_risk(ttc, max(0.01, local_horizon_seconds))
 
 	return {
-		"velocity_obstacle_risk": _saturate(enemy_charge_risk + projectile_risk + ally_risk),
-		"hostile_velocity_obstacle_risk": _saturate(enemy_charge_risk + projectile_risk),
-		"maximum_velocity_obstacle_raw_damage": maximum_collision_raw_damage,
-		"forecast_hostile_velocity_obstacle_risk":
-		_saturate(forecast_enemy_charge_risk + forecast_projectile_risk),
-		"forecast_maximum_velocity_obstacle_raw_damage": forecast_maximum_collision_raw_damage,
-		"committed_hostile_velocity_obstacle_risk":
-		_saturate(committed_enemy_charge_risk + committed_projectile_risk),
-		"committed_maximum_velocity_obstacle_raw_damage": committed_maximum_collision_raw_damage,
+		"unresolved_collision_risk": _saturate(enemy_charge_risk + ally_risk),
+		"hostile_unresolved_collision_risk": _saturate(enemy_charge_risk),
+		"maximum_unresolved_collision_raw_damage": maximum_collision_raw_damage,
+		"forecast_hostile_unresolved_collision_risk": _saturate(forecast_enemy_charge_risk),
+		"forecast_maximum_unresolved_collision_raw_damage": forecast_maximum_collision_raw_damage,
+		"committed_hostile_unresolved_collision_risk": _saturate(committed_enemy_charge_risk),
+		"committed_maximum_unresolved_collision_raw_damage": committed_maximum_collision_raw_damage,
 		# Saturated union risk is suitable for avoidance pressure, but it is not a
-		# sufficient statistic for health loss: ten independent projectiles must not
-		# collapse into one maximum-damage hit. The additive contact evidence and
-		# damage-weighted evidence remain distinct until iframes and dodge are applied.
-		"forecast_hostile_velocity_obstacle_contact_evidence_sum":
-		forecast_hostile_contact_evidence_sum,
-		"forecast_hostile_velocity_obstacle_raw_damage_evidence_sum":
+		# sufficient statistic for health loss. The additive charge evidence and
+		# damage-weighted evidence remain distinct until dodge and iframes are applied.
+		"forecast_hostile_unresolved_contact_evidence_sum": forecast_hostile_contact_evidence_sum,
+		"forecast_hostile_unresolved_raw_damage_evidence_sum":
 		forecast_hostile_raw_damage_evidence_sum,
-		"committed_hostile_velocity_obstacle_contact_evidence_sum":
-		committed_hostile_contact_evidence_sum,
-		"committed_hostile_velocity_obstacle_raw_damage_evidence_sum":
+		"committed_hostile_unresolved_contact_evidence_sum": committed_hostile_contact_evidence_sum,
+		"committed_hostile_unresolved_raw_damage_evidence_sum":
 		committed_hostile_raw_damage_evidence_sum,
 		"enemy_charge_obstacle_risk": _saturate(enemy_charge_risk),
-		"projectile_velocity_obstacle_risk": _saturate(projectile_risk),
-		"ally_velocity_obstacle_risk": _saturate(ally_risk),
-		"minimum_time_to_collision": null if minimum_ttc == INF else minimum_ttc,
+		"ally_unresolved_collision_risk": _saturate(ally_risk),
+		"minimum_ally_time_to_collision": null if minimum_ally_ttc == INF else minimum_ally_ttc,
 		"candidate_velocity": player_velocity,
 	}
 
@@ -390,30 +332,6 @@ func _time_to_collision(
 	if discriminant < 0.0:
 		return INF
 	return max(0.0, (-b - sqrt(discriminant)) / (2.0 * a))
-
-
-func _intercepted_before_player(
-	observation: Dictionary, projectile: Dictionary, player_ttc: float
-) -> bool:
-	var predicted_position: Vector2 = _projectile_motion_predictor.predict_position(
-		projectile, player_ttc
-	)
-	var average_projectile_velocity: Vector2 = (
-		(predicted_position - projectile.relative_position)
-		/ max(0.01, player_ttc)
-	)
-	for ally in observation.visible_world.get("allied_agents", []):
-		var interception: Dictionary = ally.influence.projectile_interception
-		if not interception.active or interception.radius <= 0.0:
-			continue
-		var interception_ttc := _time_to_collision(
-			projectile.relative_position - ally.relative_position,
-			average_projectile_velocity - ally.velocity,
-			interception.radius + projectile.contact_radius
-		)
-		if interception_ttc <= player_ttc:
-			return true
-	return false
 
 
 func _ttc_risk(ttc: float, risk_seconds: float) -> float:
