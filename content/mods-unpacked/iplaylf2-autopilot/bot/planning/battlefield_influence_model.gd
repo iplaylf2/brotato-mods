@@ -29,6 +29,7 @@ const DamageCompletionWorkModel := preload(
 		+ "damage_completion_work_model.gd"
 	)
 )
+const ContactOpportunityProjector := preload("collision/contact_opportunity_projector.gd")
 
 const RANGED_SOURCE_PRESSURE_DISTANCE := 650.0
 
@@ -39,6 +40,7 @@ var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _maneuver_space_model: Reference = ManeuverSpaceModel.new()
 var _enemy_health_model: Reference = EnemyHealthModel.new()
 var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
+var _contact_opportunity_projector: Reference = ContactOpportunityProjector.new()
 var _initial_pressure_physics_frame := -1
 var _initial_environmental_pressure := 0.0
 var _shared_input_physics_frame := -1
@@ -97,7 +99,9 @@ func predict(
 			0.0, min(sample.time, committed_seconds) - previous_time
 		)
 		if committed_step_seconds > 0.0:
-			_accumulate_committed_collision(result, channels, exposure, committed_step_seconds)
+			_accumulate_committed_collision(
+				result, channels, exposure, committed_step_seconds, committed_seconds
+			)
 		terminal_environmental_pressure = exposure.environmental_pressure
 		previous_time = sample.time
 	result.terminal_environmental_pressure = terminal_environmental_pressure
@@ -249,6 +253,11 @@ func _sample_enemy_pressure(
 			)
 			channels.contact_damage = max(
 				channels.contact_damage, track.behavior_profile.contact_damage
+			)
+			channels.contact_opportunities.push_back(
+				_contact_opportunity_projector.project_enemy_contact(
+					sample.time, track, contact_evidence
+				)
 			)
 		_accumulate_ranged_pressure(track, position, sample, channels, geometry)
 
@@ -613,6 +622,11 @@ func _sample_projectile_pressure(
 			channels.path_contact_evidence += contact_evidence
 			channels.path_raw_damage_evidence += contact_evidence * projectile.contact_damage
 			channels.contact_damage = max(channels.contact_damage, projectile.contact_damage)
+			channels.contact_opportunities.push_back(
+				_contact_opportunity_projector.project_projectile_contact(
+					sample.time, projectile_index, projectile, contact_evidence
+				)
+			)
 		if intercepted:
 			channels.projectile_interception += projectile_pressure
 			channels.projectile_contact_interception = max(
@@ -804,10 +818,15 @@ func _accumulate_result(
 	result.maximum_path_collision_raw_damage = max(
 		result.maximum_path_collision_raw_damage, channels.contact_damage
 	)
+	result.contact_opportunities.append_array(channels.contact_opportunities)
 
 
 func _accumulate_committed_collision(
-	result: Dictionary, channels: Dictionary, exposure: Dictionary, step_seconds: float
+	result: Dictionary,
+	channels: Dictionary,
+	exposure: Dictionary,
+	step_seconds: float,
+	committed_seconds: float
 ) -> void:
 	result.committed_peak_path_collision_risk = max(
 		result.committed_peak_path_collision_risk, exposure.path_collision_risk
@@ -827,6 +846,9 @@ func _accumulate_committed_collision(
 	result.committed_maximum_path_collision_raw_damage = max(
 		result.committed_maximum_path_collision_raw_damage, channels.contact_damage
 	)
+	for opportunity in channels.contact_opportunities:
+		if opportunity.time_seconds <= committed_seconds + 0.0001:
+			result.committed_contact_opportunities.push_back(opportunity)
 
 
 func _get_influence_sources(observation: Dictionary) -> Array:
@@ -936,11 +958,13 @@ func _empty_result() -> Dictionary:
 		"path_contact_evidence_seconds": 0.0,
 		"path_raw_damage_evidence_seconds": 0.0,
 		"maximum_path_collision_raw_damage": 0.0,
+		"contact_opportunities": [],
 		"committed_peak_path_collision_risk": 0.0,
 		"committed_integrated_hostile_collision_risk": 0.0,
 		"committed_path_contact_evidence_seconds": 0.0,
 		"committed_path_raw_damage_evidence_seconds": 0.0,
 		"committed_maximum_path_collision_raw_damage": 0.0,
+		"committed_contact_opportunities": [],
 		"initial_environmental_pressure": 0.0,
 		"terminal_environmental_pressure": 0.0,
 		"mean_environmental_pressure_derivative": 0.0,
@@ -967,4 +991,5 @@ func _empty_channels() -> Dictionary:
 		"contact_damage": 0.0,
 		"path_contact_evidence": 0.0,
 		"path_raw_damage_evidence": 0.0,
+		"contact_opportunities": [],
 	}

@@ -10,7 +10,10 @@ const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 )
 const VelocityObstacleCollisionModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/velocity_obstacle_collision_model.gd"
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/collision/"
+		+ "velocity_obstacle_collision_model.gd"
+	)
 )
 const PlayerRuleOutcomePredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_rule_outcome_predictor.gd"
@@ -141,7 +144,10 @@ func predict_base(
 	)
 	outcome.forecast_expected_health_loss = forecast_impact.expected_health_loss
 	outcome.forecast_terminal_collision_risk = forecast_impact.terminal_collision_risk
-	outcome.forecast_expected_collision_hit_count = forecast_impact.expected_collision_hit_count
+	var forecast_resolution_count: float = forecast_impact.expected_contact_resolution_count
+	outcome.forecast_expected_contact_resolution_count = forecast_resolution_count
+	outcome.committed_contact_opportunity_count = outcome.committed_contact_opportunities.size()
+	outcome.forecast_contact_opportunity_count = outcome.contact_opportunities.size()
 	var forecast_maximum_adjusted_hit_damage: float = forecast_impact.maximum_armor_adjusted_hit_damage
 	outcome.forecast_maximum_armor_adjusted_hit_damage = forecast_maximum_adjusted_hit_damage
 	outcome.movement_damage_exposure_reduction = (
@@ -171,6 +177,7 @@ func _committed_collision_evidence(outcome: Dictionary) -> Dictionary:
 		"velocity_raw_damage_evidence_sum":
 		outcome.committed_hostile_velocity_obstacle_raw_damage_evidence_sum,
 		"maximum_velocity_raw_damage": outcome.committed_maximum_velocity_obstacle_raw_damage,
+		"contact_opportunities": outcome.committed_contact_opportunities,
 	}
 
 
@@ -186,6 +193,7 @@ func _forecast_collision_evidence(outcome: Dictionary) -> Dictionary:
 		"velocity_raw_damage_evidence_sum":
 		outcome.forecast_hostile_velocity_obstacle_raw_damage_evidence_sum,
 		"maximum_velocity_raw_damage": outcome.forecast_maximum_velocity_obstacle_raw_damage,
+		"contact_opportunities": outcome.contact_opportunities,
 	}
 
 

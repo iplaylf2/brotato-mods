@@ -120,6 +120,8 @@ func _planning_observation(physics_frame: int) -> Dictionary:
 				"dodge_chance": 0.0,
 				"hit_protection": 0,
 				"minimum_invincibility_seconds": 0.2,
+				"maximum_invincibility_seconds": 0.4,
+				"invincibility_seconds_remaining": 0.0,
 			},
 			"collision_radius": 10.0,
 			"movement":

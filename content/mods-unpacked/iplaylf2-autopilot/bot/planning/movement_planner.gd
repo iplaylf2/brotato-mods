@@ -262,7 +262,13 @@ func _summarize_actions(entries: Array, limit: int) -> Array:
 
 
 func _summarize_outcome(outcome: Dictionary) -> Dictionary:
-	return outcome.duplicate(false)
+	var summary := outcome.duplicate(false)
+	# Timestamped opportunities are internal state-propagation inputs. Counts are
+	# retained above for diagnostics; copying every candidate timeline into sampled
+	# logs would turn forecast resolution into avoidable serialization overhead.
+	summary.erase("contact_opportunities")
+	summary.erase("committed_contact_opportunities")
+	return summary
 
 
 func _empty_plan(status: String) -> Dictionary:

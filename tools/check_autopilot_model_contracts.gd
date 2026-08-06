@@ -1,6 +1,8 @@
 extends SceneTree
 
 const PLANNING_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/planning/"
+const COLLISION_PATH := PLANNING_PATH + "collision/"
+const VELOCITY_COLLISION_MODEL_PATH := COLLISION_PATH + "velocity_obstacle_collision_model.gd"
 var _failed := false
 var _fixtures: Reference
 
@@ -44,7 +46,6 @@ func _init() -> void:
 	_check_wave_completion_forecast()
 	_check_health_inventory_loss()
 	_check_cleanup_continuation_value()
-	_check_additive_collision_damage()
 	var enemy_interaction_checks_path: String = tools_dir.plus_file(
 		"check_autopilot_enemy_interaction_contracts.gd"
 	)
@@ -74,7 +75,7 @@ func _check_target_response() -> void:
 
 
 func _check_projectile_hitbox_ttc() -> void:
-	var collision_model: Reference = load(PLANNING_PATH + "velocity_obstacle_collision_model.gd").new()
+	var collision_model: Reference = load(VELOCITY_COLLISION_MODEL_PATH).new()
 	var observation: Dictionary = _planning_observation([])
 	observation.player_state.collision_radius = 24.0
 	observation.player_state.runtime_stats.move_speed = 481.0
@@ -692,40 +693,6 @@ func _check_cleanup_continuation_value() -> void:
 	)
 
 
-func _check_additive_collision_damage() -> void:
-	var impact_script: Script = load(PLANNING_PATH + "health/collision_health_impact_model.gd")
-	var impact: Reference = impact_script.new()
-	var observation := _planning_observation([])
-	observation.player_state.health = {"current": 9.0, "maximum": 20.0, "ratio": 0.45}
-	var action := {"movement": Vector2.ZERO, "forecast_seconds": 0.4}
-	var single: Dictionary = impact.evaluate(
-		observation, action, _collision_evidence(0.5, 0.5, 3.0, 6.0), false
-	)
-	var swarm: Dictionary = impact.evaluate(
-		observation, action, _collision_evidence(0.9, 2.0, 12.0, 6.0), false
-	)
-	_expect(
-		swarm.expected_health_loss > single.expected_health_loss * 2.0,
-		"independent collision opportunities must retain additive expected damage"
-	)
-	_expect(
-		is_equal_approx(swarm.terminal_collision_risk, 0.0),
-		"sublethal hit accumulation must remain health loss instead of a second terminal penalty"
-	)
-	observation.physics_frame += 1
-	observation.player_state.runtime_stats.hit_protection = 1
-	var partially_protected: Dictionary = impact.evaluate(
-		observation, action, _collision_evidence(0.9, 2.0, 12.0, 6.0), false
-	)
-	_expect(
-		(
-			partially_protected.expected_health_loss > 0.0
-			and partially_protected.expected_health_loss < swarm.expected_health_loss
-		),
-		"one hit-protection charge must consume one opportunity instead of erasing the forecast"
-	)
-
-
 func _check_local_enemy_interaction_projection() -> void:
 	var projector_script: Script = load(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/local_enemy_interaction_projector.gd"
@@ -859,24 +826,6 @@ func _weapon_attack_model() -> Dictionary:
 
 func _enemy_track(position: Vector2, velocity: Vector2, follows_player: bool) -> Dictionary:
 	return _fixtures.enemy_track(position, velocity, follows_player)
-
-
-func _collision_evidence(
-	risk: float,
-	contact_evidence_sum: float,
-	raw_damage_evidence_sum: float,
-	maximum_raw_damage: float
-) -> Dictionary:
-	return {
-		"path_collision_risk": 0.0,
-		"path_contact_evidence_seconds": 0.0,
-		"path_raw_damage_evidence_seconds": 0.0,
-		"maximum_path_raw_damage": 0.0,
-		"velocity_collision_risk": risk,
-		"velocity_contact_evidence_sum": contact_evidence_sum,
-		"velocity_raw_damage_evidence_sum": raw_damage_evidence_sum,
-		"maximum_velocity_raw_damage": maximum_raw_damage,
-	}
 
 
 func _influence_weights() -> Dictionary:

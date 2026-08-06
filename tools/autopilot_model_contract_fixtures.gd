@@ -19,6 +19,8 @@ func planning_observation(enemy_tracks: Array) -> Dictionary:
 				"dodge_chance": 0.0,
 				"hit_protection": 0,
 				"minimum_invincibility_seconds": 0.2,
+				"maximum_invincibility_seconds": 0.4,
+				"invincibility_seconds_remaining": 0.0,
 			},
 			"effective_stats": {"luck": 0.0},
 			"item_box_item_value_profile":

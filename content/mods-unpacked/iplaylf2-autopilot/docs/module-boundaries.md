@@ -35,8 +35,10 @@
 
 - `motion` 拥有“规范运动观察与稳定响应 → 未来位置、可达包络与角向机动约束”的协议，供暴露、交会、
   事件与动作采样共同消费；
+- `collision` 拥有“路径或速度几何 → 交会证据与按来源接触机会”的协议；它不解释生命损失、
+  终止风险或动作价值；
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
-- `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”、“当前生命、即时威胁与清场前补充 →
+- `health` 拥有“接触机会与兼容交会证据 → 条件生命损失与终止风险”、“当前生命、即时威胁与清场前补充 →
   生命库存、即时单位价值及补给库存价值”两段协议，结果供导航风险与动作效用共同消费；
 - `pickups` 拥有“已观察拾取物运动与玩家未来状态或路径 → 收集圈间隙或连续收集事件”的协议，供导航
   机会、直接材料收益与拾取事件规则共同消费；
@@ -105,10 +107,13 @@
 - `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、普通敌人与投射物的位置域碰撞证据、确定性
   目标定向齐射在弹体生成前的未来射击走廊、边缘压力下的敌对暴露耦合、战斗支援伤害与消耗、友方减压、
   治疗和挡弹时序；
-  `bot/planning/velocity_obstacle_collision_model.gd` 拥有投射物与队友 TTC，以及已知冲撞锁定走廊的速度
-  空间交会证据。
-- `bot/planning/health/collision_health_impact_model.gd` 合并位置域和速度空间证据，并按原版当前最短无敌帧
-  间隔换算预期生命损失与直接终止风险；
+  `bot/planning/collision/velocity_obstacle_collision_model.gd` 拥有投射物与队友 TTC，以及已知冲撞锁定
+  走廊的速度空间交会证据；
+  `bot/planning/collision/contact_opportunity_projector.gd` 将几何模型已判定的交会及其来源映射为预测接触机会契约，
+  不解释生命、风险偏好或动作价值。
+- `bot/planning/health/contact_damage_state_model.gd` 按时间顺序从接触机会推进当前生命、当前无敌剩余时间、
+  受伤后变长无敌时间、闪避和命中保护的状态分布；
+  `bot/planning/health/collision_health_impact_model.gd` 仅组合该逐次状态结果与尚未事件化的速度空间聚合证据；
   `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
   `bot/planning/health/health_inventory_value_model.gd` 负责即时生存缓冲、预计生命库存、单位价值，以及把
   动作窗内的条件生命损失换算为即时缓冲成本。即时命中储备覆盖下一控制期内敌人与完整玩家动作集合

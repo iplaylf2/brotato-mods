@@ -99,6 +99,8 @@ func _get_runtime_stats(player: Node) -> Dictionary:
 		# Zero damage selects vanilla's current minimum iframe duration, including
 		# endless-mode scaling, without duplicating that rule in planning.
 		"minimum_invincibility_seconds": player.get_iframes(0.0),
+		"maximum_invincibility_seconds": player.get_iframes(player.max_stats.health * 0.15),
+		"invincibility_seconds_remaining": player._invincibility_timer.time_left,
 	}
 
 
