@@ -7,6 +7,7 @@ extends Reference
 func adapt(consumable: Node) -> Dictionary:
 	var result := {
 		"base_recovery": 0.0,
+		"base_health_damage": 0.0,
 		"traits": [],
 	}
 	if not "consumable_data" in consumable or consumable.consumable_data == null:
@@ -15,6 +16,8 @@ func adapt(consumable: Node) -> Dictionary:
 	for effect in data.effects:
 		if effect is ConsumableHealingEffect:
 			result.base_recovery += effect.value
+		elif effect is ConsumableDamageEffect:
+			result.base_health_damage += effect.value
 	if data.my_id_hash in [Keys.consumable_fruit_hash, Keys.consumable_poisoned_fruit_hash]:
 		result.traits.push_back("fruit")
 	if data.my_id_hash in [Keys.consumable_item_box_hash, Keys.consumable_legendary_item_box_hash]:

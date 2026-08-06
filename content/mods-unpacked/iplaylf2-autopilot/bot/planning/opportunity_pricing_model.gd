@@ -18,10 +18,14 @@ const DeathRewardProbabilityModel := preload(
 const StatOpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_pricing_model.gd"
 )
+const HealthLossValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/" + "health_loss_value_model.gd"
+)
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _death_reward_probability_model: Reference = DeathRewardProbabilityModel.new()
 var _stat_opportunity_pricing_model: Reference = StatOpportunityPricingModel.new()
+var _health_loss_value_model: Reference = HealthLossValueModel.new()
 
 
 func material_unit_collection_value(observation: Dictionary) -> float:
@@ -72,9 +76,11 @@ func consumable_recovery_value(observation: Dictionary, consumable: Dictionary) 
 	)
 	if missing_health <= 0.0:
 		return 0.0
-	var recovery: float = consumable.get("pickup_profile", {}).get("base_recovery", 0.0)
-	recovery = _rule_projector.project_recovery(
-		observation.player_state.effect_rules, "consumable_pickup", recovery
+	var profile: Dictionary = consumable.get("pickup_profile", {})
+	if profile.get("base_health_damage", 0.0) > 0.0:
+		return 0.0
+	var recovery: float = _rule_projector.project_consumable_health_effect(
+		observation.player_state.effect_rules, profile.get("base_recovery", 0.0)
 	)
 	recovery = _rule_projector.project_recovery(
 		observation.player_state.effect_rules, "healing", recovery
@@ -83,11 +89,28 @@ func consumable_recovery_value(observation: Dictionary, consumable: Dictionary) 
 
 
 func consumable_pickup_value(
-	observation: Dictionary, consumable: Dictionary, health_inventory_value: Dictionary
+	observation: Dictionary,
+	consumable: Dictionary,
+	health_inventory_value: Dictionary,
+	run_continuation_value := {}
 ) -> float:
-	return (
+	var value: float = (
 		consumable_recovery_value(observation, consumable)
 		* health_inventory_value.get("recovery_conversion_unit_value", 0.0)
+	)
+	var health_damage := consumable_health_damage(observation, consumable)
+	value -= _health_loss_value_model.value(health_damage, health_inventory_value, 1.0)
+	if health_damage >= observation.player_state.health.current:
+		value -= run_continuation_value.get("total_value", 0.0)
+	return value
+
+
+func consumable_health_damage(observation: Dictionary, consumable: Dictionary) -> float:
+	var base_damage: float = consumable.get("pickup_profile", {}).get("base_health_damage", 0.0)
+	if base_damage <= 0.0:
+		return 0.0
+	return _rule_projector.project_consumable_health_effect(
+		observation.player_state.effect_rules, base_damage
 	)
 
 

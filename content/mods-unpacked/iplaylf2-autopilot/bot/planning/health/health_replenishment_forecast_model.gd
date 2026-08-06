@@ -148,9 +148,11 @@ func _expected_drop_replenishment(
 
 
 func _consumable_recovery(observation: Dictionary, consumable: Dictionary) -> float:
-	var recovery: float = consumable.get("pickup_profile", {}).get("base_recovery", 0.0)
-	recovery = _rule_projector.project_recovery(
-		observation.player_state.effect_rules, "consumable_pickup", recovery
+	var profile: Dictionary = consumable.get("pickup_profile", {})
+	if profile.get("base_health_damage", 0.0) > 0.0:
+		return 0.0
+	var recovery: float = _rule_projector.project_consumable_health_effect(
+		observation.player_state.effect_rules, profile.get("base_recovery", 0.0)
 	)
 	return max(
 		0.0,

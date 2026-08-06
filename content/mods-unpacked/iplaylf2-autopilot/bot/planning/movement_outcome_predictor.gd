@@ -105,6 +105,10 @@ func predict_base(
 		"terminal_collision_risk": 0.0,
 		"forecast_expected_health_loss": 0.0,
 		"forecast_terminal_collision_risk": 0.0,
+		"forecast_consumable_health_loss": 0.0,
+		"committed_consumable_health_loss": 0.0,
+		"terminal_consumable_risk": 0.0,
+		"terminal_health_risk": 0.0,
 	}
 	var battlefield_outcome: Dictionary = _battlefield_influence_model.predict(
 		observation,
@@ -208,6 +212,7 @@ func complete_prediction(
 	# dictionaries shared instead of recursively copying the whole forecast for
 	# the base forecast and its semantic completion.
 	var outcome: Dictionary = base_outcome.duplicate(false)
+	outcome.terminal_health_risk = outcome.terminal_collision_risk
 	_weapon_outcome_forecast_model.accumulate_outcome(
 		observation, action, outcome, planning_context
 	)

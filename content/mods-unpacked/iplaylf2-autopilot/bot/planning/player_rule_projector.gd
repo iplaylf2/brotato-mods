@@ -12,14 +12,10 @@ func project(observation: Dictionary) -> Dictionary:
 			continue
 		maximum_consumable_recovery = max(
 			maximum_consumable_recovery,
-			_project_recovery(
-				rules,
-				"consumable_pickup",
-				entity.get("pickup_profile", {}).get("base_recovery", 0.0)
-			)
+			_consumable_recovery(rules, entity.get("pickup_profile", {}))
 		)
 	if maximum_consumable_recovery <= 0.0:
-		maximum_consumable_recovery = _project_recovery(rules, "consumable_pickup", 3.0)
+		maximum_consumable_recovery = project_consumable_health_effect(rules, 3.0)
 	maximum_consumable_recovery = _project_recovery(rules, "healing", maximum_consumable_recovery)
 
 	return {
@@ -41,6 +37,32 @@ func project(observation: Dictionary) -> Dictionary:
 
 func project_recovery(rules: Array, event: String, base_value: float) -> float:
 	return _project_recovery(rules, event, base_value)
+
+
+func project_consumable_health_effect(rules: Array, base_value: float) -> float:
+	var result := base_value
+	for rule in rules:
+		if rule.event != "consumable_pickup" or not rule.condition.empty():
+			continue
+		for consequence in rule.consequences:
+			if consequence.target != "consumable_health_effect":
+				continue
+			match consequence.operation:
+				"add":
+					result += consequence.get("value", 0.0)
+				"multiply":
+					result *= consequence.get("value", 1.0)
+				"set":
+					result = consequence.get("value", result)
+	return max(0.0, result)
+
+
+func _consumable_recovery(rules: Array, profile: Dictionary) -> float:
+	# Damage consumables do not become healing when the common consumable modifier
+	# is positive. Vanilla adds that modifier to their damage instead.
+	if profile.get("base_health_damage", 0.0) > 0.0:
+		return 0.0
+	return project_consumable_health_effect(rules, profile.get("base_recovery", 0.0))
 
 
 func _project_recovery(rules: Array, event: String, base_value: float) -> float:

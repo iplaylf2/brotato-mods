@@ -236,7 +236,7 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		if gap <= 0.0:
 			continue
 		var base_value: float = (
-			_pickup_value(observation, pickup, health_inventory_value)
+			_pickup_value(observation, context, pickup, health_inventory_value)
 			* pickup.existence_confidence
 		)
 		var candidate_value := base_value
@@ -244,22 +244,23 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 			candidate_value += _pickup_rule_event_value(
 				observation, context, pickup, Vector2.ZERO, 0.0
 			)
-		if candidate_value <= 0.0:
+		if is_zero_approx(candidate_value):
 			continue
 		var pickup_entry := {
 			"pickup": pickup,
 			"value": base_value,
 		}
 		_prepared_pickups.push_back(pickup_entry)
-		_append_prepared_candidate(
-			pickup.relative_position,
-			(
-				candidate_value
-				* _deadline_accessibility(
-					gap, deadline_reach_distance, characteristic_reach_distance
+		if candidate_value > 0.0:
+			_append_prepared_candidate(
+				pickup.relative_position,
+				(
+					candidate_value
+					* _deadline_accessibility(
+						gap, deadline_reach_distance, characteristic_reach_distance
+					)
 				)
 			)
-		)
 	for warning in observation.visible_world.spawn_warnings:
 		var value: float = _spawn_warning_value(observation, context, warning)
 		if value == 0.0:
@@ -357,14 +358,20 @@ func _stationary_weapon_value(
 
 
 func _pickup_value(
-	observation: Dictionary, pickup: Dictionary, health_inventory_value: Dictionary
+	observation: Dictionary,
+	context: Dictionary,
+	pickup: Dictionary,
+	health_inventory_value: Dictionary
 ) -> float:
 	match pickup.kind:
 		"material":
 			return _opportunity_pricing_model.material_collection_value(observation, pickup)
 		"consumable":
 			return _opportunity_pricing_model.consumable_pickup_value(
-				observation, pickup, health_inventory_value
+				observation,
+				pickup,
+				health_inventory_value,
+				context.state_factors.get("run_continuation_value", {})
 			)
 	return 0.0
 

@@ -790,7 +790,7 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 			"forecast_seconds": 0.7,
 			"forecast_expected_health_loss": 0.0,
 			"expected_health_loss": 5.0,
-			"terminal_collision_risk": 0.25,
+			"terminal_health_risk": 0.25,
 		},
 		{
 			"control_interval_seconds": 0.1,
@@ -801,6 +801,7 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 				"continuation_horizon_seconds": 1.0,
 				"health_inventory_value":
 				{
+					"health_inventory_value_scale": 12.0,
 					"immediate_survival_buffer": 20.0,
 					"terminal_health_loss_unit_value": 1.0,
 				},
@@ -822,7 +823,7 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 			"forecast_seconds": 0.7,
 			"forecast_expected_health_loss": 0.0,
 			"expected_health_loss": 5.0,
-			"terminal_collision_risk": 0.0,
+			"terminal_health_risk": 0.0,
 		},
 		{
 			"objective_weights": {"survival": {"expected_run_continuation_value_loss": -1.0}},
@@ -830,6 +831,7 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 			{
 				"health_inventory_value":
 				{
+					"health_inventory_value_scale": 12.0,
 					"immediate_survival_buffer": 20.0,
 					"terminal_health_loss_unit_value": 1.0,
 				},

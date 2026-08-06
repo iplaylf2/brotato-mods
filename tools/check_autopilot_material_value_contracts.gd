@@ -15,6 +15,7 @@ func run(fixtures: Reference) -> bool:
 	_check_remembered_consumable_collection()
 	_check_crossed_pickup_opportunity()
 	_check_recovery_supply_pricing()
+	_check_damaging_consumable_pricing()
 	return not _failed
 
 
@@ -135,6 +136,89 @@ func _check_recovery_supply_pricing() -> void:
 			)
 		),
 		"a tree that creates reachable healing supply must retain inventory value"
+	)
+
+
+func _check_damaging_consumable_pricing() -> void:
+	var predictor: Reference = load(PLANNING_PATH + "player_rule_outcome_predictor.gd").new()
+	var utility: Reference = load(PLANNING_PATH + "movement_utility_model.gd").new()
+	var opportunity: Reference = load(PLANNING_PATH + "opportunity_pricing_model.gd").new()
+	var observation: Dictionary = _fixtures.planning_observation([])
+	observation.player_state.health = {"current": 4.0, "maximum": 20.0, "ratio": 0.2}
+	observation.player_state.effect_rules = [
+		{
+			"event": "consumable_pickup",
+			"condition": {},
+			"consequences":
+			[
+				{
+					"target": "consumable_health_effect",
+					"operation": "add",
+					"value": 1.0,
+				}
+			],
+		}
+	]
+	var poisoned_fruit := {
+		"kind": "consumable",
+		"relative_position": Vector2(10.0, 0.0),
+		"visual_radius": 10.0,
+		"existence_confidence": 1.0,
+		"pickup_profile": {"base_recovery": 0.0, "base_health_damage": 3.0, "traits": ["fruit"]},
+	}
+	observation.remembered_entities = [poisoned_fruit]
+	observation.visible_world.consumables = [poisoned_fruit]
+	var action := {
+		"forecast_seconds": 0.1,
+		"samples": [{"time": 0.1, "displacement": Vector2.ZERO}],
+	}
+	var outcome := {
+		"pickup_events":
+		load(PLANNING_PATH + "pickups/pickup_collection_projector.gd").new().project(
+			observation, action.samples
+		),
+		"expected_recovery": 0.0,
+		"expected_recovery_events": 0.0,
+		"expected_critical_kill_weight": 0.0,
+		"consumed_consumable_recovery_supply": 0.0,
+		"wasted_consumable_recovery": 0.0,
+		"forecast_consumable_health_loss": 0.0,
+		"committed_consumable_health_loss": 0.0,
+		"forecast_expected_health_loss": 0.0,
+		"expected_health_loss": 0.0,
+		"terminal_consumable_risk": 0.0,
+		"terminal_health_risk": 0.0,
+	}
+	predictor.accumulate_outcome(
+		observation,
+		action,
+		outcome,
+		{"enemy_completion_value_ledger": {}, "control_interval_seconds": 0.1}
+	)
+	_expect(
+		(
+			is_equal_approx(outcome.forecast_consumable_health_loss, 4.0)
+			and is_equal_approx(outcome.committed_consumable_health_loss, 4.0)
+			and is_equal_approx(outcome.terminal_health_risk, 1.0)
+			and is_equal_approx(outcome.expected_recovery, 0.0)
+		),
+		(
+			"a damaging consumable must apply the shared consumable modifier to damage, "
+			+ "enter both health-loss horizons, and remain distinct from recovery"
+		)
+	)
+	var context: Dictionary = utility.build_context(observation)
+	_expect(
+		(
+			opportunity.consumable_pickup_value(
+				observation,
+				poisoned_fruit,
+				context.state_factors.health_inventory_value,
+				context.state_factors.run_continuation_value
+			)
+			< 0.0
+		),
+		"a damaging consumable must form negative navigation value without an identity policy"
 	)
 
 

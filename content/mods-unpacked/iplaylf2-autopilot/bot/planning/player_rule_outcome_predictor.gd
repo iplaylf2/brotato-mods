@@ -113,11 +113,15 @@ func _apply_consumable_event(
 	observation: Dictionary, event: Dictionary, outcome: Dictionary, planning_context: Dictionary
 ) -> void:
 	var profile: Dictionary = event.entity.get("pickup_profile", {})
+	_apply_consumable_health_damage(observation, event, profile, outcome, planning_context)
 	var recovery_before: float = outcome.expected_recovery
-	outcome.expected_recovery += (
-		profile.get("base_recovery", 0.0)
-		* event.get("event_weight", 1.0)
-	)
+	if profile.get("base_health_damage", 0.0) <= 0.0:
+		outcome.expected_recovery += (
+			_rule_projector.project_consumable_health_effect(
+				observation.player_state.effect_rules, profile.get("base_recovery", 0.0)
+			)
+			* event.get("event_weight", 1.0)
+		)
 	_apply_event_rules(observation, "consumable_pickup", event, outcome, planning_context)
 	outcome.expected_recovery = _rule_projector.project_recovery(
 		observation.player_state.effect_rules, "healing", outcome.expected_recovery
@@ -136,6 +140,45 @@ func _apply_consumable_event(
 		var healing_event: Dictionary = event.duplicate(true)
 		healing_event.event_weight = event.get("event_weight", 1.0)
 		_apply_event_rules(observation, "healing", healing_event, outcome, planning_context)
+
+
+func _apply_consumable_health_damage(
+	observation: Dictionary,
+	event: Dictionary,
+	profile: Dictionary,
+	outcome: Dictionary,
+	planning_context: Dictionary
+) -> void:
+	var base_damage: float = profile.get("base_health_damage", 0.0)
+	if base_damage <= 0.0:
+		return
+	# Vanilla's non-dodgeable damage effect is suppressed only while an already
+	# active invincibility timer lasts; taking it does not start new iframes.
+	if event.time < observation.player_state.runtime_stats.invincibility_seconds_remaining:
+		return
+	var event_weight: float = clamp(event.get("event_weight", 1.0), 0.0, 1.0)
+	var full_damage: float = _rule_projector.project_consumable_health_effect(
+		observation.player_state.effect_rules, base_damage
+	)
+	var damage: float = full_damage * event_weight
+	outcome.forecast_consumable_health_loss += damage
+	outcome.forecast_expected_health_loss += damage
+	var control_interval: float = planning_context.get("control_interval_seconds", 0.0)
+	if event.time > control_interval:
+		return
+	outcome.committed_consumable_health_loss += damage
+	outcome.expected_health_loss += damage
+	if full_damage >= observation.player_state.health.current:
+		outcome.terminal_consumable_risk = max(outcome.terminal_consumable_risk, event_weight)
+	elif (
+		is_equal_approx(event_weight, 1.0)
+		and outcome.committed_consumable_health_loss >= observation.player_state.health.current
+	):
+		outcome.terminal_consumable_risk = 1.0
+	if outcome.terminal_consumable_risk > 0.0:
+		outcome.terminal_health_risk = max(
+			outcome.terminal_health_risk, outcome.terminal_consumable_risk
+		)
 
 
 func _apply_event_rules(
@@ -159,6 +202,10 @@ func _apply_consequence(
 	outcome: Dictionary,
 	planning_context: Dictionary
 ) -> void:
+	# This modifier was already applied to the pickup's mutually exclusive healing
+	# or damage effect. It is mechanism input, not an additional outcome.
+	if consequence.target == "consumable_health_effect":
+		return
 	var expected_occurrences: float = (
 		clamp(consequence.get("probability", 1.0), 0.0, 1.0)
 		* event.get("event_weight", 1.0)

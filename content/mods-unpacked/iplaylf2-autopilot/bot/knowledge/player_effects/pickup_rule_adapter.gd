@@ -114,7 +114,7 @@ func _append_consumable_rules(rules: Array, effects: Dictionary, player_index: i
 		rules, effects[Keys.explode_on_consumable_burning_hash], player_index
 	)
 	_append_trait_stat_rules(rules, effects[Keys.stats_on_fruit_hash], "fruit")
-	_append_consumable_recovery_rule(rules, effects[Keys.consumable_heal_hash])
+	_append_consumable_health_modifier_rule(rules, effects[Keys.consumable_heal_hash])
 	for entry in effects[Keys.consumable_stats_while_max_hash]:
 		_append_consumable_stat_rule(rules, entry, INF)
 
@@ -230,15 +230,15 @@ func _append_trait_stat_rules(rules: Array, entries: Array, trait: String) -> vo
 		)
 
 
-func _append_consumable_recovery_rule(rules: Array, recovery_offset: float) -> void:
-	if recovery_offset == 0.0:
+func _append_consumable_health_modifier_rule(rules: Array, modifier: float) -> void:
+	if modifier == 0.0:
 		return
 	rules.push_back(
 		{
 			"event": "consumable_pickup",
 			"condition": {},
 			"consequences":
-			[{"target": "health_recovery", "operation": "add", "value": recovery_offset}],
+			[{"target": "consumable_health_effect", "operation": "add", "value": modifier}],
 		}
 	)
 

@@ -48,6 +48,7 @@ func estimate(
 	var result: Dictionary = replenishment_forecast.duplicate(false)
 	result.merge(
 		{
+			"health_inventory_value_scale": HEALTH_INVENTORY_VALUE_SCALE,
 			"marginal_health_unit_value": marginal_health_unit_value,
 			"terminal_health_loss_unit_value": terminal_health_loss_unit_value,
 			"replenishment_unit_value": marginal_health_unit_value,
@@ -60,34 +61,6 @@ func estimate(
 		true
 	)
 	return result
-
-
-func health_loss_value(
-	expected_health_loss: float, inventory_value: Dictionary, continuation_horizon_ratio := 1.0
-) -> float:
-	var loss := max(0.0, expected_health_loss)
-	if loss <= 0.0:
-		return 0.0
-	# Collision loss is realized inside the local forecast, before the wave-scale
-	# replenishment inventory can be collected.  Future fruit remains valuable as
-	# continuation insurance and recovery opportunity, but cannot make the same
-	# immediate hit cheaper.  Pricing this loss against projected inventory would let a
-	# rolling planner repeatedly borrow against the same future supply.
-	var immediate_buffer: float = max(1.0, inventory_value.immediate_survival_buffer)
-	var survivable_loss := min(loss, max(0.0, immediate_buffer - 1.0))
-	# Liquid health has no terminal value after vanilla resets next-wave health from
-	# the configured start-wave percentage; the current value does not carry across
-	# that boundary. Preserve only the fraction needed to survive threats after this
-	# forecast; loss beyond the immediate buffer remains terminal at every horizon.
-	var value := (
-		clamp(float(continuation_horizon_ratio), 0.0, 1.0)
-		* (
-			HEALTH_INVENTORY_VALUE_SCALE
-			* log(immediate_buffer / max(1.0, immediate_buffer - survivable_loss))
-		)
-	)
-	var terminal_loss := max(0.0, loss - survivable_loss)
-	return value + terminal_loss * inventory_value.terminal_health_loss_unit_value
 
 
 func _immediate_hit_reserve(observation: Dictionary) -> float:

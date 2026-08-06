@@ -39,7 +39,8 @@
   终止风险或动作价值；
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
 - `health` 拥有“接触机会与无时序聚合交会证据 → 条件生命损失与终止风险”、“当前生命、即时威胁与清场前补充 →
-  生命库存、即时单位价值及补给库存价值”两段协议，结果供导航风险与动作效用共同消费；
+  生命库存及单位价值”、“任意来源生命损失与生命库存 → 材料等价成本”三段协议，结果供导航风险、拾取
+  机会与动作效用共同消费；
 - `pickups` 拥有“规划记忆中的拾取物及其观察层存在证据、运动与玩家未来路径 → 收集圈间隙或连续收集
   事件”的协议，供导航机会、直接材料收益与拾取事件规则共同消费；它消费置信度，不形成存在证据；
 - `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、锁定后的共享武器
@@ -55,7 +56,7 @@
 
 - `bot/knowledge/allies/ally_mechanic_compiler.gd` 与
   `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
-- `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定恢复与处理画像。
+- `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定生命效果与语义特征画像。
 - `bot/knowledge/neutrals/neutral_mechanic_compiler.gd` 拥有可见树木的稳定生命、命中上限与死亡奖励画像；
   `bot/knowledge/projectiles/projectile_motion_compiler.gd` 把可见投射物的稳定运动配置编译为解析运动模型。
 - `bot/knowledge/collision_shape_radius_adapter.gd` 把原版圆形和矩形 `CollisionShape2D` 及其完整世界变换
@@ -113,13 +114,15 @@
   目标分布的速度空间交会证据；
   `bot/planning/collision/contact_opportunity_projector.gd` 将几何模型已判定的交会及其来源映射为预测接触机会契约，
   不解释生命、风险偏好或动作价值。
+- `bot/planning/health/health_loss_value_model.gd` 是不依赖来源预测的叶模块，消费生命库存价值上下文，将任意
+  来源的生命损失统一换算为液态生命库存成本；碰撞结果、伤害型拾取和导航机会可以共同依赖它，而不反向
+  依赖波次完成或机会模型。
 - `bot/planning/health/contact_damage_state_model.gd` 按时间顺序从接触机会推进当前生命、当前无敌剩余时间、
   受伤后变长无敌时间、闪避和命中保护的状态分布；
   `bot/planning/health/collision_health_impact_model.gd` 仅组合该逐次状态结果与尚未事件化的速度空间聚合证据；
   `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
-  `bot/planning/health/health_inventory_value_model.gd` 负责即时生存缓冲、预计生命库存、单位价值，以及把
-  动作窗内的条件生命损失换算为即时缓冲成本。即时命中储备覆盖下一控制期内敌人与完整玩家动作集合
-  的联合可达域，不只覆盖静止玩家。
+  `bot/planning/health/health_inventory_value_model.gd` 负责风险尺度、即时生存缓冲、预计生命库存和单位价值。
+  即时命中储备覆盖下一控制期内敌人与完整玩家动作集合的联合可达域，不只覆盖静止玩家。
 - `bot/planning/movement_action_selector.gd` 只排除存在替代动作时已落入下一提交期的确定终止碰撞，随后
   最大化公共效用。完整预测窗的即时缓冲消耗形成生命库存成本；只有提交期的概率终止风险按对局延续
   价值计价。选择器不拥有风险偏好、逃跑方向或敌人类别策略。
@@ -161,7 +164,8 @@
 - `bot/planning/pickups/pickup_collection_projector.gd` 以规划记忆作为拾取物唯一输入，消费观察层给出的
   存在置信度，一次形成候选路径收集事件；动作基础收益与规则后果共享该事件集合，不分别扫描可见世界。
 - `bot/planning/opportunity_pricing_model.gd` 把地面材料、地面消耗品、实体死亡奖励与树木保留后果换算为
-  材料等价边际价值，并把知识层提供的确定属性变化委托给属性机会定价；它不拥有敌人威胁或死亡转移机制。
+  材料等价边际价值，并分别把消耗品生命损失与确定属性变化委托给生命损失和属性机会定价；它不拥有敌人
+  威胁或死亡转移机制。
 - `bot/planning/death_reward_probability_model.gd` 把死亡奖励画像与当前波次、潮汐波和幸运组合为材料、
   消耗品及箱子的当前概率。
 - `bot/planning/stat_opportunity_pricing_model.gd` 按属性机会曲线和剩余机会时域，计算属性变化对未来事件
@@ -174,12 +178,13 @@
 - `bot/planning/movement_outcome_predictor.gd` 组合动作结果；`bot/planning/movement_utility_model.gd` 将结果换算
   为效用，并在规划上下文中形成每视口信息单价。其中，局部与导航环境暴露使用剩余导航时域内一单位
   生命损失的价值，补给储备、潜在恢复信息和波次尺度敌人负担使用补给库存价值；动作生命损失使用按
-  剩余时域裁剪的即时缓冲价值，只有提交期状态分布的终止概率按对局延续价值计价。预测和评分是两个边界，
+  剩余时域裁剪的即时缓冲价值，只有提交期 `terminal_health_risk` 按对局延续价值计价。预测和评分是两个边界，
   选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
   方向，并按规划器提出的细分方向构造新候选；它还根据时间模型以及敌人与投射物的可达上界，为本轮所有
   候选选择同一个动作比较时域；
-  `bot/planning/movement_action_selector.gd` 从已评分候选中排除可避免的提交期确定死亡，再选择总效用最高者；
+  `bot/planning/movement_action_selector.gd` 从已评分候选中排除可避免的提交期确定终止碰撞，再选择总效用
+  最高者；
   `MovementPlanner` 协调生成、预测、评分、细分与选择，不把新行为政策藏进选择器。
 
 ### 控制与计算预算

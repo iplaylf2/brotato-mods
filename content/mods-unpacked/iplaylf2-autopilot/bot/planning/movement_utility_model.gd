@@ -8,6 +8,9 @@ const PlayerRuleProjector := preload(
 const HealthInventoryValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_inventory_value_model.gd"
 )
+const HealthLossValueModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_loss_value_model.gd"
+)
 const OpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
 )
@@ -26,6 +29,7 @@ const RunContinuationValueModel := preload(
 
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _health_inventory_value_model: Reference = HealthInventoryValueModel.new()
+var _health_loss_value_model: Reference = HealthLossValueModel.new()
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _enemy_completion_value_model: Reference = EnemyCompletionValueModel.new()
 var _wave_completion_forecast_model: Reference = WaveCompletionForecastModel.new()
@@ -56,7 +60,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 		max(0.0, observation.wave_state.seconds_remaining)
 		/ max(0.01, timing.maximum_navigation_horizon_seconds)
 	)
-	var local_exposure_unit_value: float = _health_inventory_value_model.health_loss_value(
+	var local_exposure_unit_value: float = _health_loss_value_model.value(
 		1.0, health_inventory_value, exposure_continuation_ratio
 	)
 	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
@@ -169,7 +173,7 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 		0.0,
 		1.0
 	)
-	var health_inventory_loss_value: float = _health_inventory_value_model.health_loss_value(
+	var health_inventory_loss_value: float = _health_loss_value_model.value(
 		outcome.forecast_expected_health_loss, health_inventory_value, forecast_continuation_ratio
 	)
 	scored_outcome.forecast_health_inventory_loss_value = health_inventory_loss_value
@@ -178,7 +182,7 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	# distribution; interpreting ordinary buffer erosion as another death
 	# probability double-charged survivable hits and dwarfed every other objective.
 	var terminal_probability: float = clamp(
-		float(outcome.get("terminal_collision_risk", 0.0)), 0.0, 1.0
+		float(outcome.get("terminal_health_risk", 0.0)), 0.0, 1.0
 	)
 	scored_outcome.expected_run_continuation_value_loss = (
 		terminal_probability

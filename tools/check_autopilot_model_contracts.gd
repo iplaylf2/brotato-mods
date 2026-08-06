@@ -730,11 +730,10 @@ func _check_navigation_weapon_completion_value() -> void:
 
 
 func _check_health_inventory_loss() -> void:
-	var health_inventory_script: Script = load(
-		PLANNING_PATH + "health/health_inventory_value_model.gd"
-	)
-	var health_inventory_model: Reference = health_inventory_script.new()
+	var health_loss_model_path := PLANNING_PATH + "health/health_loss_value_model.gd"
+	var health_loss_value_model: Reference = load(health_loss_model_path).new()
 	var abundant_supply_value := {
+		"health_inventory_value_scale": 12.0,
 		"immediate_survival_buffer": 4.0,
 		"projected_health_inventory": 100.0,
 		"terminal_health_loss_unit_value": 10.0,
@@ -743,39 +742,33 @@ func _check_health_inventory_loss() -> void:
 	scarce_supply_value.projected_health_inventory = 4.0
 	_expect(
 		is_equal_approx(
-			health_inventory_model.health_loss_value(2.0, abundant_supply_value),
-			health_inventory_model.health_loss_value(2.0, scarce_supply_value)
+			health_loss_value_model.value(2.0, abundant_supply_value),
+			health_loss_value_model.value(2.0, scarce_supply_value)
 		),
 		"wave-scale replacement supply must not discount local collision loss"
 	)
-	var abundant_catastrophic_loss: float = health_inventory_model.health_loss_value(
+	var abundant_catastrophic_loss: float = health_loss_value_model.value(
 		5.0, abundant_supply_value
 	)
 	_expect(
 		is_equal_approx(
-			(
-				abundant_catastrophic_loss
-				- health_inventory_model.health_loss_value(3.0, abundant_supply_value)
-			),
+			abundant_catastrophic_loss - health_loss_value_model.value(3.0, abundant_supply_value),
 			2.0 * abundant_supply_value.terminal_health_loss_unit_value
 		),
 		"future replacement supply must not absorb current-buffer terminal loss"
 	)
 	_expect(
 		is_equal_approx(
-			abundant_catastrophic_loss,
-			health_inventory_model.health_loss_value(5.0, scarce_supply_value)
+			abundant_catastrophic_loss, health_loss_value_model.value(5.0, scarce_supply_value)
 		),
 		"replacement liquidity must remain a continuation value, not local hit capacity"
 	)
 	_expect(
-		is_equal_approx(
-			health_inventory_model.health_loss_value(2.0, abundant_supply_value, 0.0), 0.0
-		),
+		is_equal_approx(health_loss_value_model.value(2.0, abundant_supply_value, 0.0), 0.0),
 		"nonlethal health loss must lose its continuation cost at wave cleanup"
 	)
 	_expect(
-		health_inventory_model.health_loss_value(5.0, abundant_supply_value, 0.0) > 0.0,
+		health_loss_value_model.value(5.0, abundant_supply_value, 0.0) > 0.0,
 		"wave cleanup must never erase damage that crosses the immediate survival buffer"
 	)
 
@@ -790,13 +783,13 @@ func _check_cleanup_continuation_value() -> void:
 		"forecast_seconds": 0.0,
 		"forecast_expected_health_loss": 1.0,
 		"expected_health_loss": 1.0,
-		"terminal_collision_risk": 0.0,
+		"terminal_health_risk": 0.0,
 	}
 	var terminal_outcome := {
 		"forecast_seconds": 0.0,
 		"forecast_expected_health_loss": 0.0,
 		"expected_health_loss": 0.0,
-		"terminal_collision_risk": 0.5,
+		"terminal_health_risk": 0.5,
 	}
 	var early_nonterminal: Dictionary = utility.evaluate(nonterminal_outcome, early_context)
 	var early_terminal: Dictionary = utility.evaluate(terminal_outcome, early_context)
