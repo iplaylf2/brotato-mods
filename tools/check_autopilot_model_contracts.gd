@@ -529,18 +529,12 @@ func _check_weapon_outcome_contracts() -> void:
 	observation.enemy_tracks = [low_value_track, high_value_track]
 	observation.player_state.weapons[0].attack_model.timing.seconds_until_next_attack = 0.5
 	_expect(
-		(
-			outcome.expected_enemy_completion_equivalents > 0.0
-			and outcome.expected_enemy_completion_equivalents < 1.0
-		),
-		"insufficient forecast damage must create a partial enemy completion equivalent"
+		is_equal_approx(outcome.expected_enemy_completion_equivalents, 0.0),
+		"damage that cannot finish the selected enemy inside the forecast must not prepay completion"
 	)
 	_expect(
-		is_equal_approx(
-			outcome.expected_enemy_reward_delta_value,
-			outcome.expected_enemy_completion_equivalents * 10.0
-		),
-		"automatic weapon reward delta must follow the nearest target's completion fraction"
+		is_equal_approx(outcome.expected_enemy_reward_delta_value, 0.0),
+		"unfinished enemy damage must not claim its terminal reward delta"
 	)
 	observation.physics_frame = 4
 	observation.player_state.weapons.push_back(
@@ -559,7 +553,7 @@ func _check_weapon_outcome_contracts() -> void:
 	)
 	_expect(
 		(
-			shared_delivery_outcome.expected_enemy_completion_equivalents > 0.0
+			is_equal_approx(shared_delivery_outcome.expected_enemy_completion_equivalents, 1.0)
 			and (
 				shared_delivery_outcome.expected_enemy_completion_equivalents
 				<= shared_delivery_outcome.expected_enemy_hits
@@ -571,16 +565,40 @@ func _check_weapon_outcome_contracts() -> void:
 	observation.physics_frame = 5
 	low_value_track.relative_position = Vector2(200.0, 0.0)
 	high_value_track.relative_position = Vector2(100.0, 0.0)
+	high_value_track.last_measurement.health = {"current": 5.0, "maximum": 10.0, "ratio": 0.5}
 	var high_value_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
 	field.accumulate_outcome(observation, action, high_value_outcome, context)
 	_expect(
 		(
 			high_value_outcome.expected_enemy_reward_delta_value
-			> outcome.expected_enemy_reward_delta_value * 5.0
+			> shared_delivery_outcome.expected_enemy_reward_delta_value * 5.0
 		),
 		"positioning that makes a higher-value target nearest must produce higher combat value"
 	)
-	observation.physics_frame = 6
+	observation.physics_frame += 1
+	var easy_low_value_track: Dictionary = low_value_track.duplicate(true)
+	easy_low_value_track.relative_position = Vector2(100.0, 0.0)
+	easy_low_value_track.last_measurement.health = {"current": 5.0, "maximum": 10.0, "ratio": 0.5}
+	var durable_high_value_track: Dictionary = high_value_track.duplicate(true)
+	durable_high_value_track.relative_position = Vector2(200.0, 0.0)
+	durable_high_value_track.last_measurement.health = {
+		"current": 100.0, "maximum": 100.0, "ratio": 1.0
+	}
+	durable_high_value_track.behavior_profile.durability.maximum_health = 100.0
+	observation.enemy_tracks = [easy_low_value_track, durable_high_value_track]
+	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 2.0
+	var mixed_durability_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(observation, action, mixed_durability_outcome, context)
+	_expect(
+		is_equal_approx(mixed_durability_outcome.expected_enemy_completion_equivalents, 1.0),
+		"targets with different durability must settle discrete completion work independently"
+	)
+	_expect(
+		is_equal_approx(mixed_durability_outcome.expected_enemy_reward_delta_value, 10.0),
+		"completion reward must remain attached to the target whose work can finish it"
+	)
+	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 1.0
+	observation.physics_frame = 7
 	high_value_track.relative_position = Vector2(320.0, 0.0)
 	high_value_track.last_measurement.visual_radius = 100.0
 	observation.enemy_tracks = [high_value_track]
@@ -591,7 +609,7 @@ func _check_weapon_outcome_contracts() -> void:
 		is_equal_approx(outside_center_range_outcome.expected_weapon_damage, 0.0),
 		"target visual size must not extend the center-distance automatic targeting range"
 	)
-	observation.physics_frame = 7
+	observation.physics_frame = 8
 	observation.wave_state = {"number": 1, "seconds_remaining": 10.0, "duration_seconds": 10.0}
 	observation.player_state.effective_stats.luck = 0.0
 	low_value_track.relative_position = Vector2(1.0, 0.0)

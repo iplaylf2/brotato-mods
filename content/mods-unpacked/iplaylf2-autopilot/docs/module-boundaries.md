@@ -149,7 +149,9 @@
   目标投影为局部命中、伤害与完成容量；
   `bot/planning/engagement/weapon_path_contact_model.gd` 统一解释锁定后主路径与额外直接路径的几何接触份额，
   不拥有锁定准入、攻击容量或目标价值；
-  `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样的有限目标容量守恒。
+  `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样点的敌人攻击工作
+  累计与有限目标容量结算，并单独约束树木总收获价值；敌人的剩余生命、离散完成代理和价值始终属于同一
+  `target_id`。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
   `bot/planning/engagement/damage_completion_work_model.gd` 统一把剩余生命和单次伤害换算为离散击打工作量，
   并把首个已知攻击机会之后按长期速率累计的连续容量换算为截止前完成代理；
