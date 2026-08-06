@@ -95,8 +95,9 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 - 同一条样本中的 `previous_movement` 与当前运动观察可以验证正在生效的输入、速度和扰动关系；
 - 新选动作的提交期终点通常落在下一条定期样本之前，不能假定采样记录了该终点；
 - 更长预测窗的环境暴露、碰撞、拾取、规则和武器结果都是“持续采用该候选动作”时的同窗条件预测；碰撞由
-  `forecast_expected_health_loss` 形成条件生命成本，本次提交期子集以 `expected_health_loss` 保留为执行
-  诊断，提交期状态分布的 `terminal_collision_risk` 单独形成对局延续价值损失；控制器仍只提交一个控制期，
+  `forecast_expected_health_loss` 形成条件生命成本，完整状态分布的 `forecast_terminal_health_risk` 形成
+  同窗对局延续价值损失。本次提交期子集以 `committed_expected_health_loss` 和
+  `committed_terminal_health_risk` 保留为执行资格诊断；控制器仍只提交一个控制期，
   动作窗外的机会由导航轨迹价值表达；
 - 不可见实体的真实位置仍然未知。原版持续血条公开的存活与当前生命属于直接观察；首次看到的必掉产物
   只有在其机制支持域内已追踪来源唯一时，才能结清对应轨迹，存在多个合法来源时仍保持未知。两类观察
@@ -168,11 +169,11 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 `phase_duration_usec.action_evaluation`。同一轮保留的候选应使用同一期望语义；若以后重新引入近似，误差
 边界和启用范围必须独立验证，不能让预算状态改变候选间的比较口径。
 
-为解释导航阶段成本，导航武器完成价值每次只排序一次预计目标，再为每件武器选择最近主目标并扫描其余
-目标，因此每次场采样评价为 `O(N log N + WN)`；统一目标投影按物理帧缓存，并复用敌人位置响应缓存。
-它不展开第二段移动候选或逐发命中图。该结果随导航场采样次数线性增加，已经计入同一个导航工作单元和
-截止策略。性能退化时应先核对 `baseline_field_sample_evaluation_count`、
-`extra_field_sample_evaluation_count`、武器数与导航目标数，不应切换为会改变候选语义的随机退火质量档。
+截止目标访问机会只投影统一目标的采样位置，再根据稳定目标响应以常数时间估算剩余清理窗口内的自主
+闭合距离；每次场采样为 `O(N)`，并复用采样位置的敌人运动预测。它不排序目标、不展开攻击容量，也不
+扫描贯穿、弹射或范围机制；这些工作只在局部动作结果中执行。
+性能退化时应先核对 `baseline_field_sample_evaluation_count`、`extra_field_sample_evaluation_count` 与导航
+目标数，不应切换为会改变候选语义的随机退火质量档。
 
 #### 计量边界
 
@@ -400,7 +401,8 @@ expected_run_continuation_value_loss = pt × C
 随后核对消耗品的基础生命效果。恢复型消耗品检查 `pickup_profile.base_recovery` 及最终恢复结果；伤害型
 消耗品检查 `pickup_profile.base_health_damage`、`consumable_health_effect` 修正、预计收集时刻的
 无敌帧，以及结果中的 `forecast_consumable_health_loss`、`committed_consumable_health_loss` 和
-`terminal_consumable_risk`。伤害造成的机会分量应为负；只有同一拾取的其他通用收益足以覆盖生命代价时，
+`forecast_terminal_consumable_risk`、`committed_terminal_consumable_risk`。伤害造成的机会分量应为负；
+只有同一拾取的其他通用收益足以覆盖生命代价时，
 净机会才可为正。这种权衡必须来自统一效用账本，不能按“毒水果”身份设硬规避分支。正的通用消耗品修正
 会增加伤害型消耗品的伤害，不会把它转换成恢复供给。
 
@@ -450,28 +452,27 @@ expected_run_continuation_value_loss = pt × C
 
 ### 树木与武器
 
-#### 树木机会与兑现
+树木没有独立策略通道。复盘时先检查截止目标访问机会，再检查进入射程后的局部武器结果与树木完成价值；
+不能把进入射程直接当作已经命中或摧毁，也不能用树木身份或波末规则解释价值变化。同一候选动作可以同时
+兑现 `material_acquisition_value` 和武器结果，不能把两类并行收益误判成取舍。
 
-树木复盘同时比较 `trajectory_value_samples[].value_breakdown.weapon_completion_opportunity`、胜出轨迹的
-`selected_trajectory.value_breakdown.weapon_completion_opportunity`、`expected_tree_completion_value` 及
-当时的武器期望攻击率，不能把进入射程直接当作已经命中或摧毁。
-射程外应先检查接近树木是否因后续可形成锁定窗口而产生连续正梯度；进入射程后，再比较候选轨迹和局部
-动作窗的武器结果是否因最近目标次序而改变。价值变化必须来自接近距离、射程、完成工作量与目标竞争几何，
-不能来自树木身份或波末专用规则。对超过有效导航距离但能在波末前进入射程的树木，访问势能的边际变化
-应随距离衰减，接近与远离产生方向相反的价值；进入射程后访问项应饱和，不能与同一攻击窗口重复计价。
-局部武器结果应受动作预测窗攻击容量和可见目标库存约束；导航武器完成价值应受续行时域攻击容量约束，
-并以带存在置信度的投影目标总价值为上限。树木价值应随箱子生成概率提高，且可治疗箱子的结果仍应贡献
-恢复供给；箱子落地后，满血且没有拾取事件收益时不应继续产生正向导航机会，缺血时则应与同等恢复量的
-恢复型果实一致。
-同一候选动作可以同时兑现 `material_acquisition_value` 和武器结果，复盘时不得把两类并行收益误判成
-取舍。
+#### 截止目标访问机会
 
-#### 局部武器结果
+通过 `trajectory_value_samples[].value_breakdown.target_access_opportunity` 比较候选差异，并用
+`selected_trajectory.value_breakdown.target_access_opportunity` 核对胜出轨迹。该字段只包含玩家移动相对
+同刻零输入反事实新增的截止射程访问，并受波内完成份额、存在置信度和剩余清理窗口约束。
+
+目标在零输入下会于清理截止前自行进入射程时，接近、不动和仍会被追上的远离都应为零；只有远离足以
+阻止截止前的射程访问时，才产生负值。静止树木没有自主闭合距离，接近与远离应保留方向相反、随距离衰减
+的连续梯度。进入射程后访问项饱和；最近目标次序、贯穿、弹射、范围容量和实际完成价值只在局部武器
+结果中检查。轨迹采样时刻到达或越过波末后，尚未兑现的访问结果必须为零。
+
+#### 局部武器结果与树木兑现
 
 武器复盘检查路径几何、时序与容量，而不是寻找并不存在的唯一命中序列：锁定资格应在原版目标中心距离
 边界精确切换，外观半径只能改变命中路径交会；候选路径只按实际处于射程内的覆盖时间产生输出，不能用
 人为概率带平滑锁定准入。锁定距离大于武器最大传播距离时，还应确认两者之间的目标只形成选靶而没有
-主路径命中、伤害、命中后规则或导航完成价值；进入路径几何可交会范围后，这些量才允许出现。主目标应
+主路径命中、伤害、命中后规则或局部完成价值；进入路径几何可交会范围后，这些量才允许出现。主目标应
 遵循最近目标的可用次序。目标密度增加可以提高贯穿、弹射和范围投送的期望容量，
 但直接贯穿只应随同一攻击走廊内的目标增加，且不得超过编译容量和可见目标质量。移动许可、攻击速度、
 伤害、暴击与生命偷取变化应按同一攻击模型轴改变场值。按波次比较候选前三名的 `combat`
@@ -484,33 +485,24 @@ expected_run_continuation_value_loss = pt × C
 共享可见目标库存时，奖励变化、负担解除、死亡后果与击杀权重必须按同一完成等价数同步缩放。若伤害很高
 但命中很少，不能用低平均剩余生命把一次命中扩张成多个敌人完成量。
 
-#### 导航武器完成价值
-
-复盘导航武器完成价值时，通过
-`trajectory_value_samples[].value_breakdown.weapon_completion_opportunity` 比较候选差异，并用
-`selected_trajectory.value_breakdown.weapon_completion_opportunity` 核对胜出轨迹。该字段同时包含各采样
-时刻的预计最近主目标，以及当前武器贯穿、弹射或范围机制可利用的额外容量；单体武器仍应保留主目标完成
-价值，但不能因目标密度凭空增值。敌人按候选轨迹位置与时刻投影，因此“改变位置后让高价值目标成为最近
-目标”或“让追踪群进入有效走廊”都可从几何与容量中产生，不能由宝箱怪、树木或诅咒怪标签直接产生。
-`weapon_completion_opportunity` 是有符号机会差：主目标或次要目标的净完成价值为负时，不利结果也必须保留。
-若轨迹采样时刻已经到达或越过波末，后续结果必须为零。复盘多击目标时，还应核对截止前攻击容量是否达到
-离散剩余击打次数：不足一次完整完成的容量不得线性领取部分击杀价值；跨过最后一次所需击打的一个攻击
-间隔内，完成代理应从 `0` 连续增长到 `1`，表达首个已知机会之后尚未揭示的冷却只按长期期望速率累计，
-而不是显式波末策略。
+树木价值应随箱子生成概率提高，可治疗箱子的结果仍应贡献恢复供给。树木完成工作量取耗尽剩余生命、
+达到剩余命中上限与一击树效果三者中最先满足的路径；局部结果受动作预测窗攻击容量、目标库存和共享
+完成份额约束。箱子落地后，满血且没有拾取事件收益时不应继续产生正向导航机会；缺血时则应与同等恢复量
+的恢复型果实一致。
 
 ### 生存与碰撞
 
 #### 生命风险账本
 
 先同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、提交期诊断
-`terminal_collision_risk`、`expected_health_loss`，以及
+`committed_terminal_collision_risk`、`committed_expected_health_loss`，以及
 `field_utility_breakdown.forecast_health_inventory_loss_value` 与
 `field_utility_breakdown.expected_run_continuation_value_loss`。联合检查
 `context.state_factors.run_continuation_value`、
 `selection_diagnostics.excluded_certain_terminal_candidate_count`、`viable_candidate_count` 和
-`selected_committed_terminal_collision_risk`。确定且可避免的提交期终止碰撞应被排除；预测窗后段的概率终止
-只保留生命消耗与环境暴露的连续成本，不能把后续仍可修正的直线路径当作已承诺死亡；提交期内的概率终止
-则按当前对局延续价值连续变贵，并仍能与负担解除、目标完成、生命窃取和恢复在公共效用中交换。
+`selected_committed_terminal_health_risk`。确定且可避免的提交期终止应被排除；完整预测窗的终止概率
+必须与同窗负担解除、目标完成、生命窃取、恢复和导航收益一起按当前对局延续价值交换。提交期只决定候选
+能否安全执行到下一次重规划，不能替代完整预测窗的价值账本。
 位置扫掠已公开接触时刻，因此应核对观察到的当前无敌剩余时间是否正确截去前缀机会，
 且后续受伤无敌时间是否随实际伤害变化。
 尚未事件化的速度空间交会没有足够时序，只能保留无时序聚合解释；不得用无敌计时器按比例缩放该聚合风险，
@@ -552,7 +544,7 @@ expected_run_continuation_value_loss = pt × C
 相加两次。不能用扩大碰撞半径或加大效用权重掩盖外推错误。
 
 冲撞样本还应联合检查 `enemy_charge_obstacle_risk`、`forecast_expected_health_loss` 与提交期诊断
-`expected_health_loss`。尚未揭示的随机目标区域应保留候选间差异，交会证据只在解析到达时间进入相应
+`committed_expected_health_loss`。尚未揭示的随机目标区域应保留候选间差异，交会证据只在解析到达时间进入相应
 导航、预测或提交时域后出现；观察到高速冲撞运动后，只保留已经实现的观测路径证据。独立冲撞证据进入
 合成风险后不得重复计分，也不得用扩大碰撞半径把整条未来路径提前变成即时风险。
 

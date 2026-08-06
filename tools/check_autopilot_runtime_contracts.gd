@@ -755,6 +755,9 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 			selected.selection_diagnostics.mode == "committed_viability_then_maximum_utility"
 			and selected.selection_diagnostics.viable_candidate_count == 2
 			and selected.selection_diagnostics.excluded_certain_terminal_candidate_count == 1
+			and is_equal_approx(
+				selected.selection_diagnostics.selected_committed_terminal_health_risk, 0.0
+			)
 		),
 		"selection diagnostics must expose the committed viability boundary"
 	)
@@ -789,8 +792,9 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 		{
 			"forecast_seconds": 0.7,
 			"forecast_expected_health_loss": 0.0,
-			"expected_health_loss": 5.0,
-			"terminal_health_risk": 0.25,
+			"committed_expected_health_loss": 0.0,
+			"forecast_terminal_health_risk": 0.25,
+			"committed_terminal_health_risk": 0.0,
 		},
 		{
 			"control_interval_seconds": 0.1,
@@ -816,14 +820,15 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 				evaluation.field_utility_breakdown.expected_run_continuation_value_loss, -10.0
 			)
 		),
-		"run capital must be charged exactly once by committed terminal probability"
+		"run capital must be charged exactly once by forecast terminal probability"
 	)
 	var survivable_evaluation: Dictionary = utility_model.evaluate(
 		{
 			"forecast_seconds": 0.7,
 			"forecast_expected_health_loss": 0.0,
-			"expected_health_loss": 5.0,
-			"terminal_health_risk": 0.0,
+			"committed_expected_health_loss": 5.0,
+			"forecast_terminal_health_risk": 0.0,
+			"committed_terminal_health_risk": 0.0,
 		},
 		{
 			"objective_weights": {"survival": {"expected_run_continuation_value_loss": -1.0}},
@@ -901,7 +906,7 @@ func _scored_action(
 		"score": score,
 		"outcome":
 		{
-			"terminal_collision_risk": committed_terminal_risk,
+			"committed_terminal_health_risk": committed_terminal_risk,
 			"forecast_terminal_collision_risk": forecast_terminal_risk,
 		},
 	}

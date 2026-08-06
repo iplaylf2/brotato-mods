@@ -52,7 +52,6 @@ func _init() -> void:
 		_failed = true
 	_check_spatial_target_control()
 	_check_weapon_outcome_contracts()
-	_check_navigation_weapon_completion_value()
 	_check_local_enemy_interaction_projection()
 	_check_wave_completion_forecast()
 	_check_health_inventory_loss()
@@ -257,8 +256,8 @@ func _check_trajectory_value_field() -> void:
 		(
 			result.trajectory_sample_count == 3
 			and result.movement_preference.dot(Vector2.RIGHT) > 0.99
-			and abs(endpoint_delta.weapon_completion_opportunity) < 0.0001
-			and right_sample.value_breakdown.weapon_completion_opportunity > 0.0
+			and abs(endpoint_delta.target_access_opportunity) < 0.0001
+			and right_sample.value_breakdown.target_access_opportunity > 0.0
 		),
 		"trajectory spacing must avoid redundant float-boundary samples and retain crossed value"
 	)
@@ -435,7 +434,7 @@ func _check_spatial_target_control() -> void:
 		observation, context, Vector2(250.0, 0.0), 1.0
 	)
 	_expect(
-		enemy_delta.weapon_completion_opportunity > 0.0,
+		enemy_delta.target_access_opportunity > 0.0,
 		"creating a positive enemy-completion-value attack window must retain a navigation gradient"
 	)
 	observation.physics_frame += 1
@@ -445,10 +444,10 @@ func _check_spatial_target_control() -> void:
 		observation, context, Vector2(50.0, 0.0), 0.5
 	)
 	_expect(
-		in_range_delta.weapon_completion_opportunity > 0.0,
+		abs(in_range_delta.target_access_opportunity) < 0.0001,
 		(
-			"a sustained in-range movement must retain the value of changing the "
-			+ "future nearest target"
+			"movement inside an existing attack window must not claim the target's full "
+			+ "completion value; local weapon prediction owns target-order changes"
 		)
 	)
 	observation.physics_frame += 1
@@ -471,7 +470,7 @@ func _check_spatial_target_control() -> void:
 		observation, context, Vector2(350.0, 0.0), 1.0
 	)
 	_expect(
-		tree_delta.weapon_completion_opportunity > 0.0,
+		tree_delta.target_access_opportunity > 0.0,
 		(
 			"a visible tree outside the lock boundary must retain an approach gradient; "
 			+ "navigation weapon completion value owns target competition after lock becomes possible"
@@ -662,73 +661,6 @@ func _check_weapon_outcome_contracts() -> void:
 	)
 
 
-func _check_navigation_weapon_completion_value() -> void:
-	var value_model_script: Script = load(
-		PLANNING_PATH + "engagement/navigation_weapon_completion_value_model.gd"
-	)
-	var primary := _enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
-	var follower := _enemy_track(Vector2(200.0, 20.0), Vector2(-100.0, -10.0), true)
-	follower.track_id = 2
-	var observation := _planning_observation([primary, follower])
-	var piercing_attack: Dictionary = _weapon_attack_model()
-	piercing_attack.delivery.paths.hit_capacity = 2.0
-	observation.player_state.weapons = [{"slot": 0, "attack_model": piercing_attack}]
-	var context := {
-		"state_factors": {"continuation_horizon_seconds": 1.0},
-		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0, 2: 10.0}),
-		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 0.0, 2: 0.0}),
-	}
-	var value_model: Reference = value_model_script.new()
-	var follower_value: float = value_model.value_at(observation, context, Vector2.ZERO, 1.0)
-	var stationary_secondary: Dictionary = follower.duplicate(true)
-	stationary_secondary.estimated_velocity = Vector2.ZERO
-	stationary_secondary.behavior_profile.target_position_response.responds_to_target_position = false
-	observation.physics_frame += 1
-	observation.enemy_tracks[1] = stationary_secondary
-	var stationary_value: float = value_model.value_at(observation, context, Vector2.ZERO, 1.0)
-	_expect(
-		follower_value > stationary_value,
-		"a projected follower entering a piercing corridor must improve completion value"
-	)
-	observation.physics_frame += 1
-	observation.enemy_tracks[1] = follower
-	context.enemy_completion_value_ledger = _completion_value_ledger({1: 0.0, 2: -10.0})
-	_expect(
-		value_model.value_at(observation, context, Vector2.ZERO, 1.0) < 0.0,
-		"navigation weapon capacity must retain an adverse completion consequence"
-	)
-	observation.physics_frame += 1
-	context.enemy_completion_value_ledger = _completion_value_ledger({1: 10.0, 2: 10.0})
-	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 1.0
-	_expect(
-		value_model.value_at(observation, context, Vector2.ZERO, 1.0) > 0.0,
-		"a single-target weapon must retain its selected primary target's completion value"
-	)
-	observation.physics_frame += 1
-	var outside_path_primary: Dictionary = primary.duplicate(true)
-	outside_path_primary.relative_position = Vector2(280.0, 0.0)
-	observation.enemy_tracks = [outside_path_primary]
-	observation.player_state.weapons[0].attack_model.delivery.paths.maximum_travel_distance = 250.0
-	context.enemy_completion_value_ledger = _completion_value_ledger({1: 10.0})
-	_expect(
-		is_equal_approx(value_model.value_at(observation, context, Vector2.ZERO, 1.0), 0.0),
-		(
-			"navigation completion value must not treat a selected target beyond the "
-			+ "delivered weapon path as a hit"
-		)
-	)
-	observation.physics_frame += 1
-	observation.enemy_tracks = [primary, follower]
-	observation.player_state.weapons[0].attack_model.delivery.paths.maximum_travel_distance = 300.0
-	context.enemy_completion_value_ledger = _completion_value_ledger({1: 10.0, 2: 10.0})
-	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 2.0
-	observation.wave_state.seconds_remaining = 1.0
-	_expect(
-		is_equal_approx(value_model.value_at(observation, context, Vector2.ZERO, 1.0), 0.0),
-		"navigation weapon completion value must expire when the wave ends before it can occur"
-	)
-
-
 func _check_health_inventory_loss() -> void:
 	var health_loss_model_path := PLANNING_PATH + "health/health_loss_value_model.gd"
 	var health_loss_value_model: Reference = load(health_loss_model_path).new()
@@ -782,14 +714,14 @@ func _check_cleanup_continuation_value() -> void:
 	var nonterminal_outcome := {
 		"forecast_seconds": 0.0,
 		"forecast_expected_health_loss": 1.0,
-		"expected_health_loss": 1.0,
-		"terminal_health_risk": 0.0,
+		"committed_expected_health_loss": 1.0,
+		"forecast_terminal_health_risk": 0.0,
 	}
 	var terminal_outcome := {
 		"forecast_seconds": 0.0,
 		"forecast_expected_health_loss": 0.0,
-		"expected_health_loss": 0.0,
-		"terminal_health_risk": 0.5,
+		"committed_expected_health_loss": 0.0,
+		"forecast_terminal_health_risk": 0.5,
 	}
 	var early_nonterminal: Dictionary = utility.evaluate(nonterminal_outcome, early_context)
 	var early_terminal: Dictionary = utility.evaluate(terminal_outcome, early_context)

@@ -14,7 +14,7 @@ func run(fixtures: Reference) -> bool:
 	_fixtures = fixtures
 	_check_short_deadline_combat_setup()
 	_check_pickup_deadline()
-	_check_incomplete_enemy_deadline()
+	_check_autonomous_target_access()
 	_check_long_range_access_gradients()
 	return not _failed
 
@@ -54,7 +54,7 @@ func _check_short_deadline_combat_setup() -> void:
 		(
 			result.trajectory_sample_count >= 2
 			and result.movement_preference.dot(Vector2.RIGHT) > 0.99
-			and right_sample.value_breakdown.weapon_completion_opportunity > 0.0
+			and right_sample.value_breakdown.target_access_opportunity > 0.0
 		),
 		(
 			"a short wave deadline must preserve combat setup that creates attacks before "
@@ -98,42 +98,44 @@ func _check_pickup_deadline() -> void:
 	)
 
 
-func _check_incomplete_enemy_deadline() -> void:
-	var enemy: Dictionary = _fixtures.enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
-	enemy.last_measurement.health = {"current": 30.0, "maximum": 30.0, "ratio": 1.0}
-	enemy.behavior_profile.durability = {"maximum_health": 30.0}
-	var observation: Dictionary = _fixtures.planning_observation([enemy])
-	observation.wave_state.seconds_remaining = 1.0
+func _check_autonomous_target_access() -> void:
+	var follower: Dictionary = _fixtures.enemy_track(
+		Vector2(900.0, 0.0), Vector2(-100.0, 0.0), true
+	)
+	var observation: Dictionary = _fixtures.planning_observation([follower])
 	observation.player_state.weapons = [
 		{"slot": 0, "attack_model": _fixtures.weapon_attack_model()}
 	]
 	var context := {
-		"state_factors": {"continuation_horizon_seconds": 1.0},
+		"state_factors":
+		{
+			"health_inventory_value":
+			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0},
+			"continuation_horizon_seconds": 1.0,
+		},
 		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0}),
-		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 0.0}),
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 1.0}),
 	}
-	var model_path := PLANNING_PATH + "engagement/" + "navigation_weapon_completion_value_model.gd"
-	var value_model: Reference = load(model_path).new()
-	_expect(
-		is_equal_approx(value_model.value_at(observation, context, Vector2.ZERO, 0.0), 0.0),
-		(
-			"insufficient deadline attack capacity must not linearly prepay an enemy "
-			+ "completion that cannot occur"
-		)
+	var spatial: Reference = load(PLANNING_PATH + "spatial_opportunity_value_model.gd").new()
+	var approach: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(100.0, 0.0), 1.0
 	)
-	var primary: Dictionary = _fixtures.enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
-	var secondary: Dictionary = enemy.duplicate(true)
-	secondary.track_id = 2
-	secondary.relative_position = Vector2(200.0, 0.0)
-	observation.physics_frame += 1
-	observation.enemy_tracks = [primary, secondary]
-	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 2.0
-	context.enemy_completion_value_ledger = _completion_value_ledger({1: 0.0, 2: 10.0})
+	var retreat: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(-100.0, 0.0), 1.0
+	)
+	var escape: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(-1000.0, 0.0), 1.0
+	)
 	_expect(
-		is_equal_approx(value_model.value_at(observation, context, Vector2.ZERO, 0.0), 0.0),
 		(
-			"piercing, redirect, and area capacity must use the same deadline completion "
-			+ "boundary as the primary target"
+			abs(approach.target_access_opportunity) < 0.0001
+			and abs(retreat.target_access_opportunity) < 0.0001
+			and escape.target_access_opportunity < 0.0
+			and spatial.candidate_directions(observation, context).empty()
+		),
+		(
+			"an autonomously approaching target must create no pursuit reward or search "
+			+ "direction, while movement that prevents deadline access must lose value"
 		)
 	)
 
@@ -222,8 +224,8 @@ func _check_long_range_access_gradients() -> void:
 	)
 	_expect(
 		(
-			distant_tree.weapon_completion_opportunity > 0.0
-			and retreating_from_tree.weapon_completion_opportunity < 0.0
+			distant_tree.target_access_opportunity > 0.0
+			and retreating_from_tree.target_access_opportunity < 0.0
 		),
 		(
 			"a completable target beyond local weapon setup must reward approach and penalize "

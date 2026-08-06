@@ -101,14 +101,16 @@ func predict_base(
 		"movement_damage_exposure_reduction": 0.0,
 		"collision_risk": 0.0,
 		"hostile_collision_risk": 0.0,
-		"expected_health_loss": 0.0,
-		"terminal_collision_risk": 0.0,
+		"committed_expected_health_loss": 0.0,
+		"committed_terminal_collision_risk": 0.0,
 		"forecast_expected_health_loss": 0.0,
 		"forecast_terminal_collision_risk": 0.0,
 		"forecast_consumable_health_loss": 0.0,
 		"committed_consumable_health_loss": 0.0,
-		"terminal_consumable_risk": 0.0,
-		"terminal_health_risk": 0.0,
+		"forecast_terminal_consumable_risk": 0.0,
+		"committed_terminal_consumable_risk": 0.0,
+		"forecast_terminal_health_risk": 0.0,
+		"committed_terminal_health_risk": 0.0,
 	}
 	var battlefield_outcome: Dictionary = _battlefield_influence_model.predict(
 		observation,
@@ -132,15 +134,16 @@ func predict_base(
 	outcome.hostile_collision_risk = max(
 		outcome.peak_path_collision_risk, outcome.hostile_velocity_obstacle_risk
 	)
-	outcome.merge(
-		_collision_health_impact_model.evaluate(
-			observation,
-			committed_action,
-			_committed_collision_evidence(outcome),
-			planning_context.state_factors.positive_damage_is_terminal_rule
-		),
-		true
+	var committed_impact: Dictionary = _collision_health_impact_model.evaluate(
+		observation,
+		committed_action,
+		_committed_collision_evidence(outcome),
+		planning_context.state_factors.positive_damage_is_terminal_rule
 	)
+	outcome.maximum_armor_adjusted_hit_damage = committed_impact.maximum_armor_adjusted_hit_damage
+	outcome.expected_contact_resolution_count = committed_impact.expected_contact_resolution_count
+	outcome.committed_expected_health_loss = committed_impact.expected_health_loss
+	outcome.committed_terminal_collision_risk = committed_impact.terminal_collision_risk
 	var forecast_impact: Dictionary = _collision_health_impact_model.evaluate(
 		observation,
 		action,
@@ -212,7 +215,8 @@ func complete_prediction(
 	# dictionaries shared instead of recursively copying the whole forecast for
 	# the base forecast and its semantic completion.
 	var outcome: Dictionary = base_outcome.duplicate(false)
-	outcome.terminal_health_risk = outcome.terminal_collision_risk
+	outcome.committed_terminal_health_risk = outcome.committed_terminal_collision_risk
+	outcome.forecast_terminal_health_risk = outcome.forecast_terminal_collision_risk
 	_weapon_outcome_forecast_model.accumulate_outcome(
 		observation, action, outcome, planning_context
 	)

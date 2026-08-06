@@ -163,22 +163,35 @@ func _apply_consumable_health_damage(
 	var damage: float = full_damage * event_weight
 	outcome.forecast_consumable_health_loss += damage
 	outcome.forecast_expected_health_loss += damage
+	if full_damage >= observation.player_state.health.current:
+		outcome.forecast_terminal_consumable_risk = max(
+			outcome.forecast_terminal_consumable_risk, event_weight
+		)
+	elif (
+		is_equal_approx(event_weight, 1.0)
+		and outcome.forecast_consumable_health_loss >= observation.player_state.health.current
+	):
+		outcome.forecast_terminal_consumable_risk = 1.0
+	outcome.forecast_terminal_health_risk = max(
+		outcome.forecast_terminal_health_risk, outcome.forecast_terminal_consumable_risk
+	)
 	var control_interval: float = planning_context.get("control_interval_seconds", 0.0)
 	if event.time > control_interval:
 		return
 	outcome.committed_consumable_health_loss += damage
-	outcome.expected_health_loss += damage
+	outcome.committed_expected_health_loss += damage
 	if full_damage >= observation.player_state.health.current:
-		outcome.terminal_consumable_risk = max(outcome.terminal_consumable_risk, event_weight)
+		outcome.committed_terminal_consumable_risk = max(
+			outcome.committed_terminal_consumable_risk, event_weight
+		)
 	elif (
 		is_equal_approx(event_weight, 1.0)
 		and outcome.committed_consumable_health_loss >= observation.player_state.health.current
 	):
-		outcome.terminal_consumable_risk = 1.0
-	if outcome.terminal_consumable_risk > 0.0:
-		outcome.terminal_health_risk = max(
-			outcome.terminal_health_risk, outcome.terminal_consumable_risk
-		)
+		outcome.committed_terminal_consumable_risk = 1.0
+	outcome.committed_terminal_health_risk = max(
+		outcome.committed_terminal_health_risk, outcome.committed_terminal_consumable_risk
+	)
 
 
 func _apply_event_rules(

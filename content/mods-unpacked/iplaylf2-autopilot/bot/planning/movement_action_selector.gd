@@ -21,7 +21,7 @@ func select(scored_actions: Array) -> Dictionary:
 		"candidate_count": scored_actions.size(),
 		"viable_candidate_count": viable_actions.size(),
 		"excluded_certain_terminal_candidate_count": scored_actions.size() - viable_actions.size(),
-		"selected_committed_terminal_collision_risk": _committed_terminal_risk(selected),
+		"selected_committed_terminal_health_risk": _committed_terminal_risk(selected),
 	}
 	return selected
 
@@ -52,5 +52,5 @@ func _is_certain_committed_terminal(scored_action: Dictionary) -> bool:
 
 func _committed_terminal_risk(scored_action: Dictionary) -> float:
 	return clamp(
-		float(scored_action.get("outcome", {}).get("terminal_collision_risk", 0.0)), 0.0, 1.0
+		float(scored_action.get("outcome", {}).get("committed_terminal_health_risk", 0.0)), 0.0, 1.0
 	)

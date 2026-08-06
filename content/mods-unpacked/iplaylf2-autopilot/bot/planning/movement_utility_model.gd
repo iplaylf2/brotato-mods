@@ -178,11 +178,12 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	)
 	scored_outcome.forecast_health_inventory_loss_value = health_inventory_loss_value
 	# Health depletion already follows the convex immediate-inventory curve above.
-	# Run capital is lost only on a terminal branch of the committed state
-	# distribution; interpreting ordinary buffer erosion as another death
-	# probability double-charged survivable hits and dwarfed every other objective.
+	# Run capital is lost only on a terminal branch of the same forecast that earns
+	# combat, economy, and navigation value. Pricing only the committed prefix lets
+	# a sustained lethal trajectory collect its full forecast benefit without its
+	# terminal cost. Ordinary buffer erosion remains outside this probability term.
 	var terminal_probability: float = clamp(
-		float(outcome.get("terminal_health_risk", 0.0)), 0.0, 1.0
+		float(outcome.get("forecast_terminal_health_risk", 0.0)), 0.0, 1.0
 	)
 	scored_outcome.expected_run_continuation_value_loss = (
 		terminal_probability

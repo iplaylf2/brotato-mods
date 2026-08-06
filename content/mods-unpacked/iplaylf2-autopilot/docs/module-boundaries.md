@@ -44,7 +44,8 @@
 - `pickups` 拥有“规划记忆中的拾取物及其观察层存在证据、运动与玩家未来路径 → 收集圈间隙或连续收集
   事件”的协议，供导航机会、直接材料收益与拾取事件规则共同消费；它消费置信度，不形成存在证据；
 - `engagement` 拥有统一可交战目标投影、敌人完成价值账本、本波共享主路径容量分配、锁定后的共享武器
-  路径接触、动作条件武器结果预测与容量守恒、规则事件完成价值，以及候选轨迹采样状态的导航武器完成价值。
+  路径接触、动作条件武器结果预测与容量守恒，以及规则事件完成价值。它向根目录的跨域协调者提供目标
+  契约、完成份额和局部战斗结果，不拥有导航轨迹或截止访问价值。
 
 根目录保留跨域协调者，以及尚未形成独立组件族的小型共享模型；例如对局延续价值横跨材料、道具、武器
 和死亡后果，不属于任一单独领域。不能只为单个文件建立目录。
@@ -123,16 +124,17 @@
   `bot/planning/health/health_replenishment_forecast_model.gd` 预测清场前可兑现的生命补充；
   `bot/planning/health/health_inventory_value_model.gd` 负责风险尺度、即时生存缓冲、预计生命库存和单位价值。
   即时命中储备覆盖下一控制期内敌人与完整玩家动作集合的联合可达域，不只覆盖静止玩家。
-- `bot/planning/movement_action_selector.gd` 只排除存在替代动作时已落入下一提交期的确定终止碰撞，随后
-  最大化公共效用。完整预测窗的即时缓冲消耗形成生命库存成本；只有提交期的概率终止风险按对局延续
-  价值计价。选择器不拥有风险偏好、逃跑方向或敌人类别策略。
+- `bot/planning/movement_action_selector.gd` 只排除存在替代动作时已落入下一提交期的确定终止，随后
+  最大化公共效用。完整预测窗的即时缓冲消耗和终止风险分别形成生命库存与对局延续价值成本；提交期
+  风险只拥有执行资格。选择器不拥有风险偏好、逃跑方向或敌人类别策略。
 - `bot/planning/player_kinematics_model.gd` 负责与原版一致的一阶移动和击退衰减。
 
 ### 机会、规则与动作结果
 
-- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会、拾取规则完成机会、可见生成警告
-  的未来事件机会及导航武器完成价值在未来玩家状态相对同刻零输入反事实的差，统一拥有截止前的访问势能与不可达机会
-  剪枝，并按价值上界提出预算内搜索方向；它不猜测警告结果，也不按目标身份解释自动选靶。
+- `bot/planning/spatial_opportunity_value_model.gd` 是跨拾取物、规则事件、生成警告与可交战目标的空间机会
+  协调者。它统一计算未来玩家状态相对同刻零输入反事实的截止访问差，拥有访问势能、不可达机会剪枝和
+  按价值上界形成的预算内搜索方向；目标投影与完成份额仍由 `engagement` 提供。它不猜测警告结果，
+  也不解释自动选靶次序或局部攻击结果。
 - `bot/planning/map_information_value_model.gd` 只计算候选路径相对当前位置新增或恢复的规范化视口覆盖；
   它不拥有每视口单价，也不编码探索方向、巡逻路线或地图中心。
 - `bot/planning/navigation_intent_planner.gd` 将空间机会、地图覆盖变化和导航时域环境暴露组合为轨迹价值，
@@ -145,7 +147,7 @@
   生命偷取率；`bot/planning/engagement/weapon_outcome_forecast_model.gd` 把这些容量与动作路径上的统一可见
   目标投影为局部命中、伤害与完成容量；
   `bot/planning/engagement/weapon_path_contact_model.gd` 统一解释锁定后主路径与额外直接路径的几何接触份额，
-  由局部武器结果和导航武器完成价值共享，不拥有锁定准入、攻击容量或目标价值；
+  不拥有锁定准入、攻击容量或目标价值；
   `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样的有限目标容量守恒。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
   `bot/planning/engagement/damage_completion_work_model.gd` 统一把剩余生命和单次伤害换算为离散击打工作量，
@@ -157,8 +159,6 @@
 - `bot/planning/engagement/rule_event_value_model.gd` 统一把拾取等规则事件的空间伤害与状态转换换算为
   有限敌人完成价值，供局部动作结果与导航拾取机会共享；它不发现事件、识别角色、估计跨时刻保留价值
   或选择路线。
-- `bot/planning/engagement/navigation_weapon_completion_value_model.gd` 按候选轨迹采样状态的预计几何和波末
-  截止统一计算最近主目标与贯穿、弹射、范围机制的后续完成价值，并以同一物理帧缓存目标投影。
 - `bot/planning/pickups/pickup_collection_geometry_model.gd` 统一拥有收集圈边界、未来点位间隙，以及移动
   拾取物与玩家分段路径的连续交会；导航查询点位间隙，直接收益和事件规则查询连续收集事件。
 - `bot/planning/pickups/pickup_collection_projector.gd` 以规划记忆作为拾取物唯一输入，消费观察层给出的
@@ -178,7 +178,8 @@
 - `bot/planning/movement_outcome_predictor.gd` 组合动作结果；`bot/planning/movement_utility_model.gd` 将结果换算
   为效用，并在规划上下文中形成每视口信息单价。其中，局部与导航环境暴露使用剩余导航时域内一单位
   生命损失的价值，补给储备、潜在恢复信息和波次尺度敌人负担使用补给库存价值；动作生命损失使用按
-  剩余时域裁剪的即时缓冲价值，只有提交期 `terminal_health_risk` 按对局延续价值计价。预测和评分是两个边界，
+  剩余时域裁剪的即时缓冲价值，完整预测窗的 `forecast_terminal_health_risk` 按同窗对局延续价值计价；
+  `committed_terminal_health_risk` 只拥有执行资格。预测和评分是两个边界，
   选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
   方向，并按规划器提出的细分方向构造新候选；它还根据时间模型以及敌人与投射物的可达上界，为本轮所有

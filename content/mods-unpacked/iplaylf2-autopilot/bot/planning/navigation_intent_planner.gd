@@ -254,7 +254,7 @@ func _sample_field_delta(
 		"recovery_opportunity": opportunity.recovery_opportunity,
 		"future_event_opportunity": opportunity.future_event_opportunity,
 		"rule_event_opportunity": opportunity.rule_event_opportunity,
-		"weapon_completion_opportunity": opportunity.weapon_completion_opportunity,
+		"target_access_opportunity": opportunity.target_access_opportunity,
 		"map_information": 0.0,
 		"environmental_exposure": -exposure_delta,
 	}
@@ -287,7 +287,7 @@ func _empty_value_breakdown() -> Dictionary:
 		"recovery_opportunity": 0.0,
 		"future_event_opportunity": 0.0,
 		"rule_event_opportunity": 0.0,
-		"weapon_completion_opportunity": 0.0,
+		"target_access_opportunity": 0.0,
 		"map_information": 0.0,
 		"environmental_exposure": 0.0,
 	}

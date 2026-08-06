@@ -172,7 +172,7 @@ func _check_damaging_consumable_pricing() -> void:
 		"forecast_seconds": 0.1,
 		"samples": [{"time": 0.1, "displacement": Vector2.ZERO}],
 	}
-	var outcome := {
+	var outcome_template := {
 		"pickup_events":
 		load(PLANNING_PATH + "pickups/pickup_collection_projector.gd").new().project(
 			observation, action.samples
@@ -185,10 +185,13 @@ func _check_damaging_consumable_pricing() -> void:
 		"forecast_consumable_health_loss": 0.0,
 		"committed_consumable_health_loss": 0.0,
 		"forecast_expected_health_loss": 0.0,
-		"expected_health_loss": 0.0,
-		"terminal_consumable_risk": 0.0,
-		"terminal_health_risk": 0.0,
+		"committed_expected_health_loss": 0.0,
+		"forecast_terminal_consumable_risk": 0.0,
+		"committed_terminal_consumable_risk": 0.0,
+		"forecast_terminal_health_risk": 0.0,
+		"committed_terminal_health_risk": 0.0,
 	}
+	var outcome: Dictionary = outcome_template.duplicate(true)
 	predictor.accumulate_outcome(
 		observation,
 		action,
@@ -199,13 +202,33 @@ func _check_damaging_consumable_pricing() -> void:
 		(
 			is_equal_approx(outcome.forecast_consumable_health_loss, 4.0)
 			and is_equal_approx(outcome.committed_consumable_health_loss, 4.0)
-			and is_equal_approx(outcome.terminal_health_risk, 1.0)
+			and is_equal_approx(outcome.forecast_terminal_health_risk, 1.0)
+			and is_equal_approx(outcome.committed_terminal_health_risk, 1.0)
 			and is_equal_approx(outcome.expected_recovery, 0.0)
 		),
 		(
 			"a damaging consumable must apply the shared consumable modifier to damage, "
 			+ "enter both health-loss horizons, and remain distinct from recovery"
 		)
+	)
+	var delayed_outcome: Dictionary = outcome_template.duplicate(true)
+	delayed_outcome.pickup_events = {
+		"material": [],
+		"consumable": [{"entity": poisoned_fruit, "time": 0.4, "event_weight": 1.0}],
+	}
+	action.forecast_seconds = 0.4
+	predictor.accumulate_outcome(
+		observation,
+		action,
+		delayed_outcome,
+		{"enemy_completion_value_ledger": {}, "control_interval_seconds": 0.1}
+	)
+	_expect(
+		(
+			is_equal_approx(delayed_outcome.forecast_terminal_health_risk, 1.0)
+			and is_equal_approx(delayed_outcome.committed_terminal_health_risk, 0.0)
+		),
+		"a lethal pickup beyond the committed prefix must remain terminal in forecast value"
 	)
 	var context: Dictionary = utility.build_context(observation)
 	_expect(

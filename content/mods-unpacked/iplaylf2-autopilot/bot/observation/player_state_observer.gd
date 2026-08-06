@@ -112,10 +112,9 @@ func _get_movement_state(player: Node) -> Dictionary:
 	return {
 		"input_vector": player._current_movement,
 		"is_moving": player._current_movement != Vector2.ZERO,
-		"velocity": player.linear_velocity,
-		# RigidBody2D.linear_velocity may contain a one-frame spawn relocation artifact.
 		# Vanilla's knockback state is the authoritative external disturbance consumed
-		# by Unit.get_next_velocity().
+		# by Unit.get_next_velocity(); RigidBody2D.linear_velocity also contains a
+		# one-frame spawn-relocation artifact and has no planning semantics.
 		"knockback_velocity": player.get_knockback_value(),
 		"standing_effects_active": player.not_moving_bonuses_applied,
 		"moving_effects_active": player.moving_bonuses_applied,

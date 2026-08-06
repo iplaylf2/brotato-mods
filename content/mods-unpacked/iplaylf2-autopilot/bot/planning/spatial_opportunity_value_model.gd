@@ -1,8 +1,8 @@
 extends Reference
 
 # Samples the material-equivalent opportunity field at one future player state.
-# Moving candidates and the zero-input counterfactual use the same time, so only
-# player-caused access and target-selection changes receive value.
+# Moving candidates and the zero-input counterfactual use the same time, so this
+# model values only access changes caused by player movement.
 
 const OpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
@@ -11,12 +11,6 @@ const EngagementTargetProjector := preload(
 	(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
 		+ "engagement_target_projector.gd"
-	)
-)
-const NavigationWeaponCompletionValueModel := preload(
-	(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
-		+ "navigation_weapon_completion_value_model.gd"
 	)
 )
 const RuleEventValueModel := preload(
@@ -36,7 +30,6 @@ const EnemyMotionPredictor := preload(
 )
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _engagement_target_projector: Reference = EngagementTargetProjector.new()
-var _navigation_weapon_completion_value_model := NavigationWeaponCompletionValueModel.new()
 var _rule_event_value_model: Reference = RuleEventValueModel.new()
 var _pickup_collection_geometry_model: Reference = PickupCollectionGeometryModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
@@ -46,8 +39,7 @@ var _prepared_geometry := {}
 var _prepared_pickups := []
 var _prepared_spawn_warnings := []
 var _prepared_candidate_entries := []
-var _prepared_engagement_access := []
-var _stationary_weapon_value_by_time := {}
+var _prepared_target_access_entries := []
 
 
 func _init() -> void:
@@ -56,7 +48,6 @@ func _init() -> void:
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_enemy_motion_predictor = predictor
-	_navigation_weapon_completion_value_model.set_enemy_motion_predictor(predictor)
 	_rule_event_value_model.set_enemy_motion_predictor(predictor)
 
 
@@ -73,7 +64,7 @@ func _evaluate_point(
 		"recovery_opportunity": 0.0,
 		"future_event_opportunity": 0.0,
 		"rule_event_opportunity": 0.0,
-		"weapon_completion_opportunity": 0.0,
+		"target_access_opportunity": 0.0,
 		"total": 0.0,
 	}
 	var seconds_until_wave_end: float = max(
@@ -154,21 +145,15 @@ func _evaluate_point(
 				_prepared_geometry.opportunity_reach_distance
 			)
 		)
-	result.weapon_completion_opportunity = (
-		_engagement_access_delta(player_displacement, forecast_seconds, deadline_reach_distance)
-		+ (
-			_navigation_weapon_completion_value_model.value_at(
-				observation, context, player_displacement, forecast_seconds
-			)
-			- _stationary_weapon_value(observation, context, forecast_seconds)
-		)
+	result.target_access_opportunity = _target_access_delta(
+		player_displacement, forecast_seconds, seconds_until_wave_end
 	)
 	result.total = (
 		result.material_opportunity
 		+ result.recovery_opportunity
 		+ result.future_event_opportunity
 		+ result.rule_event_opportunity
-		+ result.weapon_completion_opportunity
+		+ result.target_access_opportunity
 	)
 	return result
 
@@ -187,7 +172,7 @@ func point_value_delta(
 		"recovery_opportunity": candidate.recovery_opportunity,
 		"future_event_opportunity": candidate.future_event_opportunity,
 		"rule_event_opportunity": candidate.rule_event_opportunity,
-		"weapon_completion_opportunity": candidate.weapon_completion_opportunity,
+		"target_access_opportunity": candidate.target_access_opportunity,
 		"total": candidate.total,
 	}
 
@@ -219,8 +204,7 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	_prepared_pickups = []
 	_prepared_spawn_warnings = []
 	_prepared_candidate_entries = []
-	_prepared_engagement_access = []
-	_stationary_weapon_value_by_time = {}
+	_prepared_target_access_entries = []
 	var deadline_reach_distance: float = (
 		_prepared_geometry.command_speed
 		* max(0.0, float(observation.wave_state.seconds_remaining))
@@ -298,9 +282,13 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		var access_potential: float = _deadline_accessibility(
 			gap, deadline_reach_distance, characteristic_reach_distance
 		)
-		_append_prepared_candidate(target.relative_position, value * access_potential)
-		if gap > 0.0 and access_potential > 0.0:
-			_prepared_engagement_access.push_back(
+		var enters_without_player_movement := _enters_targeting_range_without_player_movement(
+			target, maximum_targeting_distance, observation.wave_state.seconds_remaining
+		)
+		if not enters_without_player_movement:
+			_append_prepared_candidate(target.relative_position, value * access_potential)
+		if gap > 0.0 and (access_potential > 0.0 or enters_without_player_movement):
+			_prepared_target_access_entries.push_back(
 				{
 					"target": target,
 					"value": value,
@@ -309,11 +297,12 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 			)
 
 
-func _engagement_access_delta(
-	player_displacement: Vector2, forecast_seconds: float, deadline_reach_distance: float
+func _target_access_delta(
+	player_displacement: Vector2, forecast_seconds: float, seconds_until_deadline: float
 ) -> float:
 	var result := 0.0
-	for entry in _prepared_engagement_access:
+	var deadline_reach_distance: float = _prepared_geometry.command_speed * seconds_until_deadline
+	for entry in _prepared_target_access_entries:
 		var target: Dictionary = entry.target
 		var stationary_position: Vector2 = _enemy_motion_predictor.predict_position(
 			target.motion_track, forecast_seconds, Vector2.ZERO
@@ -321,11 +310,14 @@ func _engagement_access_delta(
 		var candidate_position: Vector2 = _enemy_motion_predictor.predict_position(
 			target.motion_track, forecast_seconds, player_displacement
 		)
-		var stationary_gap: float = max(
-			0.0, stationary_position.length() - entry.targeting_distance
+		var stationary_gap: float = _autonomous_targeting_gap(
+			target, stationary_position, seconds_until_deadline, entry.targeting_distance
 		)
-		var candidate_gap: float = max(
-			0.0, (candidate_position - player_displacement).length() - entry.targeting_distance
+		var candidate_gap: float = _autonomous_targeting_gap(
+			target,
+			candidate_position - player_displacement,
+			seconds_until_deadline,
+			entry.targeting_distance
 		)
 		result += (
 			entry.value
@@ -339,22 +331,49 @@ func _engagement_access_delta(
 	return result
 
 
+func _enters_targeting_range_without_player_movement(
+	target: Dictionary, targeting_distance: float, deadline_seconds: float
+) -> bool:
+	if target.relative_position.length() <= targeting_distance:
+		return true
+	return (
+		_autonomous_targeting_gap(
+			target, target.relative_position, deadline_seconds, targeting_distance
+		)
+		<= 0.0
+	)
+
+
+func _autonomous_targeting_gap(
+	target: Dictionary, relative_position: Vector2, seconds: float, targeting_distance: float
+) -> float:
+	var current_gap: float = max(0.0, relative_position.length() - targeting_distance)
+	if current_gap <= 0.0 or seconds <= 0.0:
+		return current_gap
+	var motion_track: Dictionary = target.motion_track
+	var response: Dictionary = motion_track.behavior_profile.get("target_position_response", {})
+	if not response.get("responds_to_target_position", false):
+		return current_gap
+	var preferred_distance: float = max(0.0, response.get("preferred_distance", 0.0))
+	if relative_position.length() <= preferred_distance:
+		return current_gap
+	var response_confidence: float = clamp(response.get("confidence", 0.0), 0.0, 1.0)
+	var closing_speed: float = (
+		max(
+			max(0.0, response.get("movement_speed", 0.0)),
+			motion_track.get("estimated_velocity", Vector2.ZERO).length()
+		)
+		* response_confidence
+	)
+	var terminal_gap_floor: float = max(0.0, preferred_distance - targeting_distance)
+	return max(terminal_gap_floor, current_gap - closing_speed * seconds)
+
+
 func _maximum_weapon_targeting_distance(observation: Dictionary) -> float:
 	var result := 0.0
 	for weapon in observation.player_state.weapons:
 		result = max(result, float(weapon.attack_model.delivery.maximum_targeting_distance))
 	return result
-
-
-func _stationary_weapon_value(
-	observation: Dictionary, context: Dictionary, forecast_seconds: float
-) -> float:
-	if not _stationary_weapon_value_by_time.has(forecast_seconds):
-		var stationary_value: float = _navigation_weapon_completion_value_model.value_at(
-			observation, context, Vector2.ZERO, forecast_seconds
-		)
-		_stationary_weapon_value_by_time[forecast_seconds] = stationary_value
-	return _stationary_weapon_value_by_time[forecast_seconds]
 
 
 func _pickup_value(
