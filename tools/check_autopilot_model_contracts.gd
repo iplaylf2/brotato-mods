@@ -39,7 +39,7 @@ func _init() -> void:
 	_check_local_enemy_interaction_projection()
 	_check_wave_completion_forecast()
 	_check_health_inventory_loss()
-	_check_recovery_liquidity_pricing()
+	_check_cleanup_continuation_value()
 	_check_additive_collision_damage()
 	var enemy_interaction_checks_path: String = tools_dir.plus_file(
 		"check_autopilot_enemy_interaction_contracts.gd"
@@ -310,6 +310,7 @@ func _check_pickup_interaction_geometry() -> void:
 			"weapons": [],
 		},
 		"remembered_entities": [material],
+		"visible_world": {"spawn_warnings": []},
 		"enemy_tracks": [],
 		"localization": {"map_bounds": _unknown_bounds()},
 	}
@@ -371,7 +372,7 @@ func _check_spatial_target_control() -> void:
 			"weapons": [{"slot": 0, "attack_model": _weapon_attack_model()}],
 		},
 		"remembered_entities": [],
-		"visible_world": {"trees": []},
+		"visible_world": {"trees": [], "spawn_warnings": []},
 		"enemy_tracks":
 		[
 			_enemy_track(Vector2(-100.0, 0.0), Vector2.ZERO, false),
@@ -675,72 +676,46 @@ func _check_health_inventory_loss() -> void:
 	)
 
 
-func _check_recovery_liquidity_pricing() -> void:
-	var utility_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_utility_model.gd"
-	)
-	var utility: Reference = utility_script.new()
+func _check_cleanup_continuation_value() -> void:
+	var utility: Reference = load(PLANNING_PATH + "movement_utility_model.gd").new()
 	var observation := _planning_observation([])
 	observation.player_state.health = {"current": 4.0, "maximum": 20.0, "ratio": 0.2}
-	observation.player_state.resources = {"materials": 0.0}
-	var fruit := {
-		"kind": "consumable",
-		"relative_position": Vector2(10.0, 0.0),
-		"visual_radius": 10.0,
-		"existence_confidence": 1.0,
-		"pickup_profile": {"base_recovery": 3.0, "traits": ["fruit"]},
+	observation.player_state.resources = {"materials": 100.0}
+	var early_context: Dictionary = utility.build_context(observation)
+	var nonterminal_outcome := {
+		"forecast_seconds": 0.0,
+		"forecast_expected_health_loss": 1.0,
+		"forecast_terminal_collision_risk": 0.0,
 	}
-	observation.remembered_entities = [fruit]
-	observation.visible_world.consumables = [fruit]
-	var context: Dictionary = utility.build_context(observation)
-	var pickup_utility: Dictionary = utility.evaluate(
-		{
-			"forecast_expected_health_loss": 0.0,
-			"expected_recovery": 3.0,
-			"consumed_consumable_recovery_supply": 3.0,
-		},
-		context
-	)
+	var terminal_outcome := {
+		"forecast_seconds": 0.0,
+		"forecast_expected_health_loss": 0.0,
+		"forecast_terminal_collision_risk": 0.5,
+	}
+	var early_nonterminal: Dictionary = utility.evaluate(nonterminal_outcome, early_context)
+	var early_terminal: Dictionary = utility.evaluate(terminal_outcome, early_context)
+	observation.physics_frame += 1
+	observation.wave_state.seconds_remaining = 0.1
+	var cleanup_context: Dictionary = utility.build_context(observation)
+	var cleanup_nonterminal: Dictionary = utility.evaluate(nonterminal_outcome, cleanup_context)
+	var cleanup_terminal: Dictionary = utility.evaluate(terminal_outcome, cleanup_context)
+	var risk_field := "forecast_run_continuation_value_at_risk"
 	_expect(
 		(
-			pickup_utility.objective_utility_breakdown.recovery > 0.0
+			(
+				cleanup_context.state_factors.environmental_exposure_value
+				< early_context.state_factors.environmental_exposure_value
+			)
+			and (
+				abs(cleanup_nonterminal.field_utility_breakdown[risk_field])
+				< abs(early_nonterminal.field_utility_breakdown[risk_field])
+			)
 			and is_equal_approx(
-				context.state_factors.environmental_exposure_value,
-				context.state_factors.health_inventory_value.terminal_health_loss_unit_value
+				cleanup_terminal.field_utility_breakdown[risk_field],
+				early_terminal.field_utility_breakdown[risk_field]
 			)
 		),
-		"future supply must reward recovery without discounting rolling-horizon exposure"
-	)
-	var tree := {
-		"destructible_profile":
-		{
-			"death_rewards":
-			{
-				"material_quantity": 0.0,
-				"material_drop_guaranteed": true,
-				"base_consumable_drop_chance": 1.0,
-				"item_box_conditional_chance": 0.0,
-				"consumable_drop_guaranteed": true,
-			}
-		}
-	}
-	var opportunity_script: Script = load(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
-	)
-	var opportunity: Reference = opportunity_script.new()
-	var no_drop_tree: Dictionary = tree.duplicate(true)
-	no_drop_tree.destructible_profile.death_rewards.base_consumable_drop_chance = 0.0
-	no_drop_tree.destructible_profile.death_rewards.consumable_drop_guaranteed = false
-	_expect(
-		(
-			opportunity.tree_destruction_value(
-				observation, tree, context.state_factors.health_inventory_value
-			)
-			> opportunity.tree_destruction_value(
-				observation, no_drop_tree, context.state_factors.health_inventory_value
-			)
-		),
-		"a tree that creates reachable healing supply must retain inventory value"
+		"cleanup must reduce only survivable continuation cost, never terminal risk"
 	)
 
 
@@ -888,6 +863,7 @@ func _completion_value_ledger(net_values: Dictionary) -> Dictionary:
 		"entries_by_track_id": entries,
 		"mean_net_completion_value": 0.0,
 		"mean_absolute_net_completion_value": 0.0,
+		"mean_burden_relief_value": 0.0,
 	}
 
 
@@ -949,6 +925,7 @@ func _influence_weights() -> Dictionary:
 		"enemy_contact": 1.0,
 		"projectile_contact": 1.0,
 		"spawn_warning": 1.0,
+		"maneuver_constraint": 1.0,
 		"ranged_attack": 1.0,
 		"map_edge": 1.0,
 		"allied_body_proximity": 1.0,

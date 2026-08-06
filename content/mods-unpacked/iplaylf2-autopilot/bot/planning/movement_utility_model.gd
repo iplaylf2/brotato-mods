@@ -47,10 +47,18 @@ func build_context(observation: Dictionary) -> Dictionary:
 	)
 	var marginal_health_unit_value: float = health_inventory_value.marginal_health_unit_value
 	var terminal_health_loss_unit_value: float = health_inventory_value.terminal_health_loss_unit_value
-	# Environmental exposure belongs to the local rolling horizon. Whole-wave
-	# replenishment can replace health later, but cannot increase the immediate
-	# survival buffer; use the same price basis as local collision loss.
-	var local_exposure_unit_value: float = terminal_health_loss_unit_value
+	var timing: Dictionary = MovementTimingModel.derive(observation)
+	# Exposure represents a marginal near-term hit, so price it through the same
+	# inventory curve as predicted health loss. A survivable point loses value as
+	# the remaining continuation horizon shrinks; exhausting the immediate buffer
+	# remains terminally expensive.
+	var exposure_continuation_ratio: float = (
+		max(0.0, observation.wave_state.seconds_remaining)
+		/ max(0.01, timing.maximum_navigation_horizon_seconds)
+	)
+	var local_exposure_unit_value: float = _health_inventory_value_model.health_loss_value(
+		1.0, health_inventory_value, exposure_continuation_ratio
+	)
 	var movement_state_economy_rates: Dictionary = player_rule_projection.movement_state_economy_rates
 	var damage_is_terminal_rule: bool = player_rule_projection.survival.terminal_on_positive_damage
 	var completion_value_ledger: Dictionary = _enemy_completion_value_model.build_ledger(
@@ -59,7 +67,6 @@ func build_context(observation: Dictionary) -> Dictionary:
 	var information_value_per_viewport := _information_value_per_viewport(
 		observation, completion_value_ledger, health_inventory_value, wave_time_remaining_ratio
 	)
-	var timing: Dictionary = MovementTimingModel.derive(observation)
 	var run_continuation_value: Dictionary = _run_continuation_value_model.estimate(observation)
 	var context := {
 		"objective_weights":
@@ -117,6 +124,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			"enemy_contact": 1.0,
 			"projectile_contact": 1.0,
 			"spawn_warning": 1.0,
+			"maneuver_constraint": 1.0,
 			"ranged_attack": 1.0,
 			"map_edge": 1.0,
 			"allied_body_proximity": 1.0,
@@ -157,6 +165,7 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 		post_forecast_seconds
 		/ max(0.01, context.state_factors.continuation_horizon_seconds)
 	)
+	continuation_horizon_ratio = clamp(continuation_horizon_ratio, 0.0, 1.0)
 	var health_inventory_loss_value: float = _health_inventory_value_model.health_loss_value(
 		outcome.forecast_expected_health_loss, health_inventory_value, continuation_horizon_ratio
 	)
@@ -166,10 +175,16 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	)
 	var continuation_capital_exposure: float = max(
 		clamp(float(outcome.get("forecast_terminal_collision_risk", 0.0)), 0.0, 1.0),
-		clamp(
-			float(outcome.get("forecast_expected_health_loss", 0.0)) / immediate_survival_buffer,
-			0.0,
-			1.0
+		(
+			continuation_horizon_ratio
+			* clamp(
+				(
+					float(outcome.get("forecast_expected_health_loss", 0.0))
+					/ immediate_survival_buffer
+				),
+				0.0,
+				1.0
+			)
 		)
 	)
 	scored_outcome.forecast_run_continuation_value_at_risk = (

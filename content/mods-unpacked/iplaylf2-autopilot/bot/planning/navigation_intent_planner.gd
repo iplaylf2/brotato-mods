@@ -252,6 +252,7 @@ func _sample_field_delta(
 	return {
 		"material_opportunity": opportunity.material_opportunity,
 		"recovery_opportunity": opportunity.recovery_opportunity,
+		"future_event_opportunity": opportunity.future_event_opportunity,
 		"weapon_completion_opportunity": opportunity.weapon_completion_opportunity,
 		"map_information": 0.0,
 		"environmental_exposure": -exposure_delta,
@@ -283,6 +284,7 @@ func _empty_value_breakdown() -> Dictionary:
 	return {
 		"material_opportunity": 0.0,
 		"recovery_opportunity": 0.0,
+		"future_event_opportunity": 0.0,
 		"weapon_completion_opportunity": 0.0,
 		"map_information": 0.0,
 		"environmental_exposure": 0.0,

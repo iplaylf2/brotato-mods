@@ -2,6 +2,7 @@ extends SceneTree
 
 const PLANNING_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/planning/"
 const KNOWLEDGE_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/"
+const OBSERVATION_PATH := "res://mods-unpacked/iplaylf2-autopilot/bot/observation/"
 var _failed := false
 var _fixtures: Reference
 var _observed_world_memory_script: Script
@@ -24,6 +25,7 @@ func _init() -> void:
 	_check_neutral_completion_work()
 	_check_item_box_tier_expectation()
 	_check_neutral_progress_completion_forecast()
+	_check_spawn_warning_resolution_window()
 	_check_tree_visibility_absence_evidence()
 	_check_visibility_coverage()
 	_check_enemy_negative_visibility_evidence()
@@ -35,6 +37,24 @@ func _init() -> void:
 	_check_immediate_hit_reserve_reachability()
 	_check_run_continuation_risk_and_action_selection()
 	quit(1 if _failed else 0)
+
+
+func _check_spawn_warning_resolution_window() -> void:
+	var script_path := OBSERVATION_PATH + "spawn_warning_resolution_window_estimator.gd"
+	var estimator: Reference = load(script_path).new()
+	var initial_window: Dictionary = estimator.estimate(1, Vector2(20.0, 30.0), 1.0)
+	estimator.advance_time(0.25)
+	var elapsed_window: Dictionary = estimator.estimate(1, Vector2(20.0, 30.0), 1.0)
+	estimator.advance_time(0.25)
+	var relocated_window: Dictionary = estimator.estimate(1, Vector2(40.0, 30.0), 1.0)
+	_expect(
+		(
+			is_equal_approx(initial_window.latest_seconds, 1.0)
+			and is_equal_approx(elapsed_window.latest_seconds, 0.75)
+			and is_equal_approx(relocated_window.latest_seconds, 1.0)
+		),
+		"spawn-warning latest resolution must decrease and restart after visible relocation"
+	)
 
 
 func _check_action_forecast_domain() -> void:

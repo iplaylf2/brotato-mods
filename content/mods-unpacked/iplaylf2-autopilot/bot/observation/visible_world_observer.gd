@@ -6,8 +6,15 @@ extends Reference
 
 const DEFAULT_ENTITY_VISUAL_RADIUS := 32.0
 const PROJECTILE_ORIGIN_INFERENCE_DISTANCE := 120.0
+const BIRTH_TIMER_TICKS_PER_SECOND := 60.0
 const ObservedMotionEstimator := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/observed_motion_estimator.gd"
+)
+const SpawnWarningResolutionWindowEstimator := preload(
+	(
+		"res://mods-unpacked/iplaylf2-autopilot/bot/observation/"
+		+ "spawn_warning_resolution_window_estimator.gd"
+	)
 )
 const EnemyMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_mechanic_compiler.gd"
@@ -37,6 +44,7 @@ const CollisionShapeRadiusAdapter := preload(
 var _main: Node
 var _players: Array
 var _motion_estimators := []
+var _spawn_warning_resolution_window_estimators := []
 var _enemy_mechanic_compiler: Reference = EnemyMechanicCompiler.new()
 var _enemy_attack_timing_observer: Reference = EnemyAttackTimingObserver.new()
 var _structure_mechanic_compiler: Reference = StructureMechanicCompiler.new()
@@ -52,9 +60,13 @@ func _init(main: Node, players: Array) -> void:
 	_players = players
 	for _player in players:
 		_motion_estimators.push_back(ObservedMotionEstimator.new())
+		_spawn_warning_resolution_window_estimators.push_back(
+			SpawnWarningResolutionWindowEstimator.new()
+		)
 
 
 func observe(player_index: int, player: Node2D, delta_seconds: float) -> Dictionary:
+	_spawn_warning_resolution_window_estimators[player_index].advance_time(delta_seconds)
 	var visible_rect := _get_visible_rect()
 	var origin: Vector2 = player.global_position
 	var enemy_batch := _observe_enemy_batch(player, visible_rect)
@@ -101,7 +113,7 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 			"materials": _make_public_motion_observations(materials),
 			"consumables": _make_public_motion_observations(consumables),
 			"enemy_projectiles": _make_public_motion_observations(enemy_projectiles),
-			"spawn_warnings": _observe_spawn_warnings(origin, visible_rect),
+			"spawn_warnings": _observe_spawn_warnings(player_index, origin, visible_rect),
 		},
 	}
 
@@ -396,19 +408,43 @@ func _observe_materials(origin: Vector2, visible_rect: Rect2) -> Array:
 	return observations
 
 
-func _observe_spawn_warnings(origin: Vector2, visible_rect: Rect2) -> Array:
+func _observe_spawn_warnings(player_index: int, origin: Vector2, visible_rect: Rect2) -> Array:
 	var observations := []
+	var live_warning_keys := {}
+	var estimators: Array = _spawn_warning_resolution_window_estimators
+	var resolution_window_estimator: Reference = estimators[player_index]
 	for birth in _main._births_container.get_children():
+		var warning_key: int = birth.get_instance_id()
+		live_warning_keys[warning_key] = true
 		if not _is_node_visible(birth, visible_rect):
 			continue
+		var disposition := _get_spawn_disposition(birth.type)
+		var full_duration_seconds := (
+			max(0.0, float(birth.time_before_spawn))
+			/ BIRTH_TIMER_TICKS_PER_SECOND
+		)
 		observations.push_back(
 			{
 				"kind": "spawn_warning",
 				"relative_position": birth.global_position - origin,
 				# Warning color visibly distinguishes hostile, neutral, and allied births.
-				"disposition": _get_spawn_disposition(birth.type),
+				"disposition": disposition,
+				# Derive the window from stable duration and legal observation history;
+				# time before the first sighting remains unknown.
+				"interaction_radius":
+				_collision_shape_radius_adapter.adapt_owner_centered_radius(
+					birth, "%CollisionShape2D"
+				),
+				"resolution_window":
+				resolution_window_estimator.estimate(
+					warning_key, birth.global_position, full_duration_seconds
+				),
+				# Vanilla relocates and restarts only hostile births when the player
+				# occupies the visible overlap area at resolution.
+				"player_overlap_defers_spawn": disposition == "hostile",
 			}
 		)
+	resolution_window_estimator.retain_sightings(live_warning_keys)
 	return observations
 
 

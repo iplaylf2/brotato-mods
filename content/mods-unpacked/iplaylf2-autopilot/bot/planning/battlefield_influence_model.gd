@@ -17,6 +17,9 @@ const MovementGeometryModel := preload(
 const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
+const ManeuverSpaceModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/maneuver_space_model.gd"
+)
 const EnemyHealthModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/enemy_health_model.gd"
 )
@@ -33,6 +36,7 @@ var _observed_motion_predictor: Reference = ObservedMotionPredictor.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
+var _maneuver_space_model: Reference = ManeuverSpaceModel.new()
 var _enemy_health_model: Reference = EnemyHealthModel.new()
 var _damage_completion_work_model: Reference = DamageCompletionWorkModel.new()
 var _initial_pressure_physics_frame := -1
@@ -233,6 +237,9 @@ func _sample_enemy_pressure(
 		# damage to the grazing contacts that vanilla resolves as ordinary hits.
 		var contact := _intersection_contact_evidence(physical_clearance)
 		channels.contact = max(channels.contact, contact * track.recency_confidence)
+		channels.maneuver_constraint += _maneuver_space_model.enemy_constraint(
+			track, position, geometry
+		)
 		if contact > 0.0:
 			var contact_evidence: float = contact * track.recency_confidence
 			channels.path_contact_evidence += contact_evidence
@@ -356,10 +363,14 @@ func _sample_spawn_pressure(
 	for warning in warnings:
 		if warning.disposition != "hostile":
 			continue
-		var clearance: float = (
-			(warning.relative_position - sample.displacement).length()
-			- geometry.player_radius
-		)
+		var distance: float = (warning.relative_position - sample.displacement).length()
+		var interaction_radius: float = warning.interaction_radius + geometry.player_radius
+		# The warning itself cannot deal damage. Inside the hostile overlap area,
+		# resolution relocates the warning and restarts its timer; the deferral
+		# opportunity is priced separately from pressure at the old center.
+		if warning.player_overlap_defers_spawn and distance <= interaction_radius:
+			continue
+		var clearance: float = distance - interaction_radius
 		var proximity := clamp(
 			(geometry.enemy_pressure_distance - clearance) / geometry.enemy_pressure_distance,
 			0.0,
@@ -713,6 +724,7 @@ func _evaluate_channels(channels: Dictionary, weights: Dictionary) -> Dictionary
 		+ channels.ranged * weights.ranged_attack
 	)
 	var spawn_exposure: float = channels.spawn * weights.spawn_warning
+	var maneuver_exposure: float = channels.maneuver_constraint * weights.maneuver_constraint
 	var positional: float = (
 		channels.edge * weights.map_edge
 		+ channels.ally_body * weights.allied_body_proximity
@@ -736,6 +748,7 @@ func _evaluate_channels(channels: Dictionary, weights: Dictionary) -> Dictionary
 	var environmental: float = (
 		max(0.0, suppressible_enemy_ambient - ambient_relief) * hostile_confinement_multiplier
 		+ spawn_exposure * hostile_confinement_multiplier
+		+ maneuver_exposure
 		+ positional
 	)
 	var relief: float = ambient_relief * hostile_confinement_multiplier + interception_relief
@@ -743,6 +756,7 @@ func _evaluate_channels(channels: Dictionary, weights: Dictionary) -> Dictionary
 		collision_hostile
 		+ suppressible_enemy_ambient * hostile_confinement_multiplier
 		+ spawn_exposure * hostile_confinement_multiplier
+		+ maneuver_exposure
 		+ positional
 	)
 	return {
@@ -762,6 +776,7 @@ func _accumulate_result(
 		result.peak_projectile_contact_risk, channels.projectile_contact
 	)
 	result.integrated_spawn_pressure += channels.spawn * step_seconds
+	result.integrated_maneuver_constraint += channels.maneuver_constraint * step_seconds
 	result.integrated_ranged_attack_pressure += channels.ranged * step_seconds
 	result.integrated_edge_pressure += channels.edge * step_seconds
 	result.integrated_allied_body_pressure += channels.ally_body * step_seconds
@@ -889,6 +904,7 @@ func _saturate_channels(channels: Dictionary) -> void:
 		"ally_body",
 	]:
 		channels[channel] = _saturate(channels[channel])
+	channels.maneuver_constraint = _saturate(channels.maneuver_constraint)
 
 
 func _add_if_known(value, addition: float):
@@ -901,6 +917,7 @@ func _empty_result() -> Dictionary:
 		"integrated_projectile_proximity_pressure": 0.0,
 		"peak_projectile_contact_risk": 0.0,
 		"integrated_spawn_pressure": 0.0,
+		"integrated_maneuver_constraint": 0.0,
 		"integrated_ranged_attack_pressure": 0.0,
 		"integrated_edge_pressure": 0.0,
 		"peak_enemy_contact_risk": 0.0,
@@ -938,6 +955,7 @@ func _empty_channels() -> Dictionary:
 		"projectile_contact": 0.0,
 		"projectile_contact_interception": 0.0,
 		"spawn": 0.0,
+		"maneuver_constraint": 0.0,
 		"ranged": 0.0,
 		"edge": 0.0,
 		"ally_body": 0.0,

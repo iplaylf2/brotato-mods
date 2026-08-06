@@ -30,8 +30,8 @@
 `bot/planning` 根目录是主要协作包。大多数组件共同服务规划入口 `MovementPlanner`，并存在密集的包内
 依赖。由多个组件共同定义、且可被不同规划流程单独消费的稳定协议进入子目录：
 
-- `motion` 拥有“规范运动观察与稳定响应 → 未来位置和可达包络”的协议，供暴露、交会、事件与动作采样
-  共同消费；
+- `motion` 拥有“规范运动观察与稳定响应 → 未来位置、可达包络与角向机动约束”的协议，供暴露、交会、
+  事件与动作采样共同消费；
 - `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
 - `health` 拥有“碰撞证据 → 条件生命损失与直接终止风险”、“当前生命、即时威胁与清场前补充 →
   生命库存、即时单位价值及补给库存价值”两段协议，结果供导航风险与动作效用共同消费；
@@ -79,10 +79,12 @@
   必掉产物与失视敌人关联，
   `bot/observation/remembered_entity_existence_estimator.gd` 在该几何事实之上估计实体存在性。
 - `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量；
+  `bot/observation/spawn_warning_resolution_window_estimator.gd` 拥有单个玩家的生成警告观察历史，并从稳定
+  完整时长和合法观察经过时间估计结束时间窗；`VisibleWorldObserver` 为各玩家分别创建一个估计器；
   `bot/observation/enemy_attack_timing_observer.gd` 只拥有当前可见敌人的下一轮齐射与冲撞时间窗；
   `bot/observation/visible_world_observer.gd` 单次扫描原版统一敌人域，观察普通敌人、精英与 Boss 的视觉状态，
   并单独输出原版持续血条提供的视野外存活和当前生命；对敌方投射物，它以实际命中形状中心形成位置测量，
-  再通过碰撞形状适配器取得规范半径。
+  再通过碰撞形状适配器取得规范半径；对生成警告，它组合当帧可见状态、稳定机制与上述时间窗估计。
 - 观察层只输出语义画像。它不读取规划结果，规划层也不读取观察层的场景节点或内部实现细节。
 
 ### 运动、碰撞与生命
@@ -93,7 +95,8 @@
   `bot/planning/motion/enemy_motion_predictor.gd` 对稳定目标位置响应作自适应中点积分，并在不适用时改用
   观测运动外推；`bot/planning/motion/projectile_motion_predictor.gd` 解析积分已形成的确定性弹道，并统一
   提供该弹道的保守位移上界，供规划域过滤与动作时域扩展共同消费；
-  `bot/planning/motion/enemy_reach_envelope_model.gd` 派生敌人的最大位移和接触支撑半径。
+  `bot/planning/motion/enemy_reach_envelope_model.gd` 派生敌人的最大位移和接触支撑半径；
+  `bot/planning/motion/maneuver_space_model.gd` 衡量可达敌人圆盘遮蔽的下一控制期角向机动空间，不选择路线。
 - `bot/planning/local_enemy_interaction_projector.gd` 结合敌人可达包络、压力作用范围与武器锁定距离，构造
   动作预测的敌人空间粗筛。完整观察仍归导航与价值上下文所有。
 - `bot/planning/battlefield_influence_model.gd` 拥有环境暴露、普通敌人与投射物的位置域碰撞证据、确定性
@@ -114,9 +117,9 @@
 
 ### 机会、规则与动作结果
 
-- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会及导航武器完成价值在未来玩家状态
-  相对同刻零输入反事实的差，统一拥有波末截止前的访问势能与不可达机会剪枝，并按价值上界提出预算内
-  搜索方向；它不按目标身份解释自动选靶。
+- `bot/planning/spatial_opportunity_value_model.gd` 计算可见与记忆拾取机会、可见生成警告的未来事件机会及
+  导航武器完成价值在未来玩家状态相对同刻零输入反事实的差，统一拥有截止前的访问势能与不可达机会
+  剪枝，并按价值上界提出预算内搜索方向；它不猜测警告结果，也不按目标身份解释自动选靶。
 - `bot/planning/navigation_intent_planner.gd` 组合空间机会、地图信息和导航时域环境暴露，沿每个可达候选
   轨迹采样时空价值场，并只公开经过完整轨迹评价后胜出的导航方向。
 - `bot/planning/map_information_value_model.gd` 计算新观察与再观察价值，不编码探索方向、巡逻路线或地图中心。
@@ -149,8 +152,9 @@
   `bot/planning/player_movement_state_projector.gd` 投影候选移动状态造成的属性差量；
   `bot/planning/player_rule_projector.gd` 将规则归约为正交状态。这些模块都不能读取场景节点。
 - `bot/planning/movement_outcome_predictor.gd` 组合动作结果；`bot/planning/movement_utility_model.gd` 将结果换算
-  为效用，其中局部与导航环境暴露使用即时单位价值，补给储备和波次尺度敌人负担使用补给库存价值，
-  终止风险与即时缓冲消耗使用对局延续价值。预测和评分是两个边界，选择器不拥有二者。
+  为效用，其中局部与导航环境暴露使用剩余导航时域内一单位生命损失的价值，补给储备和波次尺度敌人
+  负担使用补给库存价值；动作生命损失使用按剩余时域裁剪的即时缓冲价值，终止风险与同一缓冲消耗另按
+  对局延续价值计价。预测和评分是两个边界，选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
   方向，并按规划器提出的细分方向构造新候选；它还根据时间模型以及敌人与投射物的可达上界，为本轮所有
   候选选择同一个动作比较时域；

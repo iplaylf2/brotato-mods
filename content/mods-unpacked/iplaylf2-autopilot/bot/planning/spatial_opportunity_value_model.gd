@@ -40,6 +40,7 @@ var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _prepared_physics_frame := -1
 var _prepared_geometry := {}
 var _prepared_pickups := []
+var _prepared_spawn_warnings := []
 var _prepared_candidate_entries := []
 var _prepared_engagement_access := []
 var _stationary_weapon_value_by_time := {}
@@ -61,6 +62,7 @@ func _evaluate_point(
 	var result := {
 		"material_opportunity": 0.0,
 		"recovery_opportunity": 0.0,
+		"future_event_opportunity": 0.0,
 		"weapon_completion_opportunity": 0.0,
 		"total": 0.0,
 	}
@@ -90,6 +92,26 @@ func _evaluate_point(
 				result.material_opportunity += contribution
 			"consumable":
 				result.recovery_opportunity += contribution
+	for entry in _prepared_spawn_warnings:
+		var warning: Dictionary = entry.warning
+		var stationary_gap: float = _spawn_warning_gap(warning, Vector2.ZERO)
+		var candidate_gap: float = _spawn_warning_gap(warning, player_displacement)
+		var seconds_until_deadline := _spawn_warning_seconds_until_deadline(
+			observation, warning, forecast_seconds
+		)
+		var warning_reach_distance: float = (
+			_prepared_geometry.command_speed
+			* seconds_until_deadline
+		)
+		result.future_event_opportunity += (
+			entry.value
+			* _deadline_accessibility_delta(
+				stationary_gap,
+				candidate_gap,
+				warning_reach_distance,
+				_prepared_geometry.opportunity_reach_distance
+			)
+		)
 	result.weapon_completion_opportunity = (
 		_engagement_access_delta(player_displacement, forecast_seconds, deadline_reach_distance)
 		+ (
@@ -102,6 +124,7 @@ func _evaluate_point(
 	result.total = (
 		result.material_opportunity
 		+ result.recovery_opportunity
+		+ result.future_event_opportunity
 		+ result.weapon_completion_opportunity
 	)
 	return result
@@ -119,6 +142,7 @@ func point_value_delta(
 	return {
 		"material_opportunity": candidate.material_opportunity,
 		"recovery_opportunity": candidate.recovery_opportunity,
+		"future_event_opportunity": candidate.future_event_opportunity,
 		"weapon_completion_opportunity": candidate.weapon_completion_opportunity,
 		"total": candidate.total,
 	}
@@ -149,6 +173,7 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	_prepared_physics_frame = physics_frame
 	_prepared_geometry = _movement_geometry.derive(observation)
 	_prepared_pickups = []
+	_prepared_spawn_warnings = []
 	_prepared_candidate_entries = []
 	_prepared_engagement_access = []
 	_stationary_weapon_value_by_time = {}
@@ -186,6 +211,26 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 				)
 			)
 		)
+	for warning in observation.visible_world.spawn_warnings:
+		var value: float = _spawn_warning_value(observation, context, warning)
+		if value == 0.0:
+			continue
+		var gap := _spawn_warning_gap(warning, Vector2.ZERO)
+		var seconds_until_deadline := _spawn_warning_seconds_until_deadline(
+			observation, warning, 0.0
+		)
+		var warning_reach_distance: float = (
+			_prepared_geometry.command_speed
+			* seconds_until_deadline
+		)
+		var access_potential: float = _deadline_accessibility(
+			gap, warning_reach_distance, characteristic_reach_distance
+		)
+		if access_potential <= 0.0:
+			continue
+		_prepared_spawn_warnings.push_back({"warning": warning, "value": value})
+		if value > 0.0:
+			_append_prepared_candidate(warning.relative_position, value * access_potential)
 	var maximum_targeting_distance := _maximum_weapon_targeting_distance(observation)
 	if maximum_targeting_distance <= 0.0:
 		return
@@ -286,6 +331,46 @@ func _pickup_collection_radius(observation: Dictionary) -> float:
 	# Navigation keeps the opportunity until the observed center can reach the
 	# same collection circle used by the local outcome and memory contracts.
 	return observation.player_state.pickup.collection_radius
+
+
+func _spawn_warning_value(
+	observation: Dictionary, context: Dictionary, warning: Dictionary
+) -> float:
+	# A visible warning exposes a future event but not the hidden sampled entity.
+	# Value hostile deferral from the signed mean burden of observed enemies; value
+	# a neutral warning as access to a newly revealed attackable event.
+	if warning.disposition == "neutral":
+		return context.state_factors.information_value_per_viewport
+	if not warning.player_overlap_defers_spawn:
+		return 0.0
+	var latest_resolution_seconds: float = warning.resolution_window.latest_seconds
+	var burden_horizon: float = max(1.0, sqrt(max(0.0, observation.wave_state.seconds_remaining)))
+	var deferral_value: float = (
+		context.enemy_completion_value_ledger.mean_burden_relief_value
+		* latest_resolution_seconds
+		/ burden_horizon
+	)
+	return deferral_value
+
+
+func _spawn_warning_gap(warning: Dictionary, player_displacement: Vector2) -> float:
+	return max(
+		0.0,
+		(
+			(warning.relative_position - player_displacement).length()
+			- warning.interaction_radius
+			- _prepared_geometry.player_radius
+		)
+	)
+
+
+func _spawn_warning_seconds_until_deadline(
+	observation: Dictionary, warning: Dictionary, forecast_seconds: float
+) -> float:
+	var available_seconds: float = max(0.0, observation.wave_state.seconds_remaining)
+	if warning.player_overlap_defers_spawn:
+		available_seconds = min(available_seconds, warning.resolution_window.latest_seconds)
+	return max(0.0, available_seconds - forecast_seconds)
 
 
 func _append_prepared_candidate(position: Vector2, value: float) -> void:

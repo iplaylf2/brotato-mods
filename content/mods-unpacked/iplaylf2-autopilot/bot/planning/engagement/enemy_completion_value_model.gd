@@ -45,6 +45,7 @@ func build_ledger(observation: Dictionary, marginal_health_unit_value: float) ->
 	var preservation_value := _living_enemy_preservation_value(observation)
 	var mean_net_completion_value := 0.0
 	var mean_absolute_net_completion_value := 0.0
+	var mean_burden_relief_value := 0.0
 	for track in tracks:
 		var reward_delta_value: float = (
 			_opportunity_pricing_model.death_reward_value(
@@ -75,10 +76,12 @@ func build_ledger(observation: Dictionary, marginal_health_unit_value: float) ->
 		}
 		mean_net_completion_value += net_completion_value
 		mean_absolute_net_completion_value += abs(net_completion_value)
+		mean_burden_relief_value += burden_relief_value
 	return {
 		"entries_by_track_id": entries_by_track_id,
 		"mean_net_completion_value": mean_net_completion_value / tracks.size(),
 		"mean_absolute_net_completion_value": mean_absolute_net_completion_value / tracks.size(),
+		"mean_burden_relief_value": mean_burden_relief_value / tracks.size(),
 		"living_enemy_preservation_value": preservation_value,
 	}
 
@@ -96,6 +99,7 @@ func _empty_ledger(entries_by_track_id: Dictionary) -> Dictionary:
 		"entries_by_track_id": entries_by_track_id,
 		"mean_net_completion_value": 0.0,
 		"mean_absolute_net_completion_value": 0.0,
+		"mean_burden_relief_value": 0.0,
 		"living_enemy_preservation_value": 0.0,
 	}
 

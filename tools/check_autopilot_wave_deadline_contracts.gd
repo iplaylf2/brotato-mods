@@ -265,6 +265,7 @@ func _influence_weights() -> Dictionary:
 		"enemy_contact": 1.0,
 		"projectile_contact": 1.0,
 		"spawn_warning": 1.0,
+		"maneuver_constraint": 1.0,
 		"ranged_attack": 1.0,
 		"map_edge": 1.0,
 		"allied_body_proximity": 1.0,

@@ -11,6 +11,8 @@ func run(fixtures: Reference) -> bool:
 	_check_player_healing_opportunity()
 	_check_predictive_targeted_volley_lane()
 	_check_hostile_edge_confinement()
+	_check_spawn_warning_opportunity()
+	_check_maneuver_space_pressure()
 	return not _failed
 
 
@@ -162,12 +164,129 @@ func _check_hostile_edge_confinement() -> void:
 	)
 
 
+func _check_spawn_warning_opportunity() -> void:
+	var spatial: Reference = load(PLANNING_PATH + "spatial_opportunity_value_model.gd").new()
+	var observation: Dictionary = _fixtures.planning_observation([])
+	observation.visible_world.spawn_warnings = [
+		{
+			"kind": "spawn_warning",
+			"relative_position": Vector2(90.0, 0.0),
+			"disposition": "hostile",
+			"interaction_radius": 20.0,
+			"resolution_window":
+			{"is_exact": false, "earliest_seconds": 0.0, "latest_seconds": 1.0},
+			"player_overlap_defers_spawn": true,
+		}
+	]
+	var context := {
+		"state_factors":
+		{
+			"health_inventory_value": {},
+			"information_value_per_viewport": 1.0,
+		},
+		"enemy_completion_value_ledger": _completion_value_ledger({}),
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
+	}
+	var unsupported_hostile: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(20.0, 0.0), 0.2
+	)
+	context.enemy_completion_value_ledger.mean_burden_relief_value = -4.0
+	observation.physics_frame += 1
+	var beneficial_hostile: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(20.0, 0.0), 0.2
+	)
+	context.enemy_completion_value_ledger.mean_burden_relief_value = 4.0
+	observation.physics_frame += 1
+	var toward_hostile: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(20.0, 0.0), 0.2
+	)
+	var expired_hostile: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(20.0, 0.0), 1.0
+	)
+	var influence: Reference = load(PLANNING_PATH + "battlefield_influence_model.gd").new()
+	var outside_deferral_zone: Dictionary = influence.sample_point(
+		observation, Vector2(59.0, 0.0), 0.0, _influence_weights()
+	)
+	var inside_deferral_zone: Dictionary = influence.sample_point(
+		observation, Vector2(60.0, 0.0), 0.0, _influence_weights()
+	)
+	observation.physics_frame += 1
+	observation.visible_world.spawn_warnings[0].disposition = "neutral"
+	observation.visible_world.spawn_warnings[0].player_overlap_defers_spawn = false
+	var toward_neutral: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(20.0, 0.0), 0.2
+	)
+	_expect(
+		(
+			is_equal_approx(unsupported_hostile.future_event_opportunity, 0.0)
+			and beneficial_hostile.future_event_opportunity < 0.0
+			and toward_hostile.future_event_opportunity > 0.0
+			and is_equal_approx(expired_hostile.future_event_opportunity, 0.0)
+			and toward_neutral.future_event_opportunity > 0.0
+		),
+		"spawn-warning opportunities must follow observed value and resolution windows"
+	)
+	_expect(
+		(
+			outside_deferral_zone.channels.spawn > 0.0
+			and is_equal_approx(inside_deferral_zone.channels.spawn, 0.0)
+		),
+		"hostile warning pressure must use the composed player-overlap geometry"
+	)
+
+
+func _check_maneuver_space_pressure() -> void:
+	var model: Reference = load(PLANNING_PATH + "motion/maneuver_space_model.gd").new()
+	var observation: Dictionary = _fixtures.planning_observation([])
+	var geometry: Dictionary = load(PLANNING_PATH + "movement_geometry_model.gd").new().derive(
+		observation
+	)
+	var track: Dictionary = _fixtures.enemy_track(Vector2(50.0, 0.0), Vector2.ZERO, false)
+	var nearby_constraint: float = model.enemy_constraint(track, track.relative_position, geometry)
+	var remote_constraint: float = model.enemy_constraint(track, Vector2(500.0, 0.0), geometry)
+	var overlap_constraint: float = model.enemy_constraint(track, Vector2.ZERO, geometry)
+	var influence: Reference = load(PLANNING_PATH + "battlefield_influence_model.gd").new()
+	observation.enemy_tracks = [track]
+	var channels: Dictionary = influence.sample_point(
+		observation, Vector2.ZERO, 0.0, _influence_weights()
+	).channels
+	_expect(
+		(
+			nearby_constraint > remote_constraint
+			and is_equal_approx(remote_constraint, 0.0)
+			and overlap_constraint > 0.0
+			and overlap_constraint < track.recency_confidence
+			and channels.maneuver_constraint > 0.0
+		),
+		"reachable enemy disks must consume maneuver space before contact"
+	)
+
+
+func _completion_value_ledger(net_values: Dictionary) -> Dictionary:
+	var entries := {}
+	for track_id in net_values:
+		entries[track_id] = {
+			"reward_delta_value": net_values[track_id],
+			"burden_relief_value": 0.0,
+			"death_consequence_value": 0.0,
+			"net_completion_value": net_values[track_id],
+			"remaining_health": 10.0,
+		}
+	return {
+		"entries_by_track_id": entries,
+		"mean_net_completion_value": 0.0,
+		"mean_absolute_net_completion_value": 0.0,
+		"mean_burden_relief_value": 0.0,
+	}
+
+
 func _influence_weights() -> Dictionary:
 	return {
 		"enemy_proximity": 1.0,
 		"enemy_contact": 1.0,
 		"projectile_contact": 1.0,
 		"spawn_warning": 1.0,
+		"maneuver_constraint": 1.0,
 		"ranged_attack": 1.0,
 		"map_edge": 1.0,
 		"allied_body_proximity": 1.0,

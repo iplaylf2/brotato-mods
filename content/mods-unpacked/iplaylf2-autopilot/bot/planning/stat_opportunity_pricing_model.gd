@@ -62,15 +62,18 @@ func _opportunity_chance(profile: Dictionary, stat_value: float) -> float:
 
 func _remaining_opportunity_wave_equivalents(observation: Dictionary) -> float:
 	# Use remaining wave-equivalents as a bounded proxy for recurring enemy and
-	# shop opportunities. A whole-run fraction would collapse that recurring
-	# stream into one event. Endless mode has no finite horizon, so retain one
-	# wave-equivalent instead of inventing an unbounded future.
-	if observation.wave_state.get("endless", false):
-		return 1.0
+	# shop opportunities. Endless mode still has a finite scheduled campaign
+	# before its open-ended tail. Preserve those known waves and add one bounded
+	# equivalent for the otherwise unbounded tail.
 	var final_wave: float = max(1.0, observation.wave_state.get("final_number", 1.0))
-	var current_wave: float = clamp(observation.wave_state.number, 1.0, final_wave)
+	var current_wave: float = max(1.0, observation.wave_state.number)
 	var duration: float = max(0.01, observation.wave_state.duration_seconds)
 	var current_wave_fraction: float = clamp(
 		observation.wave_state.seconds_remaining / duration, 0.0, 1.0
 	)
-	return max(0.0, final_wave - current_wave + current_wave_fraction)
+	var scheduled_equivalents := 0.0
+	if current_wave <= final_wave:
+		scheduled_equivalents = final_wave - current_wave + current_wave_fraction
+	if observation.wave_state.get("endless", false):
+		return scheduled_equivalents + 1.0
+	return scheduled_equivalents
