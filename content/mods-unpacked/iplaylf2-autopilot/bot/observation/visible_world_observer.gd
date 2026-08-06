@@ -10,12 +10,6 @@ const BIRTH_TIMER_TICKS_PER_SECOND := 60.0
 const ObservedMotionEstimator := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/observation/observed_motion_estimator.gd"
 )
-const SpawnWarningResolutionWindowEstimator := preload(
-	(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/observation/"
-		+ "spawn_warning_resolution_window_estimator.gd"
-	)
-)
 const EnemyMechanicCompiler := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/enemy_mechanic_compiler.gd"
 )
@@ -44,7 +38,6 @@ const CollisionShapeRadiusAdapter := preload(
 var _main: Node
 var _players: Array
 var _motion_estimators := []
-var _spawn_warning_resolution_window_estimators := []
 var _enemy_mechanic_compiler: Reference = EnemyMechanicCompiler.new()
 var _enemy_attack_timing_observer: Reference = EnemyAttackTimingObserver.new()
 var _structure_mechanic_compiler: Reference = StructureMechanicCompiler.new()
@@ -60,13 +53,9 @@ func _init(main: Node, players: Array) -> void:
 	_players = players
 	for _player in players:
 		_motion_estimators.push_back(ObservedMotionEstimator.new())
-		_spawn_warning_resolution_window_estimators.push_back(
-			SpawnWarningResolutionWindowEstimator.new()
-		)
 
 
 func observe(player_index: int, player: Node2D, delta_seconds: float) -> Dictionary:
-	_spawn_warning_resolution_window_estimators[player_index].advance_time(delta_seconds)
 	var visible_rect := _get_visible_rect()
 	var origin: Vector2 = player.global_position
 	var enemy_batch := _observe_enemy_batch(player, visible_rect)
@@ -113,7 +102,7 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 			"materials": _make_public_motion_observations(materials),
 			"consumables": _make_public_motion_observations(consumables),
 			"enemy_projectiles": _make_public_motion_observations(enemy_projectiles),
-			"spawn_warnings": _observe_spawn_warnings(player_index, origin, visible_rect),
+			"spawn_warnings": _observe_spawn_warnings(origin, visible_rect),
 		},
 	}
 
@@ -141,6 +130,7 @@ func _observe_enemy_batch(player: Node2D, visible_rect: Rect2) -> Dictionary:
 			{
 				"_source": enemy,
 				"_world_position": enemy.global_position,
+				"_velocity_is_authoritative": _has_authoritative_velocity(enemy),
 				"relative_position": relative_position,
 				"velocity": enemy_velocity,
 				"acceleration": Vector2.ZERO,
@@ -223,6 +213,7 @@ func _make_public_motion_observations(observations: Array) -> Array:
 		var public_observation: Dictionary = observation.duplicate(true)
 		public_observation.erase("_source")
 		public_observation.erase("_world_position")
+		public_observation.erase("_velocity_is_authoritative")
 		result.push_back(public_observation)
 	return result
 
@@ -408,44 +399,42 @@ func _observe_materials(origin: Vector2, visible_rect: Rect2) -> Array:
 	return observations
 
 
-func _observe_spawn_warnings(player_index: int, origin: Vector2, visible_rect: Rect2) -> Array:
+func _observe_spawn_warnings(origin: Vector2, visible_rect: Rect2) -> Array:
 	var observations := []
-	var live_warning_keys := {}
-	var estimators: Array = _spawn_warning_resolution_window_estimators
-	var resolution_window_estimator: Reference = estimators[player_index]
 	for birth in _main._births_container.get_children():
-		var warning_key: int = birth.get_instance_id()
-		live_warning_keys[warning_key] = true
 		if not _is_node_visible(birth, visible_rect):
 			continue
 		var disposition := _get_spawn_disposition(birth.type)
-		var full_duration_seconds := (
-			max(0.0, float(birth.time_before_spawn))
-			/ BIRTH_TIMER_TICKS_PER_SECOND
-		)
+		# This countdown is the current phase that directly drives the visible,
+		# accelerating flicker. Reading its authoritative value preserves the
+		# presented state; it does not reveal the queued entity or a future draw.
+		var resolution_window := _exact_tick_window(birth._current_time_before_spawn)
 		observations.push_back(
 			{
 				"kind": "spawn_warning",
 				"relative_position": birth.global_position - origin,
 				# Warning color visibly distinguishes hostile, neutral, and allied births.
 				"disposition": disposition,
-				# Derive the window from stable duration and legal observation history;
-				# time before the first sighting remains unknown.
 				"interaction_radius":
 				_collision_shape_radius_adapter.adapt_owner_centered_radius(
 					birth, "%CollisionShape2D"
 				),
-				"resolution_window":
-				resolution_window_estimator.estimate(
-					warning_key, birth.global_position, full_duration_seconds
-				),
+				"resolution_window": resolution_window,
 				# Vanilla relocates and restarts only hostile births when the player
 				# occupies the visible overlap area at resolution.
 				"player_overlap_defers_spawn": disposition == "hostile",
 			}
 		)
-	resolution_window_estimator.retain_sightings(live_warning_keys)
 	return observations
+
+
+func _exact_tick_window(remaining_ticks: float) -> Dictionary:
+	var seconds := max(0.0, float(remaining_ticks)) / BIRTH_TIMER_TICKS_PER_SECOND
+	return {
+		"is_exact": true,
+		"earliest_seconds": seconds,
+		"latest_seconds": seconds,
+	}
 
 
 func _get_spawn_disposition(entity_type: int) -> String:
@@ -468,6 +457,7 @@ func _append_observation(
 
 func _make_entity_observation(node: Node2D, origin: Vector2, kind: String) -> Dictionary:
 	return {
+		"_velocity_is_authoritative": _has_authoritative_velocity(node),
 		"kind": kind,
 		"relative_position": node.global_position - origin,
 		"velocity": _get_velocity(node),
@@ -481,6 +471,10 @@ func _get_velocity(node: Node2D) -> Vector2:
 	if "velocity" in node:
 		return node.velocity
 	return Vector2.ZERO
+
+
+func _has_authoritative_velocity(node: Node2D) -> bool:
+	return "linear_velocity" in node or "velocity" in node
 
 
 func _get_visual_radius(node: Node2D) -> float:

@@ -14,15 +14,17 @@ Autopilot 是一个实验性 Brotato mod。它在玩家权限边界内评估环�
 
 ## 安装与启用
 
-Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetails/?id=2944608034)，并且默认
+Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetails/?id=2944608034)，且默认
 关闭。安装依赖后，在游戏中打开 `设置 → Mods → Autopilot`，启用 **Enable Autopilot**。
 
 设置会立即作用于当前战斗并保存到后续战斗。关闭后，Autopilot 会停止移动并恢复玩家原有的
 `MovementBehavior`。启用且进入战斗后，Autopilot 还会在本地写入决策采样文件；具体路径、采样频率和
-分片策略见[诊断与采样](#诊断与采样)。
+分片策略见 [诊断与采样](#诊断与采样)。
 
 ## 公平边界
 
+- 公平性按信息语义和披露时点判断，不按字段是否属于内部实现或能否精确读取判断；已经呈现的当前状态
+  可以直接读取原版权威值，不必通过图像识别或重复估算还原。
 - 外部战场信息只通过玩家可感知的渠道进入观察；普通敌人离开视野后只依据先前观察继续估计，原版持续
   血条公开的生命与存活以及首次看见的必掉产物按权限契约单独处理。
 - 玩家通过正常游玩可以掌握的敌人、树木、投射物和波次机制可以作为预置知识，不要求每局重新学习。

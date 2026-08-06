@@ -1,8 +1,8 @@
 extends Reference
 
-# Adapts rewards caused by combat outcomes. The planning layer supplies only
-# conservative fractional kill evidence because enemy current health is outside
-# the observation contract.
+# Adapts rewards caused by combat outcomes. Current target state and completion
+# evidence remain in observation and planning; this adapter only translates the
+# player's stable on-kill rules.
 
 
 func adapt(effects: Dictionary) -> Array:

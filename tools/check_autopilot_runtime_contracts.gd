@@ -25,7 +25,7 @@ func _init() -> void:
 	_check_neutral_completion_work()
 	_check_item_box_tier_expectation()
 	_check_neutral_progress_completion_forecast()
-	_check_spawn_warning_resolution_window()
+	_check_exact_observed_state()
 	_check_tree_visibility_absence_evidence()
 	_check_visibility_coverage()
 	_check_enemy_negative_visibility_evidence()
@@ -39,21 +39,56 @@ func _init() -> void:
 	quit(1 if _failed else 0)
 
 
-func _check_spawn_warning_resolution_window() -> void:
-	var script_path := OBSERVATION_PATH + "spawn_warning_resolution_window_estimator.gd"
-	var estimator: Reference = load(script_path).new()
-	var initial_window: Dictionary = estimator.estimate(1, Vector2(20.0, 30.0), 1.0)
-	estimator.advance_time(0.25)
-	var elapsed_window: Dictionary = estimator.estimate(1, Vector2(20.0, 30.0), 1.0)
-	estimator.advance_time(0.25)
-	var relocated_window: Dictionary = estimator.estimate(1, Vector2(40.0, 30.0), 1.0)
+func _check_exact_observed_state() -> void:
+	var world_observer: Reference = load(OBSERVATION_PATH + "visible_world_observer.gd").new(
+		null, []
+	)
+	var warning_window: Dictionary = world_observer.call("_exact_tick_window", 30.0)
 	_expect(
 		(
-			is_equal_approx(initial_window.latest_seconds, 1.0)
-			and is_equal_approx(elapsed_window.latest_seconds, 0.75)
-			and is_equal_approx(relocated_window.latest_seconds, 1.0)
+			warning_window.is_exact
+			and is_equal_approx(warning_window.earliest_seconds, 0.5)
+			and is_equal_approx(warning_window.latest_seconds, 0.5)
 		),
-		"spawn-warning latest resolution must decrease and restart after visible relocation"
+		"a visible spawn warning must preserve its exact presented countdown phase"
+	)
+
+	var motion_estimator: Reference = load(OBSERVATION_PATH + "observed_motion_estimator.gd").new()
+	var source := Reference.new()
+	var first := {
+		"_source": source,
+		"_world_position": Vector2.ZERO,
+		"_velocity_is_authoritative": true,
+		"velocity": Vector2(10.0, 0.0),
+	}
+	motion_estimator.update([first], 0.1)
+	var second := {
+		"_source": source,
+		"_world_position": Vector2(100.0, 0.0),
+		"_velocity_is_authoritative": true,
+		"velocity": Vector2(20.0, 0.0),
+	}
+	motion_estimator.update([second], 0.1)
+	_expect(
+		second.velocity == Vector2(20.0, 0.0),
+		"visible motion must retain vanilla's authoritative current velocity"
+	)
+	var inferred_source := Reference.new()
+	var inferred_first := {
+		"_source": inferred_source,
+		"_world_position": Vector2.ZERO,
+		"velocity": Vector2.ZERO,
+	}
+	motion_estimator.update([inferred_first], 0.1)
+	var inferred_second := {
+		"_source": inferred_source,
+		"_world_position": Vector2(5.0, 0.0),
+		"velocity": Vector2.ZERO,
+	}
+	motion_estimator.update([inferred_second], 0.1)
+	_expect(
+		is_equal_approx(inferred_second.velocity.x, 50.0),
+		"visible position history must supply velocity when vanilla exposes none"
 	)
 
 

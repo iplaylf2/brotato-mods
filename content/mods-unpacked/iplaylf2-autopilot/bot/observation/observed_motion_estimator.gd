@@ -1,7 +1,9 @@
 extends Reference
 
-# Derives motion from successive visible positions. Source nodes are used only
-# as private continuity tokens and are never copied into the public observation.
+# Preserves an entity's authoritative current velocity when vanilla exposes it,
+# and otherwise derives velocity from successive visible positions. History is
+# still used for acceleration trends. Source nodes and provenance flags remain
+# private continuity data and never enter the public observation.
 
 const MAX_SAMPLE_GAP_SECONDS := 0.2
 const MAX_ACCELERATION := 1800.0
@@ -29,7 +31,8 @@ func _update_observation(observation: Dictionary) -> void:
 	if not previous.empty():
 		var elapsed: float = _elapsed_seconds - previous.observed_at_seconds
 		if elapsed > 0.0 and elapsed <= MAX_SAMPLE_GAP_SECONDS:
-			velocity = (position - previous.position) / elapsed
+			if not observation.get("_velocity_is_authoritative", false):
+				velocity = (position - previous.position) / elapsed
 			var measured_acceleration: Vector2 = (velocity - previous.velocity) / elapsed
 			acceleration = previous.acceleration.linear_interpolate(
 				measured_acceleration, ACCELERATION_SMOOTHING

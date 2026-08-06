@@ -50,9 +50,7 @@
 
 - `bot/knowledge/allies/ally_mechanic_compiler.gd` 与
   `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
-- `bot/observation/visible_world_observer.gd` 从可见材料读取原版拾取和波末转换直接消费的确定数量；
-  `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定恢复与处理画像。二者都不读取
-  不可见实体或未来随机结果。
+- `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定恢复与处理画像。
 - `bot/knowledge/neutrals/neutral_mechanic_compiler.gd` 拥有可见树木的稳定生命、命中上限与死亡奖励画像；
   `bot/knowledge/projectiles/projectile_motion_compiler.gd` 把可见投射物的稳定运动配置编译为解析运动模型。
 - `bot/knowledge/collision_shape_radius_adapter.gd` 把原版圆形和矩形 `CollisionShape2D` 及其完整世界变换
@@ -78,13 +76,13 @@
   `bot/observation/enemy_death_product_matcher.gd` 只在机制支持域内已追踪来源候选唯一时，将首次观察的
   必掉产物与失视敌人关联，
   `bot/observation/remembered_entity_existence_estimator.gd` 在该几何事实之上估计实体存在性。
-- `bot/observation/observed_motion_estimator.gd` 负责跨帧运动测量；
-  `bot/observation/spawn_warning_resolution_window_estimator.gd` 拥有单个玩家的生成警告观察历史，并从稳定
-  完整时长和合法观察经过时间估计结束时间窗；`VisibleWorldObserver` 为各玩家分别创建一个估计器；
+- `bot/observation/observed_motion_estimator.gd` 保留原版为可见实体提供的当帧权威速度，并在缺少权威速度
+  时负责跨帧速度测量，同时从合法历史形成加速度趋势；
   `bot/observation/enemy_attack_timing_observer.gd` 只拥有当前可见敌人的下一轮齐射与冲撞时间窗；
   `bot/observation/visible_world_observer.gd` 单次扫描原版统一敌人域，观察普通敌人、精英与 Boss 的视觉状态，
   并单独输出原版持续血条提供的视野外存活和当前生命；对敌方投射物，它以实际命中形状中心形成位置测量，
-  再通过碰撞形状适配器取得规范半径；对生成警告，它组合当帧可见状态、稳定机制与上述时间窗估计。
+  再通过碰撞形状适配器取得规范半径；对可见材料，它读取原版结算直接消费的确定数量；对生成警告，
+  它直接适配当帧精确倒计时。这些当前事实不由机制编译器或观察记忆重复维护。
 - 观察层只输出语义画像。它不读取规划结果，规划层也不读取观察层的场景节点或内部实现细节。
 
 ### 运动、碰撞与生命

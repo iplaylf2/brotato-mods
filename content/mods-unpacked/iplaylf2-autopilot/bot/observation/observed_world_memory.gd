@@ -248,6 +248,7 @@ func _materialize_remembered_entities(
 		var observation: Dictionary = memory_record.observation.duplicate(not planning_view)
 		observation.erase("_source")
 		observation.erase("_world_position")
+		observation.erase("_velocity_is_authoritative")
 		observation.memory_record_id = memory_record.memory_record_id
 		var remembered_velocity: Vector2 = observation.get("velocity", Vector2.ZERO)
 		var remembered_motion_confidence: float = clamp(
