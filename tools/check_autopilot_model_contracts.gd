@@ -42,6 +42,11 @@ func _init() -> void:
 	)
 	if not load(material_checks_path).new().run(_fixtures):
 		_failed = true
+	var observation_checks_path: String = tools_dir.plus_file(
+		"check_autopilot_observation_contracts.gd"
+	)
+	if not load(observation_checks_path).new().run():
+		_failed = true
 	var reward_check_path: String = tools_dir.plus_file("check_autopilot_death_reward_contracts.gd")
 	if not load(reward_check_path).new().run():
 		_failed = true
@@ -250,11 +255,12 @@ func _check_trajectory_value_field() -> void:
 	)
 	_expect(
 		(
-			result.movement_preference.dot(Vector2.RIGHT) > 0.99
+			result.trajectory_sample_count == 3
+			and result.movement_preference.dot(Vector2.RIGHT) > 0.99
 			and abs(endpoint_delta.weapon_completion_opportunity) < 0.0001
 			and right_sample.value_breakdown.weapon_completion_opportunity > 0.0
 		),
-		"a trajectory must retain opportunity crossed before its endpoint"
+		"trajectory spacing must avoid redundant float-boundary samples and retain crossed value"
 	)
 
 
@@ -799,23 +805,21 @@ func _check_cleanup_continuation_value() -> void:
 	var cleanup_context: Dictionary = utility.build_context(observation)
 	var cleanup_nonterminal: Dictionary = utility.evaluate(nonterminal_outcome, cleanup_context)
 	var cleanup_terminal: Dictionary = utility.evaluate(terminal_outcome, cleanup_context)
-	var risk_field := "committed_run_continuation_value_at_risk"
+	var risk_field := "expected_run_continuation_value_loss"
 	_expect(
 		(
 			(
 				cleanup_context.state_factors.environmental_exposure_value
 				< early_context.state_factors.environmental_exposure_value
 			)
-			and (
-				abs(cleanup_nonterminal.field_utility_breakdown[risk_field])
-				< abs(early_nonterminal.field_utility_breakdown[risk_field])
-			)
+			and is_equal_approx(early_nonterminal.field_utility_breakdown[risk_field], 0.0)
+			and is_equal_approx(cleanup_nonterminal.field_utility_breakdown[risk_field], 0.0)
 			and is_equal_approx(
 				cleanup_terminal.field_utility_breakdown[risk_field],
 				early_terminal.field_utility_breakdown[risk_field]
 			)
 		),
-		"cleanup must reduce only survivable continuation cost, never terminal risk"
+		"cleanup must reduce health-inventory cost but never terminal run-capital loss"
 	)
 
 

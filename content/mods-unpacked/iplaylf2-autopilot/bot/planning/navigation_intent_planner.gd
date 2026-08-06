@@ -301,7 +301,11 @@ func _trajectory_sample_count(distance: float, geometry: Dictionary) -> int:
 	# remaining horizon is short, erasing every combat opportunity that required
 	# movement earlier in the interval. The first sample and terminal sample
 	# preserve both setup value and the absorbing wave boundary.
-	return int(max(2, ceil(distance / max(1.0, sample_spacing))))
+	# Derived horizons and distances use single-precision engine values. At an
+	# exact spacing multiple their quotient can land microscopically above an
+	# integer, making ceil add a whole redundant field sample to every direction.
+	var spacing_ratio: float = distance / max(1.0, sample_spacing)
+	return int(max(2, ceil(spacing_ratio - 0.00001)))
 
 
 func _uniform_directions(direction_count: int) -> Array:

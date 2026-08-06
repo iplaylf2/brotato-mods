@@ -75,7 +75,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			{
 				"integrated_environmental_exposure": -local_exposure_unit_value,
 				"forecast_health_inventory_loss_value": -1.0,
-				"committed_run_continuation_value_at_risk": -1.0,
+				"expected_run_continuation_value_loss": -1.0,
 				"movement_damage_exposure_reduction": local_exposure_unit_value,
 			},
 			# Recovery first becomes liquid health. A consumable pickup also spends
@@ -173,37 +173,15 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 		outcome.forecast_expected_health_loss, health_inventory_value, forecast_continuation_ratio
 	)
 	scored_outcome.forecast_health_inventory_loss_value = health_inventory_loss_value
-	var immediate_survival_buffer: float = max(
-		1.0, float(health_inventory_value.immediate_survival_buffer)
+	# Health depletion already follows the convex immediate-inventory curve above.
+	# Run capital is lost only on a terminal branch of the committed state
+	# distribution; interpreting ordinary buffer erosion as another death
+	# probability double-charged survivable hits and dwarfed every other objective.
+	var terminal_probability: float = clamp(
+		float(outcome.get("terminal_collision_risk", 0.0)), 0.0, 1.0
 	)
-	# Losing the run is an irreversible cost only inside the input prefix the
-	# controller will actually commit before replanning. The longer straight-line
-	# rollout still prices health loss and environmental exposure, but it cannot
-	# assume that later control corrections are unavailable.
-	var committed_seconds: float = min(
-		forecast_seconds, max(0.0, context.get("control_interval_seconds", forecast_seconds))
-	)
-	var committed_continuation_ratio: float = clamp(
-		(
-			(context.state_factors.wave_seconds_remaining - committed_seconds)
-			/ continuation_horizon_seconds
-		),
-		0.0,
-		1.0
-	)
-	var continuation_capital_exposure: float = max(
-		clamp(float(outcome.get("terminal_collision_risk", 0.0)), 0.0, 1.0),
-		(
-			committed_continuation_ratio
-			* clamp(
-				float(outcome.get("expected_health_loss", 0.0)) / immediate_survival_buffer,
-				0.0,
-				1.0
-			)
-		)
-	)
-	scored_outcome.committed_run_continuation_value_at_risk = (
-		continuation_capital_exposure
+	scored_outcome.expected_run_continuation_value_loss = (
+		terminal_probability
 		* context.state_factors.run_continuation_value.total_value
 	)
 	var field_utility_breakdown := {}

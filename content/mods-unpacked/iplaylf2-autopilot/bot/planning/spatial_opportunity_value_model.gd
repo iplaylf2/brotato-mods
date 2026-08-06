@@ -82,6 +82,12 @@ func _evaluate_point(
 	var deadline_reach_distance: float = _prepared_geometry.command_speed * seconds_until_wave_end
 	for entry in _prepared_pickups:
 		var pickup: Dictionary = entry.pickup
+		var stationary_collection: Dictionary = _pickup_collection_at(
+			observation, pickup, Vector2.ZERO, forecast_seconds
+		)
+		var candidate_collection: Dictionary = _pickup_collection_at(
+			observation, pickup, player_displacement, forecast_seconds
+		)
 		var stationary_gap: float = _pickup_collection_geometry_model.collection_gap_at(
 			pickup, Vector2.ZERO, forecast_seconds, _pickup_collection_radius(observation)
 		)
@@ -94,14 +100,30 @@ func _evaluate_point(
 		var candidate_accessibility := _deadline_accessibility(
 			candidate_gap, deadline_reach_distance, _prepared_geometry.opportunity_reach_distance
 		)
+		if not stationary_collection.empty():
+			stationary_accessibility = 1.0
+		if not candidate_collection.empty():
+			candidate_accessibility = 1.0
 		var contribution: float = entry.value * (candidate_accessibility - stationary_accessibility)
 		var event_name := _pickup_event_name(pickup)
 		if not event_name.empty():
-			var stationary_rule_value := _pickup_rule_event_value(
-				observation, context, pickup, Vector2.ZERO, forecast_seconds
+			var stationary_rule_value := (
+				_pickup_rule_collection_value(
+					observation, context, event_name, stationary_collection
+				)
+				if not stationary_collection.empty()
+				else _pickup_rule_event_value(
+					observation, context, pickup, Vector2.ZERO, forecast_seconds
+				)
 			)
-			var candidate_rule_value := _pickup_rule_event_value(
-				observation, context, pickup, player_displacement, forecast_seconds
+			var candidate_rule_value := (
+				_pickup_rule_collection_value(
+					observation, context, event_name, candidate_collection
+				)
+				if not candidate_collection.empty()
+				else _pickup_rule_event_value(
+					observation, context, pickup, player_displacement, forecast_seconds
+				)
 			)
 			result.rule_event_opportunity += (
 				candidate_rule_value * candidate_accessibility
@@ -373,6 +395,30 @@ func _pickup_rule_event_value(
 			"event_weight": pickup.existence_confidence,
 		},
 		context.enemy_completion_value_ledger
+	)
+
+
+func _pickup_collection_at(
+	observation: Dictionary,
+	pickup: Dictionary,
+	player_displacement: Vector2,
+	forecast_seconds: float
+) -> Dictionary:
+	var event: Dictionary = _pickup_collection_geometry_model.first_collection(
+		pickup,
+		[{"time": forecast_seconds, "displacement": player_displacement}],
+		_pickup_collection_radius(observation)
+	)
+	if not event.empty():
+		event.event_weight = clamp(float(pickup.get("existence_confidence", 0.0)), 0.0, 1.0)
+	return event
+
+
+func _pickup_rule_collection_value(
+	observation: Dictionary, context: Dictionary, event_name: String, event: Dictionary
+) -> float:
+	return _rule_event_value_model.realized_value(
+		observation, event_name, event, context.enemy_completion_value_ledger
 	)
 
 

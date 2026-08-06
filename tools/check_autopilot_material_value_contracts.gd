@@ -12,6 +12,8 @@ func run(fixtures: Reference) -> bool:
 	_fixtures = fixtures
 	_check_confirmed_material_quantity_pricing()
 	_check_material_pickup_multiplier_quantity()
+	_check_remembered_consumable_collection()
+	_check_crossed_pickup_opportunity()
 	_check_recovery_supply_pricing()
 	return not _failed
 
@@ -35,9 +37,10 @@ func _check_material_pickup_multiplier_quantity() -> void:
 		"kind": "material",
 		"relative_position": Vector2(10.0, 0.0),
 		"material_quantity": 8.0,
+		"existence_confidence": 0.5,
 	}
 	var observation: Dictionary = _fixtures.planning_observation([])
-	observation.visible_world.materials = [material]
+	observation.remembered_entities = [material]
 	observation.player_state.effect_rules = [
 		{
 			"event": "material_pickup",
@@ -57,17 +60,24 @@ func _check_material_pickup_multiplier_quantity() -> void:
 		"samples": [{"time": 0.1, "displacement": Vector2.ZERO}],
 	}
 	var outcome := {
+		"pickup_events":
+		load(PLANNING_PATH + "pickups/pickup_collection_projector.gd").new().project(
+			observation, action.samples
+		),
 		"expected_recovery": 0.0,
 		"expected_recovery_events": 0.0,
 		"expected_critical_kill_weight": 0.0,
-		"material_acquisition_value": 8.0,
+		"material_acquisition_value": 4.0,
 	}
 	predictor.accumulate_outcome(
 		observation, action, outcome, {"enemy_completion_value_ledger": {}}
 	)
 	_expect(
-		is_equal_approx(outcome.material_acquisition_value, 12.0),
-		"pickup multipliers must scale the confirmed quantity rather than the node count"
+		is_equal_approx(outcome.material_acquisition_value, 6.0),
+		(
+			"pickup multipliers must scale remembered material quantity and current "
+			+ "existence confidence rather than the node count"
+		)
 	)
 
 
@@ -125,6 +135,74 @@ func _check_recovery_supply_pricing() -> void:
 			)
 		),
 		"a tree that creates reachable healing supply must retain inventory value"
+	)
+
+
+func _check_remembered_consumable_collection() -> void:
+	var projector: Reference = load(PLANNING_PATH + "pickups/pickup_collection_projector.gd").new()
+	var predictor: Reference = load(PLANNING_PATH + "player_rule_outcome_predictor.gd").new()
+	var observation: Dictionary = _fixtures.planning_observation([])
+	observation.player_state.health = {"current": 5.0, "maximum": 20.0, "ratio": 0.25}
+	observation.remembered_entities = [
+		{
+			"kind": "consumable",
+			"relative_position": Vector2(60.0, 0.0),
+			"existence_confidence": 0.5,
+			"pickup_profile": {"base_recovery": 3.0, "traits": ["fruit"]},
+		}
+	]
+	var action := {
+		"forecast_seconds": 1.0,
+		"samples": [{"time": 1.0, "displacement": Vector2(100.0, 0.0)}],
+	}
+	var outcome := {
+		"pickup_events": projector.project(observation, action.samples),
+		"expected_recovery": 0.0,
+		"expected_recovery_events": 0.0,
+		"expected_critical_kill_weight": 0.0,
+		"consumed_consumable_recovery_supply": 0.0,
+		"wasted_consumable_recovery": 0.0,
+	}
+	predictor.accumulate_outcome(
+		observation, action, outcome, {"enemy_completion_value_ledger": {}}
+	)
+	_expect(
+		(
+			is_equal_approx(outcome.expected_recovery, 1.5)
+			and is_equal_approx(outcome.consumed_consumable_recovery_supply, 1.5)
+		),
+		(
+			"an off-screen remembered consumable crossed by the action path must enter "
+			+ "recovery and supply ledgers at its existence confidence"
+		)
+	)
+
+
+func _check_crossed_pickup_opportunity() -> void:
+	var spatial: Reference = load(PLANNING_PATH + "spatial_opportunity_value_model.gd").new()
+	var observation: Dictionary = _fixtures.planning_observation([])
+	observation.remembered_entities = [
+		{
+			"kind": "material",
+			"relative_position": Vector2(60.0, 0.0),
+			"existence_confidence": 1.0,
+			"material_quantity": 1.0,
+		}
+	]
+	var context := {
+		"state_factors": {"health_inventory_value": {}},
+		"enemy_completion_value_ledger": {},
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
+	}
+	var crossed_value: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(100.0, 0.0), 1.0
+	)
+	_expect(
+		crossed_value.material_opportunity > 0.0,
+		(
+			"a navigation path must retain an absorbing pickup reward after crossing "
+			+ "the collection circle instead of losing it after overshoot"
+		)
 	)
 
 

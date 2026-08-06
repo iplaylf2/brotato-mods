@@ -15,12 +15,6 @@ const PlayerRuleProjector := preload(
 const StatOpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/stat_opportunity_pricing_model.gd"
 )
-const PickupCollectionGeometryModel := preload(
-	(
-		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/pickups/"
-		+ "pickup_collection_geometry_model.gd"
-	)
-)
 const RuleEventValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/" + "rule_event_value_model.gd"
 )
@@ -28,7 +22,6 @@ var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 var _rule_projector: Reference = PlayerRuleProjector.new()
 var _stat_opportunity_pricing_model: Reference = StatOpportunityPricingModel.new()
-var _pickup_collection_geometry_model: Reference = PickupCollectionGeometryModel.new()
 var _rule_event_value_model: Reference = RuleEventValueModel.new()
 
 
@@ -49,12 +42,9 @@ func accumulate_outcome(
 	)
 	if outcome.expected_recovery <= 0.0:
 		outcome.expected_recovery_events = 0.0
-	var material_events := _pickup_events(
-		observation.visible_world.materials, action.samples, observation.player_state.pickup
-	)
-	var consumable_events := _pickup_events(
-		observation.visible_world.consumables, action.samples, observation.player_state.pickup
-	)
+	var pickup_events: Dictionary = outcome.pickup_events
+	var material_events: Array = pickup_events.material
+	var consumable_events: Array = pickup_events.consumable
 	for event in material_events:
 		var recovery_before: float = outcome.expected_recovery
 		_apply_event_rules(observation, "material_pickup", event, outcome, planning_context)
@@ -124,7 +114,10 @@ func _apply_consumable_event(
 ) -> void:
 	var profile: Dictionary = event.entity.get("pickup_profile", {})
 	var recovery_before: float = outcome.expected_recovery
-	outcome.expected_recovery += profile.get("base_recovery", 0.0)
+	outcome.expected_recovery += (
+		profile.get("base_recovery", 0.0)
+		* event.get("event_weight", 1.0)
+	)
 	_apply_event_rules(observation, "consumable_pickup", event, outcome, planning_context)
 	outcome.expected_recovery = _rule_projector.project_recovery(
 		observation.player_state.effect_rules, "healing", outcome.expected_recovery
@@ -141,7 +134,7 @@ func _apply_consumable_event(
 	var expected_recovery := max(0.0, outcome.expected_recovery - recovery_before)
 	if expected_recovery > 0.0:
 		var healing_event: Dictionary = event.duplicate(true)
-		healing_event.event_weight = 1.0
+		healing_event.event_weight = event.get("event_weight", 1.0)
 		_apply_event_rules(observation, "healing", healing_event, outcome, planning_context)
 
 
@@ -228,17 +221,6 @@ func _apply_consequence(
 					* max(0.0, consequence.get("value", 1.0) - 1.0)
 					* expected_occurrences
 				)
-
-
-func _pickup_events(pickups: Array, samples: Array, pickup_state: Dictionary) -> Array:
-	var result := []
-	for pickup in pickups:
-		var event: Dictionary = _pickup_collection_geometry_model.first_collection(
-			pickup, samples, pickup_state.collection_radius
-		)
-		if not event.empty():
-			result.push_back(event)
-	return result
 
 
 func _first_incoming_hit_event(observation: Dictionary, samples: Array) -> Dictionary:

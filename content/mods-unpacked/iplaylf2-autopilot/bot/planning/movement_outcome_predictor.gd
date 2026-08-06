@@ -33,10 +33,10 @@ const OpportunityPricingModel := preload(
 const CollisionHealthImpactModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/collision_health_impact_model.gd"
 )
-const PickupCollectionGeometryModel := preload(
+const PickupCollectionProjector := preload(
 	(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/pickups/"
-		+ "pickup_collection_geometry_model.gd"
+		+ "pickup_collection_projector.gd"
 	)
 )
 
@@ -49,7 +49,7 @@ var _rule_projector: Reference = PlayerRuleProjector.new()
 var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
-var _pickup_collection_geometry_model: Reference = PickupCollectionGeometryModel.new()
+var _pickup_collection_projector: Reference = PickupCollectionProjector.new()
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
@@ -72,6 +72,7 @@ func predict_base(
 	observation: Dictionary, action: Dictionary, planning_context: Dictionary
 ) -> Dictionary:
 	var outcome := {
+		"pickup_events": _pickup_collection_projector.project(observation, action.samples),
 		"forecast_seconds": action.forecast_seconds,
 		"material_acquisition_value": 0.0,
 		"wasted_consumable_recovery": 0.0,
@@ -221,7 +222,9 @@ func _predict_action_outcomes(
 ) -> void:
 	var samples: Array = action.samples
 	assert(not samples.empty())
-	outcome.material_acquisition_value = _material_acquisition_value(observation, samples)
+	outcome.material_acquisition_value = _material_acquisition_value(
+		observation, outcome.pickup_events.material
+	)
 
 	if action.movement == Vector2.ZERO:
 		outcome.standing_seconds = action.forecast_seconds
@@ -229,14 +232,13 @@ func _predict_action_outcomes(
 		outcome.moving_seconds = action.forecast_seconds
 
 
-func _material_acquisition_value(observation: Dictionary, samples: Array) -> float:
+func _material_acquisition_value(observation: Dictionary, events: Array) -> float:
 	var value := 0.0
-	for material in observation.visible_world.materials:
-		var collection: Dictionary = _pickup_collection_geometry_model.first_collection(
-			material, samples, observation.player_state.pickup.collection_radius
+	for event in events:
+		value += (
+			_opportunity_pricing_model.material_collection_value(observation, event.entity)
+			* event.event_weight
 		)
-		if not collection.empty():
-			value += _opportunity_pricing_model.material_collection_value(observation, material)
 	return value
 
 

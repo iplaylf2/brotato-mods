@@ -268,6 +268,7 @@ func _summarize_outcome(outcome: Dictionary) -> Dictionary:
 	# logs would turn forecast resolution into avoidable serialization overhead.
 	summary.erase("contact_opportunities")
 	summary.erase("committed_contact_opportunities")
+	summary.erase("pickup_events")
 	return summary
 
 

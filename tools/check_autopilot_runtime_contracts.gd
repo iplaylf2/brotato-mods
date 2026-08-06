@@ -790,11 +790,11 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 			"forecast_seconds": 0.7,
 			"forecast_expected_health_loss": 0.0,
 			"expected_health_loss": 5.0,
-			"terminal_collision_risk": 0.0,
+			"terminal_collision_risk": 0.25,
 		},
 		{
 			"control_interval_seconds": 0.1,
-			"objective_weights": {"survival": {"committed_run_continuation_value_at_risk": -1.0}},
+			"objective_weights": {"survival": {"expected_run_continuation_value_loss": -1.0}},
 			"state_factors":
 			{
 				"wave_seconds_remaining": 0.8,
@@ -810,12 +810,38 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 	)
 	_expect(
 		(
-			is_equal_approx(evaluation.score, -7.0)
+			is_equal_approx(evaluation.score, -10.0)
 			and is_equal_approx(
-				evaluation.field_utility_breakdown.committed_run_continuation_value_at_risk, -7.0
+				evaluation.field_utility_breakdown.expected_run_continuation_value_loss, -10.0
 			)
 		),
-		"committed buffer erosion must use the committed prefix's remaining horizon"
+		"run capital must be charged exactly once by committed terminal probability"
+	)
+	var survivable_evaluation: Dictionary = utility_model.evaluate(
+		{
+			"forecast_seconds": 0.7,
+			"forecast_expected_health_loss": 0.0,
+			"expected_health_loss": 5.0,
+			"terminal_collision_risk": 0.0,
+		},
+		{
+			"objective_weights": {"survival": {"expected_run_continuation_value_loss": -1.0}},
+			"state_factors":
+			{
+				"health_inventory_value":
+				{
+					"immediate_survival_buffer": 20.0,
+					"terminal_health_loss_unit_value": 1.0,
+				},
+				"run_continuation_value": continuation_value,
+				"wave_seconds_remaining": 0.8,
+				"continuation_horizon_seconds": 1.0,
+			},
+		}
+	)
+	_expect(
+		is_equal_approx(survivable_evaluation.score, 0.0),
+		"survivable buffer erosion must not masquerade as a second death probability"
 	)
 
 

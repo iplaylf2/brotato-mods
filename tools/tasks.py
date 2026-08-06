@@ -32,6 +32,9 @@ AUTOPILOT_DEATH_REWARD_CHECKS = (
 AUTOPILOT_MATERIAL_VALUE_CHECKS = (
     REPOSITORY / "tools" / "check_autopilot_material_value_contracts.gd"
 )
+AUTOPILOT_OBSERVATION_CHECKS = (
+    REPOSITORY / "tools" / "check_autopilot_observation_contracts.gd"
+)
 AUTOPILOT_ENEMY_INTERACTION_CHECKS = (
     REPOSITORY / "tools" / "check_autopilot_enemy_interaction_contracts.gd"
 )
@@ -304,6 +307,7 @@ def lint_portable() -> None:
         str(AUTOPILOT_RUNTIME_CHECKS),
         str(AUTOPILOT_DEATH_REWARD_CHECKS),
         str(AUTOPILOT_MATERIAL_VALUE_CHECKS),
+        str(AUTOPILOT_OBSERVATION_CHECKS),
         str(AUTOPILOT_ENEMY_INTERACTION_CHECKS),
         str(AUTOPILOT_COLLISION_HEALTH_CHECKS),
         str(AUTOPILOT_MODEL_FIXTURES),
@@ -321,6 +325,7 @@ def lint_portable() -> None:
         str(AUTOPILOT_RUNTIME_CHECKS),
         str(AUTOPILOT_DEATH_REWARD_CHECKS),
         str(AUTOPILOT_MATERIAL_VALUE_CHECKS),
+        str(AUTOPILOT_OBSERVATION_CHECKS),
         str(AUTOPILOT_ENEMY_INTERACTION_CHECKS),
         str(AUTOPILOT_COLLISION_HEALTH_CHECKS),
         str(AUTOPILOT_MODEL_FIXTURES),
@@ -401,6 +406,7 @@ def format_sources() -> None:
         str(AUTOPILOT_RUNTIME_CHECKS),
         str(AUTOPILOT_DEATH_REWARD_CHECKS),
         str(AUTOPILOT_MATERIAL_VALUE_CHECKS),
+        str(AUTOPILOT_OBSERVATION_CHECKS),
         str(AUTOPILOT_ENEMY_INTERACTION_CHECKS),
         str(AUTOPILOT_COLLISION_HEALTH_CHECKS),
         str(AUTOPILOT_MODEL_FIXTURES),

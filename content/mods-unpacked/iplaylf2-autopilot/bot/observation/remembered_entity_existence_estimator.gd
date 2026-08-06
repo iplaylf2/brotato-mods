@@ -4,7 +4,7 @@ extends Reference
 # visibility evidence. It owns teammate reachability memory; it does not store
 # entities or inspect hidden scene state.
 
-const NEARBY_PICKUP_HAZARD_PER_SECOND := 1.5
+const TEAMMATE_PICKUP_HAZARD_PER_SECOND := 1.5
 const OBSERVED_MOTION_SECONDS := 1.0
 const PICKUP_INFLUENCE_DISTANCE := 300.0
 const VisibilityCoverageModel := preload(
@@ -51,9 +51,12 @@ func estimate(
 	var own_distance := entity_position.length()
 	if own_distance <= player_pickup.collection_radius:
 		return _confirmed_absence()
+	# The local player is not an uncertain competing collector. Entering their
+	# attraction radius neither removes the pickup nor proves when collection will
+	# finish: vanilla may still be resolving drop push-back and monitorability, and
+	# an attracted pickup remains a deterministic future observation. Keep the
+	# remembered entity certain until collection geometry proves absence.
 	var hazard_rate := 0.0
-	if own_distance <= player_pickup.attraction_radius:
-		hazard_rate += NEARBY_PICKUP_HAZARD_PER_SECOND
 	for player_index in party_state.living_teammate_player_indices:
 		if not _teammate_observations.has(player_index):
 			continue
@@ -80,7 +83,7 @@ func estimate(
 			attraction_radius / max(1.0, max(attraction_radius, uncertainty_radius)), 2.0
 		)
 		hazard_rate += (
-			NEARBY_PICKUP_HAZARD_PER_SECOND
+			TEAMMATE_PICKUP_HAZARD_PER_SECOND
 			* exp(-gap / PICKUP_INFLUENCE_DISTANCE)
 			* location_likelihood
 		)
