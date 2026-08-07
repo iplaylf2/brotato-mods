@@ -14,8 +14,9 @@ Autopilot 是一个实验性 Brotato mod。它在玩家权限边界内评估环�
 
 ## 安装与启用
 
-Autopilot 依赖 [Mod Options](https://steamcommunity.com/sharedfiles/filedetails/?id=2944608034)。安装依赖后，
-在游戏中打开 `设置 → Mods → Autopilot`：
+将 Autopilot 发行 ZIP 直接放入 Brotato 安装目录的 `mods/`，无需解压。Autopilot 依赖
+[Mod Options](https://steamcommunity.com/sharedfiles/filedetails/?id=2944608034)；安装并启用两者后，在游戏中打开
+`设置 → Mods → Autopilot`：
 
 - **Enable Autopilot** 允许 Autopilot 控制战斗移动；
 - **Record Battle Samples** 写入本地战斗样本。它与控制开关相互独立；只开启采样时，文件记录人工移动，

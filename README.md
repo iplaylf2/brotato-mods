@@ -18,8 +18,7 @@ mod，目录名必须与 `manifest.json` 中的 `{namespace}-{name}` 一致，�
 
 ## Mods
 
-- [Autopilot](content/mods-unpacked/iplaylf2-autopilot/README.md) — 根据玩家可合法获得的信息规划并控制战斗
-  移动；其 README 统一提供安装、目标环境与维护文档入口。
+- [Autopilot](content/mods-unpacked/iplaylf2-autopilot/README.md) — 根据玩家可合法获得的信息规划并控制战斗移动
 
 ## 开发环境
 
@@ -38,12 +37,11 @@ Brotato 1.1.15.4 基于 Godot 3.7.dev 构建。编辑恢复工程、导入自定
 
 ### 本地配置
 
-仓库不规定本地工具、恢复工程和构建产物的目录布局。将 `.env.example` 复制为 Git 已忽略的 `.env`，
-再按任务设置变量：`build` 需要 `BROTATO_MOD_BUILD_DIR`；完整 `lint` 需要 `GODOT_EXECUTABLE` 和
-`BROTATO_PROJECT`。任务会读取 `.env`，但不会覆盖进程环境中已有的同名变量。相对路径以仓库根目录
-为基准解析。
+完整 `lint` 通过 `GODOT_EXECUTABLE` 定位 Godot 3.7.dev 可执行文件，通过
+`BROTATO_PROJECT` 定位恢复工程。可将 `.env.example` 复制为 `.env` 后填写，也可在运行任务前
+直接设置同名环境变量。`.env` 不会覆盖已有的进程环境；其中的相对路径以仓库根目录为基准。
 
-### 编辑与打包
+### 编辑 Mod
 
 将本仓库的 mod 目录链接或复制到恢复工程中的对应位置：
 
@@ -53,18 +51,20 @@ content/mods-unpacked/iplaylf2-autopilot/
 ```
 
 然后用与目标游戏一致的 Godot 3.7.dev 打开恢复工程，并使用 Mod Tool 维护 manifest。若 mod 包含自定义
-图片、字体等导入资源，保留资源旁的 `.import` 元数据，并将元数据引用的产物从恢复工程的 `.import/`
-复制到仓库的 `content/.import/`。构建任务会在引用的导入产物缺失时失败。
+图片、字体等导入资源，保留资源旁的 `.import` 元数据，并将其引用的产物从恢复工程的 `.import/`
+复制到仓库的 `content/.import/`。
 
-设置 `BROTATO_MOD_BUILD_DIR` 后，从仓库根目录构建指定 mod：
+### 构建发行包
+
+从仓库根目录构建指定 mod：
 
 ```bash
 uv run --locked tools/tasks.py build iplaylf2-autopilot
 ```
 
-产物位于 `$BROTATO_MOD_BUILD_DIR/<namespace>-<name>.zip`。构建任务只收集指定 mod 及其 `.import`
-元数据引用的导入产物；新 ZIP 完成后才会替换同名旧文件。输出目录必须位于 `content/` 之外，避免构建
-产物混入 mod 源码。未设置 `BROTATO_MOD_BUILD_DIR` 时任务会直接报错。
+产物位于 `dist/<namespace>-<name>.zip`。ZIP 内保留 Mod Loader 所需的
+`mods-unpacked/<namespace>-<name>/` 路径，可直接作为发行包。构建任务只收集指定 mod 及其
+`.import` 元数据引用的导入产物；任何引用的导入产物缺失时，构建会失败并报出对应元数据。
 
 ## 检查与格式化
 
@@ -91,8 +91,7 @@ uv run --locked tools/tasks.py lint
 Steam API，恢复工程初始化时可能输出 Steam 单例和无窗口环境的原游戏错误；验证器会另行报告
 无法编译的 mod 脚本，并以非零状态退出。
 
-如果不使用 `.env`，也可以在 PowerShell、cmd 或 POSIX shell 的进程环境中设置相应变量。这些任务
-不依赖 `sh` 或 `make`。自动格式化受管理的源码：
+任务入口可在 PowerShell、cmd 或 POSIX shell 中使用，不依赖 `sh` 或 `make`。自动格式化受管理的源码：
 
 ```bash
 uv run --locked tools/tasks.py format

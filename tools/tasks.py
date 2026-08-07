@@ -17,6 +17,7 @@ load_dotenv(REPOSITORY / ".env")
 CONTENT = REPOSITORY / "content"
 MODS = CONTENT / "mods-unpacked"
 IMPORTED_RESOURCES = CONTENT / ".import"
+DIST = REPOSITORY / "dist"
 THIS_FILE = Path(__file__).relative_to(REPOSITORY)
 PKG_RESOURCES_WARNING = "ignore:pkg_resources is deprecated as an API:UserWarning"
 GODOT_VALIDATOR = REPOSITORY / "tools" / "validate_godot_scripts.gd"
@@ -188,24 +189,6 @@ def resolve_godot() -> str:
     return str(executable)
 
 
-def resolve_build_directory() -> Path:
-    configured_directory = os.environ.get("BROTATO_MOD_BUILD_DIR")
-    if not configured_directory:
-        raise SystemExit(
-            "error: BROTATO_MOD_BUILD_DIR must point to the ZIP output directory"
-        )
-    build_directory = resolve_configured_path(configured_directory)
-    if build_directory == CONTENT or CONTENT in build_directory.parents:
-        raise SystemExit(
-            "error: BROTATO_MOD_BUILD_DIR must be outside the content directory"
-        )
-    if build_directory.exists() and not build_directory.is_dir():
-        raise SystemExit(
-            f"error: BROTATO_MOD_BUILD_DIR is not a directory: {build_directory}"
-        )
-    return build_directory
-
-
 def validate_godot_version(executable: str) -> None:
     result = subprocess.run(
         (executable, "--version"),
@@ -374,13 +357,12 @@ def build_archive(mod_id: str) -> None:
         raise SystemExit(f"error: mod not found: {mod_id!r}")
 
     validate_manifest(mod_directory)
-    build_directory = resolve_build_directory()
-    build_directory.mkdir(parents=True, exist_ok=True)
-    archive = build_directory / f"{mod_directory.name}.zip"
+    DIST.mkdir(parents=True, exist_ok=True)
+    archive = DIST / f"{mod_directory.name}.zip"
     files = {path for path in mod_directory.rglob("*") if path.is_file()}
     files.update(collect_imported_resources(mod_directory))
     with tempfile.TemporaryDirectory(
-        prefix=f".{mod_directory.name}-", dir=build_directory
+        prefix=f".{mod_directory.name}-", dir=DIST
     ) as temporary_directory:
         temporary_archive = Path(temporary_directory) / archive.name
         with zipfile.ZipFile(
@@ -425,10 +407,8 @@ def main() -> None:
 
     build_parser = subparsers.add_parser(
         "build",
-        help="build one mod ZIP",
-        description=(
-            "Build one mod ZIP in the directory configured by BROTATO_MOD_BUILD_DIR."
-        ),
+        help="build a distributable mod ZIP",
+        description="Build a distributable mod ZIP under dist/.",
     )
     build_parser.add_argument(
         "mod_id",
