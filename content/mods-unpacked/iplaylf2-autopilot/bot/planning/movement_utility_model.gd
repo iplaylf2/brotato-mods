@@ -188,9 +188,22 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	var terminal_probability: float = clamp(
 		float(outcome.get("forecast_terminal_health_risk", 0.0)), 0.0, 1.0
 	)
+	# Equal terminal probabilities must retain temporal resolution: an earlier
+	# terminal transition leaves fewer feedback cycles before the modeled contact.
+	# Preserve the full loss of run capital and derive urgency only from the control
+	# interval relative to the conditional terminal time.
+	var terminal_time = outcome.get("forecast_terminal_health_time_seconds", null)
+	var terminal_urgency_multiplier := 1.0
+	if terminal_probability > 0.0 and terminal_time != null:
+		terminal_urgency_multiplier += (
+			max(0.0, context.get("tactical_control_interval_seconds", 0.0))
+			/ max(0.001, float(terminal_time))
+		)
+	scored_outcome.terminal_risk_urgency_multiplier = terminal_urgency_multiplier
 	scored_outcome.expected_run_continuation_value_loss = (
 		terminal_probability
 		* context.state_factors.run_continuation_value.total_value
+		* terminal_urgency_multiplier
 	)
 	var field_utility_breakdown := {}
 	var objective_utility_breakdown := {}

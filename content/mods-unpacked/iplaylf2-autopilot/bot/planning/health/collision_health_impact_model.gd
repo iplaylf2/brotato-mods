@@ -102,11 +102,15 @@ func _evaluate_aggregate(
 		"expected_contact_resolution_count": expected_contact_resolution_count,
 		"expected_health_loss": expected_health_loss,
 		"terminal_collision_risk":
+		# Aggregate reach evidence has no event chronology and therefore cannot
 		collision_risk * dodge_failure_probability if has_terminal_hit_evidence else 0.0,
+		# claim a terminal time. Timestamped swept contacts supply it below.
+		"expected_terminal_time_seconds": null,
 	}
 
 
 func _merge_stronger_impact(left: Dictionary, right: Dictionary) -> Dictionary:
+	var terminal_time = _stronger_terminal_time(left, right)
 	return {
 		"maximum_armor_adjusted_hit_damage":
 		max(left.maximum_armor_adjusted_hit_damage, right.maximum_armor_adjusted_hit_damage),
@@ -114,7 +118,24 @@ func _merge_stronger_impact(left: Dictionary, right: Dictionary) -> Dictionary:
 		max(left.expected_contact_resolution_count, right.expected_contact_resolution_count),
 		"expected_health_loss": max(left.expected_health_loss, right.expected_health_loss),
 		"terminal_collision_risk": max(left.terminal_collision_risk, right.terminal_collision_risk),
+		"expected_terminal_time_seconds": terminal_time,
 	}
+
+
+func _stronger_terminal_time(left: Dictionary, right: Dictionary):
+	var left_risk: float = left.terminal_collision_risk
+	var right_risk: float = right.terminal_collision_risk
+	if left_risk > right_risk:
+		return left.expected_terminal_time_seconds
+	if right_risk > left_risk:
+		return right.expected_terminal_time_seconds
+	if left_risk <= 0.0:
+		return null
+	var left_time = left.expected_terminal_time_seconds
+	var right_time = right.expected_terminal_time_seconds
+	if left_time == null or right_time == null:
+		return null
+	return min(float(left_time), float(right_time))
 
 
 func _armor_adjusted_damage(raw_damage: float, armor_multiplier: float) -> float:

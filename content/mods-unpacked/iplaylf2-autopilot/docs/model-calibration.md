@@ -1,8 +1,9 @@
 # 战斗采样与模型校准
 
 本文面向 Autopilot 维护者，规定 human 动作样本与 bot 决策样本的记录结构、参数证据等级和复盘方法。
-观察与规划字段的语义仍由 [架构文档](architecture.md) 定义，允许持久化的信息仍受
-[玩家权限边界](fair-play.md) 约束；本文不重复定义算法或扩大观察范围。
+观察与规划字段的语义由 [架构文档](architecture.md) 定义，允许持久化的信息受
+[玩家权限边界](fair-play.md) 约束。本文只保留校准所需的派生关系、证据要求和复盘方法，不另设字段语义、
+观察范围或行为规则。
 
 按任务选择阅读入口：
 
@@ -97,7 +98,8 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 - 近端动作窗的环境暴露、拾取、规则和武器结果，以及默认局部窗内只延续几何扫掠的接触结果，都是
   “持续采用该候选动作”时的条件预测；碰撞由
   `forecast_expected_health_loss` 形成条件生命成本，完整状态分布的 `forecast_terminal_health_risk` 形成
-  同窗对局延续价值损失。本次提交期子集以 `committed_expected_health_loss` 和
+  同窗对局延续价值损失；`forecast_terminal_health_time_seconds` 使相同终止概率下较早失去重规划机会的
+  路径付出更高的连续紧迫度。本次提交期子集以 `committed_expected_health_loss` 和
   `committed_terminal_health_risk` 保留为执行资格诊断；控制器仍只提交一个控制期，
   动作窗外的机会由导航轨迹价值表达；
 - 不可见实体的真实位置仍然未知。原版持续血条公开的存活与当前生命属于直接观察；首次看到的必掉产物
@@ -260,7 +262,9 @@ TTC cutoff                    = Tnav_effective
 清场前按到达时间、存在置信度和目标完成份额折算的生命补充为 `S`、同期被动流失为 `D`、材料等价风险
 尺度为 `K`。碰撞在 `Tcontact` 内结算，其他生命变化在 `Taction` 内结算；合并后的预期生命损失为 `Lf`，
 统一以 `Tcontact` 作为生命账本的截止时刻 `Tf`。当前持有材料与已有道具、武器按公共价格代理
-形成的对局延续价值为 `C`，预测窗内各已建模生命损失来源汇总后的终止概率为 `pf`，则：
+形成的对局延续价值为 `C`，预测窗内各已建模生命损失来源汇总后的终止概率为 `pf`。设战术控制期为
+`Δtc`；若 `pf > 0` 且带时刻事件还给出条件预计首次终止时刻 `τf`，则用数值下限 `ε = 0.001 秒`
+防止除零；无该时序证据时，紧迫度因子 `u` 为 `1`：
 
 ```text
 immediate_survival_buffer       = B  = max(1, H - R)
@@ -271,13 +275,18 @@ survivable_action_loss          = Ls = min(Lf, max(0, B - 1))
 continuation_horizon_ratio(t)    = q(t) = clamp((本波剩余时间 - t) / 最大导航时域, 0, 1)
 survivable_loss_value                = q(Tf) × integral[x=0..Ls] K / max(1, B - x) dx
 terminal_loss_value                  = max(0, Lf - Ls) × terminal_health_loss_unit_value
-expected_run_continuation_value_loss = pf × C
+terminal_risk_urgency_multiplier     = u
+u                                    = 1 + Δtc / max(ε, τf)  # 有时序证据
+u                                    = 1                         # 无时序证据
+expected_run_continuation_value_loss = pf × C × u
 ```
 
 已观察消耗品按到达后仍可利用的波次比例和存在证据计入 `S`；单人失视消耗品不会仅因时间或进入吸附范围而
 降权，多人失视才可能因已定位队友的拾取可达性使用小于 `1` 的置信度。概率掉落按共享攻击容量约束后的
 目标完成份额与掉落概率计入；被动恢复和生命偷取按剩余可作用时间及各自速率计入。时间既决定具体补充与
-收益能否兑现，也裁剪非致命生命在清场前还能提供多久的延续价值；它不改变耗尽即时缓冲的终止成本。
+收益能否兑现，也裁剪非致命生命在清场前还能提供多久的延续价值。它不改变非致命生命损失的库存曲线；
+只有条件预计终止时刻才通过 `u` 调制对局延续价值损失。该因子随 `τf` 增大而单调减小，只保留饱和概率遗失的时间分辨率，
+不指定避险方向。
 
 `S` 是整波补给总量，不证明其中任何一份会先于当前局部威胁兑现，因此只改变波次尺度的延续库存与补给
 机会。生命结算预测窗中的损失按即时生存缓冲 `B` 的损失曲线和窗末 `q(Tf)` 计价；提交期终止风险只决定
@@ -528,7 +537,8 @@ expected_run_continuation_value_loss = pf × C
 
 #### 生命风险账本
 
-先同时检查 `forecast_terminal_collision_risk`、`forecast_expected_health_loss`、提交期诊断
+先同时检查 `forecast_terminal_collision_risk`、`forecast_terminal_health_time_seconds`、
+`forecast_expected_health_loss`、提交期诊断
 `committed_terminal_collision_risk`、`committed_expected_health_loss`，以及
 `field_utility_breakdown.forecast_health_inventory_loss_value` 与
 `field_utility_breakdown.expected_run_continuation_value_loss`。联合检查
@@ -539,7 +549,9 @@ expected_run_continuation_value_loss = pf × C
 一起按当前对局延续价值交换。提交期只决定候选能否安全执行到下一次重规划，不能替代组合生命结算窗的
 价值账本。
 位置扫掠已公开接触时刻，因此应核对观察到的当前无敌剩余时间是否正确截去前缀机会，
-且后续受伤无敌时间是否随实际伤害变化。
+且后续受伤无敌时间是否随实际伤害变化。终止概率饱和时还应比较各候选的条件预计首次终止时刻：在终止概率和
+对局延续价值相同时，`τf` 越小，`terminal_risk_urgency_multiplier` 与对局延续价值损失应越大。最终方向仍由完整效用账本决定，
+不把该单调关系升格为硬编码避险优先级。
 尚无逐次时刻的未解析交会证据只能保留无时序聚合解释；不得用无敌计时器按比例缩放该聚合风险，
 也不得将其期望接触量反推为独立命中分布。
 

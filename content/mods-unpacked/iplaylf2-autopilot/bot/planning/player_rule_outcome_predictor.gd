@@ -172,9 +172,15 @@ func _apply_consumable_health_damage(
 		and outcome.forecast_consumable_health_loss >= observation.player_state.health.current
 	):
 		outcome.forecast_terminal_consumable_risk = 1.0
-	outcome.forecast_terminal_health_risk = max(
-		outcome.forecast_terminal_health_risk, outcome.forecast_terminal_consumable_risk
+	var forecast_health_risk: float = outcome.forecast_terminal_health_risk
+	var forecast_consumable_risk: float = outcome.forecast_terminal_consumable_risk
+	outcome.forecast_terminal_health_time_seconds = _stronger_terminal_time(
+		forecast_health_risk,
+		outcome.get("forecast_terminal_health_time_seconds", null),
+		forecast_consumable_risk,
+		event.time
 	)
+	outcome.forecast_terminal_health_risk = max(forecast_health_risk, forecast_consumable_risk)
 	var tactical_control_interval: float = planning_context.get(
 		"tactical_control_interval_seconds", 0.0
 	)
@@ -191,9 +197,29 @@ func _apply_consumable_health_damage(
 		and outcome.committed_consumable_health_loss >= observation.player_state.health.current
 	):
 		outcome.committed_terminal_consumable_risk = 1.0
-	outcome.committed_terminal_health_risk = max(
-		outcome.committed_terminal_health_risk, outcome.committed_terminal_consumable_risk
+	var committed_health_risk: float = outcome.committed_terminal_health_risk
+	var committed_consumable_risk: float = outcome.committed_terminal_consumable_risk
+	outcome.committed_terminal_health_time_seconds = _stronger_terminal_time(
+		committed_health_risk,
+		outcome.get("committed_terminal_health_time_seconds", null),
+		committed_consumable_risk,
+		event.time
 	)
+	outcome.committed_terminal_health_risk = max(committed_health_risk, committed_consumable_risk)
+
+
+func _stronger_terminal_time(
+	current_risk: float, current_time, candidate_risk: float, candidate_time
+):
+	if current_risk > candidate_risk:
+		return current_time
+	if candidate_risk > current_risk:
+		return candidate_time
+	if current_risk <= 0.0:
+		return null
+	if current_time == null or candidate_time == null:
+		return null
+	return min(float(current_time), float(candidate_time))
 
 
 func _apply_event_rules(

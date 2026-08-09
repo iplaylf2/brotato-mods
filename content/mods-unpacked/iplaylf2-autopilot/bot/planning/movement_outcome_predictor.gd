@@ -106,14 +106,18 @@ func predict_base(
 		"hostile_collision_risk": 0.0,
 		"committed_expected_health_loss": 0.0,
 		"committed_terminal_collision_risk": 0.0,
+		"committed_terminal_collision_time_seconds": null,
 		"forecast_expected_health_loss": 0.0,
 		"forecast_terminal_collision_risk": 0.0,
+		"forecast_terminal_collision_time_seconds": null,
 		"forecast_consumable_health_loss": 0.0,
 		"committed_consumable_health_loss": 0.0,
 		"forecast_terminal_consumable_risk": 0.0,
 		"committed_terminal_consumable_risk": 0.0,
 		"forecast_terminal_health_risk": 0.0,
 		"committed_terminal_health_risk": 0.0,
+		"forecast_terminal_health_time_seconds": null,
+		"committed_terminal_health_time_seconds": null,
 	}
 	var battlefield_outcome: Dictionary = _battlefield_influence_model.predict(
 		observation,
@@ -159,6 +163,8 @@ func predict_base(
 	outcome.expected_contact_resolution_count = committed_impact.expected_contact_resolution_count
 	outcome.committed_expected_health_loss = committed_impact.expected_health_loss
 	outcome.committed_terminal_collision_risk = committed_impact.terminal_collision_risk
+	var committed_terminal_time = committed_impact.expected_terminal_time_seconds
+	outcome.committed_terminal_collision_time_seconds = committed_terminal_time
 	var contact_forecast_action: Dictionary = action.duplicate(false)
 	contact_forecast_action.forecast_seconds = outcome.contact_forecast_seconds
 	var forecast_impact: Dictionary = _collision_health_impact_model.evaluate(
@@ -169,6 +175,7 @@ func predict_base(
 	)
 	outcome.forecast_expected_health_loss = forecast_impact.expected_health_loss
 	outcome.forecast_terminal_collision_risk = forecast_impact.terminal_collision_risk
+	outcome.forecast_terminal_collision_time_seconds = forecast_impact.expected_terminal_time_seconds
 	var forecast_resolution_count: float = forecast_impact.expected_contact_resolution_count
 	outcome.forecast_expected_contact_resolution_count = forecast_resolution_count
 	outcome.committed_contact_opportunity_count = outcome.committed_contact_opportunities.size()
@@ -247,6 +254,9 @@ func complete_prediction(
 	var outcome: Dictionary = base_outcome.duplicate(false)
 	outcome.committed_terminal_health_risk = outcome.committed_terminal_collision_risk
 	outcome.forecast_terminal_health_risk = outcome.forecast_terminal_collision_risk
+	var committed_terminal_time = outcome.committed_terminal_collision_time_seconds
+	outcome.committed_terminal_health_time_seconds = committed_terminal_time
+	outcome.forecast_terminal_health_time_seconds = outcome.forecast_terminal_collision_time_seconds
 	_weapon_outcome_forecast_model.accumulate_outcome(
 		observation, action, outcome, planning_context
 	)

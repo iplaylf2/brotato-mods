@@ -53,11 +53,52 @@ func run(fixtures: Reference) -> bool:
 	)
 	_check_additive_collision_damage(fixtures, impact)
 	_check_timestamped_contact_state(fixtures, impact)
+	_check_terminal_timing_utility()
 	_check_actuation_state_projection(fixtures)
 	_check_resolved_projectile_sweep(fixtures)
 	_check_collision_evidence_ownership(fixtures)
 	_check_contact_lookahead(fixtures)
 	return not _failed
+
+
+func _check_terminal_timing_utility() -> void:
+	var utility: Reference = load(PLANNING_PATH + "movement_utility_model.gd").new()
+	var context := {
+		"tactical_control_interval_seconds": 0.1,
+		"objective_weights": {"survival": {"expected_run_continuation_value_loss": -1.0}},
+		"state_factors":
+		{
+			"wave_seconds_remaining": 1.0,
+			"continuation_horizon_seconds": 1.0,
+			"health_inventory_value":
+			{
+				"health_inventory_value_scale": 12.0,
+				"immediate_survival_buffer": 20.0,
+			},
+			"run_continuation_value": {"total_value": 40.0},
+		},
+	}
+	var imminent: Dictionary = utility.evaluate(
+		{
+			"forecast_expected_health_loss": 0.0,
+			"forecast_terminal_health_risk": 0.25,
+			"forecast_terminal_health_time_seconds": 0.2,
+		},
+		context
+	)
+	var delayed_outcome := {
+		"forecast_expected_health_loss": 0.0,
+		"forecast_terminal_health_risk": 0.25,
+		"forecast_terminal_health_time_seconds": 0.4,
+	}
+	var delayed: Dictionary = utility.evaluate(delayed_outcome, context)
+	_expect(
+		is_equal_approx(imminent.score, -15.0) and delayed.score > imminent.score,
+		(
+			"terminal risk must retain full run-capital loss and become more urgent as its "
+			+ "observed contact time approaches the next control cycle"
+		)
+	)
 
 
 func _check_actuation_state_projection(fixtures: Reference) -> void:
@@ -272,8 +313,12 @@ func _check_timestamped_contact_state(fixtures: Reference, impact: Reference) ->
 		(
 			is_equal_approx(lethal_sequence.expected_health_loss, 10.0)
 			and is_equal_approx(lethal_sequence.terminal_collision_risk, 1.0)
+			and is_equal_approx(lethal_sequence.expected_terminal_time_seconds, 0.55)
 		),
-		"timestamped contacts separated by vanilla iframes must propagate cumulative death"
+		(
+			"timestamped contacts separated by vanilla iframes must propagate cumulative "
+			+ "death and its first terminal time"
+		)
 	)
 	observation.physics_frame += 1
 	observation.player_state.runtime_stats.dodge_chance = 0.5
@@ -284,6 +329,7 @@ func _check_timestamped_contact_state(fixtures: Reference, impact: Reference) ->
 		(
 			is_equal_approx(dodged_sequence.expected_health_loss, 5.5)
 			and is_equal_approx(dodged_sequence.terminal_collision_risk, 0.25)
+			and is_equal_approx(dodged_sequence.expected_terminal_time_seconds, 0.55)
 		),
 		"dodge must branch the same timestamped health process instead of scaling a hit count"
 	)
