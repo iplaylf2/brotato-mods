@@ -561,8 +561,33 @@ func _check_weapon_outcome_contracts() -> void:
 		),
 		"enemy completion mass must not exceed the finite enemy contacts that can realize it"
 	)
+	observation.physics_frame += 1
+	observation.player_state.weapons[0].attack_model.rules = [
+		{
+			"event": "enemy_kill",
+			"condition": {"credited_to_weapon": true},
+			"consequences":
+			[
+				{
+					"target": "percent_damage",
+					"operation": "add",
+					"stat_upgrade_equivalents_per_credited_kill": 0.2,
+				}
+			],
+		}
+	]
+	var progression_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(observation, action, progression_outcome, context)
+	_expect(
+		is_equal_approx(progression_outcome.expected_stat_upgrade_equivalents, 0.1),
+		(
+			"weapon-attributed stat growth must use only that weapon's hit-supported "
+			+ "share of target completion"
+		)
+	)
 	observation.player_state.weapons.pop_back()
-	observation.physics_frame = 5
+	observation.player_state.weapons[0].attack_model.rules = []
+	observation.physics_frame = 6
 	low_value_track.relative_position = Vector2(200.0, 0.0)
 	high_value_track.relative_position = Vector2(100.0, 0.0)
 	high_value_track.last_measurement.health = {"current": 5.0, "maximum": 10.0, "ratio": 0.5}
@@ -598,7 +623,7 @@ func _check_weapon_outcome_contracts() -> void:
 		"completion reward must remain attached to the target whose work can finish it"
 	)
 	observation.player_state.weapons[0].attack_model.delivery.paths.hit_capacity = 1.0
-	observation.physics_frame = 7
+	observation.physics_frame = 8
 	high_value_track.relative_position = Vector2(320.0, 0.0)
 	high_value_track.last_measurement.visual_radius = 100.0
 	observation.enemy_tracks = [high_value_track]
@@ -609,7 +634,7 @@ func _check_weapon_outcome_contracts() -> void:
 		is_equal_approx(outside_center_range_outcome.expected_weapon_damage, 0.0),
 		"target visual size must not extend the center-distance automatic targeting range"
 	)
-	observation.physics_frame = 8
+	observation.physics_frame = 9
 	observation.wave_state = {"number": 1, "seconds_remaining": 10.0, "duration_seconds": 10.0}
 	observation.player_state.effective_stats.luck = 0.0
 	low_value_track.relative_position = Vector2(1.0, 0.0)
@@ -638,7 +663,7 @@ func _check_weapon_outcome_contracts() -> void:
 
 	# A distance-dependent death reward belongs to the action-conditioned separation,
 	# not the character identity or a blanket preference for non-zero input.
-	observation.physics_frame = 9
+	observation.physics_frame = 10
 	observation.visible_world.trees = []
 	low_value_track.relative_position = Vector2(150.0, 0.0)
 	low_value_track.last_measurement.health = {"current": 5.0, "maximum": 10.0, "ratio": 0.5}

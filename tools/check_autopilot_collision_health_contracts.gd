@@ -108,6 +108,11 @@ func _check_actuation_state_projection(fixtures: Reference) -> void:
 	observation.localization.map_position = Vector2(500.0, 400.0)
 	observation.localization.observation_cells = []
 	observation.player_state.runtime_stats.invincibility_seconds_remaining = 0.15
+	var attack_model: Dictionary = fixtures.weapon_attack_model()
+	attack_model.timing.remaining_cooldown_seconds = 0.4
+	attack_model.timing.seconds_until_next_attack = 0.7
+	attack_model.timing.seconds_until_attack_phase_complete = 0.3
+	observation.player_state.weapons = [{"slot": 0, "attack_model": attack_model}]
 	observation.visible_world.enemy_projectiles = [
 		{
 			"relative_position": Vector2(100.0, 0.0),
@@ -142,6 +147,15 @@ func _check_actuation_state_projection(fixtures: Reference) -> void:
 			)
 		),
 		"actuation projection must advance wave and invincibility clocks"
+	)
+	var projected_timing: Dictionary = projected.player_state.weapons[0].attack_model.timing
+	_expect(
+		(
+			is_equal_approx(projected_timing.remaining_cooldown_seconds, 0.3)
+			and is_equal_approx(projected_timing.seconds_until_next_attack, 0.6)
+			and is_equal_approx(projected_timing.seconds_until_attack_phase_complete, 0.2)
+		),
+		"actuation projection must advance every revealed weapon timing clock"
 	)
 	_expect(
 		observation.visible_world.enemy_projectiles[0].relative_position == Vector2(100.0, 0.0),

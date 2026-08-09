@@ -44,26 +44,30 @@ func _adapt_timing(
 	# Weapon exposes its current cooldown in 60 Hz ticks. Preserve it together with
 	# the visible attack phase so planning can consume the known vanilla rhythm
 	# without replacing either current fact with a stationary average.
-	var current_cooldown_seconds := max(0.0, float(weapon._current_cooldown) / 60.0)
+	var remaining_cooldown_seconds := max(0.0, float(weapon._current_cooldown) / 60.0)
 	var seconds_until_next_attack := _seconds_until_next_attack(
-		weapon, stats, player_index, current_cooldown_seconds
+		weapon, stats, player_index, remaining_cooldown_seconds
+	)
+	var seconds_until_attack_phase_complete := max(
+		0.0, seconds_until_next_attack - remaining_cooldown_seconds
 	)
 	return {
 		"expected_attack_interval_seconds": expected_attack_interval_seconds,
-		"current_cooldown_seconds": current_cooldown_seconds,
+		"remaining_cooldown_seconds": remaining_cooldown_seconds,
 		"attack_in_progress": weapon._is_shooting,
 		"seconds_until_next_attack": seconds_until_next_attack,
+		"seconds_until_attack_phase_complete": seconds_until_attack_phase_complete,
 		"permitted_while_moving": attacks_allowed_while_moving,
 	}
 
 
 func _seconds_until_next_attack(
-	weapon: Node, stats: Resource, player_index: int, current_cooldown_seconds: float
+	weapon: Node, stats: Resource, player_index: int, remaining_cooldown_seconds: float
 ) -> float:
 	var weapon_id := weapon.get_instance_id()
 	if not weapon._is_shooting:
 		_shooting_started_physics_frame_by_weapon_id.erase(weapon_id)
-		return current_cooldown_seconds
+		return remaining_cooldown_seconds
 	var physics_frame := int(Engine.get_physics_frames())
 	if not _shooting_started_physics_frame_by_weapon_id.has(weapon_id):
 		_shooting_started_physics_frame_by_weapon_id[weapon_id] = physics_frame
@@ -77,7 +81,7 @@ func _seconds_until_next_attack(
 		# distance, so prefer the already revealed attack's actual stable duration.
 		total_animation_seconds = (weapon._shooting_behavior.shooting_data.get_shooting_total_duration())
 	var remaining_animation_seconds := max(0.0, total_animation_seconds - elapsed_seconds)
-	return current_cooldown_seconds + remaining_animation_seconds
+	return remaining_cooldown_seconds + remaining_animation_seconds
 
 
 func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:
@@ -150,7 +154,7 @@ func _adapt_impact(stats: Resource) -> Dictionary:
 func _adapt_rules(weapon: Node, stats: Resource, player_index: int) -> Array:
 	var rules := []
 	_append_critical_delivery_rules(rules, weapon.effects, player_index)
-	_append_hit_result_rules(rules, weapon, stats, player_index)
+	_append_attack_result_rules(rules, weapon, stats, player_index)
 	return rules
 
 
@@ -182,11 +186,13 @@ func _append_add_rule(rules: Array, event: String, target: String, value: float)
 	)
 
 
-func _append_hit_result_rules(
+func _append_attack_result_rules(
 	rules: Array, weapon: Node, stats: Resource, player_index: int
 ) -> void:
 	for effect in weapon.effects:
-		if effect is OneShotOnHitEffect:
+		if effect is GainStatEveryKilledEnemiesEffect:
+			_append_credited_kill_stat_gain_rule(rules, effect)
+		elif effect is OneShotOnHitEffect:
 			_append_damage_rule(
 				rules,
 				clamp(effect.value / 100.0, 0.0, 1.0),
@@ -241,6 +247,33 @@ func _append_hit_result_rules(
 		_damage_amount(projectile_stats.damage * critical_multiplier, 0.0, 0.0),
 		projectile_delivery,
 		false
+	)
+
+
+func _append_credited_kill_stat_gain_rule(rules: Array, effect: Resource) -> void:
+	var credited_kills_per_stat_gain := int(max(1, int(effect.value)))
+	var stat_name: String = _stat_metadata.get_stat_name(effect.stat_hash)
+	if stat_name.empty() or effect.stat_nb == 0:
+		return
+	rules.push_back(
+		{
+			"event": "enemy_kill",
+			"condition": {"credited_to_weapon": true},
+			"consequences":
+			[
+				{
+					"target": stat_name,
+					"operation": "add",
+					"value": effect.stat_nb,
+					"credited_kills_per_stat_gain": credited_kills_per_stat_gain,
+					"stat_upgrade_equivalents_per_credited_kill":
+					(
+						_stat_metadata.upgrade_equivalent_value(stat_name, effect.stat_nb)
+						/ credited_kills_per_stat_gain
+					),
+				}
+			],
+		}
 	)
 
 

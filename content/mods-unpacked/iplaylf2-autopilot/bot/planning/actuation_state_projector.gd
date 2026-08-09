@@ -54,8 +54,13 @@ func _project_player_state(observation: Dictionary, active_movement: Vector2, de
 	)
 	for weapon in player_state.weapons:
 		var timing: Dictionary = weapon.attack_model.timing
-		timing.current_cooldown_seconds = max(0.0, float(timing.current_cooldown_seconds) - delay)
+		timing.remaining_cooldown_seconds = max(
+			0.0, float(timing.remaining_cooldown_seconds) - delay
+		)
 		timing.seconds_until_next_attack = max(0.0, float(timing.seconds_until_next_attack) - delay)
+		timing.seconds_until_attack_phase_complete = max(
+			0.0, float(timing.seconds_until_attack_phase_complete) - delay
+		)
 	var movement: Dictionary = player_state.movement
 	movement.input_vector = active_movement
 	movement.is_moving = active_movement != Vector2.ZERO

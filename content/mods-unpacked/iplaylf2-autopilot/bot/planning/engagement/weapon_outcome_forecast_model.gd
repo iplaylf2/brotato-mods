@@ -9,6 +9,9 @@ extends Reference
 const WeaponAttackCapacityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
 )
+const WeaponAttackScheduleModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_schedule_model.gd"
+)
 const PlayerMovementStateProjector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_movement_state_projector.gd"
 )
@@ -21,10 +24,10 @@ const EngagementTargetProjector := preload(
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
-const WeaponOutcomeConservationModel := preload(
+const WeaponOutcomeSettlementModel := preload(
 	(
 		"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/"
-		+ "weapon_outcome_conservation_model.gd"
+		+ "weapon_outcome_settlement_model.gd"
 	)
 )
 const WeaponPathContactModel := preload(
@@ -46,15 +49,17 @@ const OUTCOME_FIELDS := [
 	"expected_enemy_death_consequence_value",
 	"expected_kill_weight",
 	"expected_critical_kill_weight",
+	"expected_stat_upgrade_equivalents",
 	"expected_tree_completion_value",
 	"expected_lifesteal_recovery",
 ]
 
 var _weapon_attack_capacity_model: Reference = WeaponAttackCapacityModel.new()
+var _weapon_attack_schedule_model: Reference = WeaponAttackScheduleModel.new()
 var _movement_state_projector: Reference = PlayerMovementStateProjector.new()
 var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
-var _weapon_outcome_conservation_model: Reference = WeaponOutcomeConservationModel.new()
+var _weapon_outcome_settlement_model: Reference = WeaponOutcomeSettlementModel.new()
 var _weapon_path_contact_model: Reference = WeaponPathContactModel.new()
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _prepared_physics_frame := -1
@@ -85,7 +90,12 @@ func accumulate_outcome(
 	# Evaluate the retained action path directly. The search allocator bounds the
 	# number of complete action forecasts before this semantic model runs.
 	var weapon_outcome: Dictionary = _estimate_outcome_along_path(
-		observation, displacement, forecast_seconds, transition_seconds, is_moving
+		observation,
+		displacement,
+		forecast_seconds,
+		transition_seconds,
+		is_moving,
+		outcome.get("pickup_events", {"material": [], "consumable": []})
 	)
 	for key in OUTCOME_FIELDS:
 		if key == "expected_lifesteal_recovery":
@@ -102,7 +112,7 @@ func accumulate_outcome(
 	var lifesteal_recovery: float = min(missing_health, weapon_outcome.expected_lifesteal_recovery)
 	outcome.expected_recovery += lifesteal_recovery
 	outcome.expected_recovery_events += lifesteal_recovery
-	_weapon_outcome_conservation_model.constrain_tree_value(
+	_weapon_outcome_settlement_model.settle_tree_value(
 		outcome, _prepared_tree_harvest_value_capacity
 	)
 
@@ -131,7 +141,8 @@ func _estimate_outcome_along_path(
 	terminal_displacement: Vector2,
 	forecast_seconds: float,
 	transition_seconds: float,
-	is_moving: bool
+	is_moving: bool,
+	pickup_events: Dictionary
 ) -> Dictionary:
 	var result: Dictionary = _empty_outcome_sample()
 	var enemy_work_by_target_id := {}
@@ -151,6 +162,7 @@ func _estimate_outcome_along_path(
 		forecast_seconds,
 		transition_width,
 		is_moving,
+		pickup_events,
 		enemy_work_by_target_id,
 		result
 	)
@@ -162,6 +174,7 @@ func _estimate_outcome_along_path(
 		forecast_seconds,
 		transition_width,
 		is_moving,
+		pickup_events,
 		enemy_work_by_target_id,
 		result
 	)
@@ -173,10 +186,11 @@ func _estimate_outcome_along_path(
 		forecast_seconds,
 		transition_width,
 		is_moving,
+		pickup_events,
 		enemy_work_by_target_id,
 		result
 	)
-	_weapon_outcome_conservation_model.settle_enemy_work(result, enemy_work_by_target_id)
+	_weapon_outcome_settlement_model.settle_enemy_work(result, enemy_work_by_target_id)
 	return result
 
 
@@ -188,6 +202,7 @@ func _accumulate_outcome_at_path_sample(
 	forecast_seconds: float,
 	transition_width: float,
 	is_moving: bool,
+	pickup_events: Dictionary,
 	enemy_work_by_target_id: Dictionary,
 	result: Dictionary
 ) -> void:
@@ -204,6 +219,8 @@ func _accumulate_outcome_at_path_sample(
 			coverage_by_delivery[delivery_key],
 			duration_weight,
 			forecast_seconds,
+			observation.player_state.effect_rules,
+			pickup_events,
 			enemy_work_by_target_id,
 			result
 		)
@@ -258,11 +275,15 @@ func _accumulate_weapon_outcome(
 	coverage: Dictionary,
 	exposure_seconds: float,
 	forecast_seconds: float,
+	effect_rules: Array,
+	pickup_events: Dictionary,
 	enemy_work_by_target_id: Dictionary,
 	outcome: Dictionary
 ) -> void:
 	var expected_attack_count: float = (
-		_weapon_attack_capacity_model.expected_attack_count(attack_model, forecast_seconds)
+		_weapon_attack_schedule_model.expected_attack_count(
+			attack_model, forecast_seconds, effect_rules, pickup_events
+		)
 		* exposure_seconds
 		/ max(0.0001, forecast_seconds)
 	)
@@ -294,6 +315,7 @@ func _accumulate_weapon_outcome(
 		enemy_hits,
 		enemy_damage,
 		attack_model.impact.critical_chance,
+		_stat_upgrade_equivalents_per_credited_kill(attack_model),
 		enemy_work_by_target_id
 	)
 	outcome.expected_tree_completion_value += (max(
@@ -558,6 +580,7 @@ func _accumulate_enemy_target_work(
 	expected_enemy_hits: float,
 	expected_enemy_damage: float,
 	critical_chance: float,
+	stat_upgrade_equivalents_per_credited_kill: float,
 	work_by_target_id: Dictionary
 ) -> void:
 	if expected_enemy_hits <= 0.0 or expected_enemy_damage <= 0.0:
@@ -574,14 +597,25 @@ func _accumulate_enemy_target_work(
 			continue
 		var target_hits: float = max(0.0, hits_per_attack_by_target_id.get(target.target_id, 0.0))
 		var realized_hits := expected_enemy_hits * target_hits / per_attack_enemy_hits
-		_weapon_outcome_conservation_model.accumulate_target_work(
+		_weapon_outcome_settlement_model.accumulate_target_work(
 			work_by_target_id,
 			target,
 			realized_hits,
 			realized_hits * damage_per_hit,
 			critical_chance,
-			_action_conditioned_reward_delta(target, covered.sample.distance)
+			_action_conditioned_reward_delta(target, covered.sample.distance),
+			stat_upgrade_equivalents_per_credited_kill
 		)
+
+
+func _stat_upgrade_equivalents_per_credited_kill(attack_model: Dictionary) -> float:
+	var result := 0.0
+	for rule in attack_model.rules:
+		if rule.event != "enemy_kill" or not rule.condition.get("credited_to_weapon", false):
+			continue
+		for consequence in rule.consequences:
+			result += max(0.0, consequence.get("stat_upgrade_equivalents_per_credited_kill", 0.0))
+	return result
 
 
 func _action_conditioned_reward_delta(target: Dictionary, distance: float) -> float:

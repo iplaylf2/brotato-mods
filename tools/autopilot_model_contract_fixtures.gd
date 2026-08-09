@@ -46,7 +46,7 @@ func planning_observation(enemy_tracks: Array) -> Dictionary:
 			"structures": [],
 			"allied_agents": [],
 		},
-		"localization": {"map_bounds": _unknown_bounds()},
+		"localization": {"map_bounds": unknown_bounds()},
 	}
 
 
@@ -55,9 +55,10 @@ func weapon_attack_model() -> Dictionary:
 		"timing":
 		{
 			"expected_attack_interval_seconds": 1.0,
-			"current_cooldown_seconds": 0.0,
+			"remaining_cooldown_seconds": 0.0,
 			"attack_in_progress": false,
 			"seconds_until_next_attack": 0.0,
+			"seconds_until_attack_phase_complete": 0.0,
 			"permitted_while_moving": true,
 		},
 		"delivery":
@@ -155,7 +156,7 @@ func enemy_track(position: Vector2, velocity: Vector2, follows_player: bool) -> 
 	}
 
 
-func _unknown_bounds() -> Dictionary:
+func unknown_bounds() -> Dictionary:
 	return {
 		"seen_left": false,
 		"seen_right": false,
