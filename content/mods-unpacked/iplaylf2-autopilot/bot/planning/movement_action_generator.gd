@@ -17,16 +17,12 @@ const MovementGeometryModel := preload(
 const ProjectileMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/projectile_motion_predictor.gd"
 )
-const EnemyReachEnvelopeModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_reach_envelope_model.gd"
-)
 
 const MAX_PROJECTILE_PHASE_STEP := PI / 2.0
 
 var _player_kinematics: Reference = PlayerKinematicsModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
-var _enemy_reach_envelope_model: Reference = EnemyReachEnvelopeModel.new()
 
 
 func generate(observation: Dictionary, navigation_intent: Dictionary) -> Array:
@@ -116,30 +112,12 @@ func _candidate_directions(direction_count: int, navigation_intent: Dictionary) 
 
 
 func _forecast_window(observation: Dictionary, timing: Dictionary) -> float:
-	var geometry: Dictionary = _movement_geometry.derive(observation)
-	var maximum_horizon: float = timing.effective_local_horizon_seconds
-	var player_reach: float = geometry.command_speed * maximum_horizon
-	for track in observation.enemy_tracks:
-		var contact_support: float = _enemy_reach_envelope_model.contact_support_radius(
-			track, maximum_horizon, player_reach, geometry.player_radius
-		)
-		if track.relative_position.length() <= contact_support:
-			return maximum_horizon
-	for projectile in observation.visible_world.enemy_projectiles:
-		var projectile_reach: float = _projectile_motion_predictor.maximum_displacement(
-			projectile, maximum_horizon
-		)
-		var contact_support: float = (
-			geometry.player_radius
-			+ projectile.contact_radius
-			+ player_reach
-			+ projectile_reach
-		)
-		if projectile.relative_position.length() <= contact_support:
-			return maximum_horizon
-	return PlanningTimingModel.clip_to_wave_remaining(
-		observation, timing.default_local_horizon_seconds
-	)
+	# Detailed collision, pickup, rule, and weapon projection has sharply
+	# diminishing value beyond the near-term controllability horizon: only the first
+	# control interval is committed before replanning, and the strategic value field
+	# already owns longer consequences. Keeping one invariant window also prevents
+	# enemy density from increasing both per-action cost and search-space starvation.
+	return PlanningTimingModel.clip_to_wave_remaining(observation, timing.near_term_horizon_seconds)
 
 
 func _forecast_sample_count(

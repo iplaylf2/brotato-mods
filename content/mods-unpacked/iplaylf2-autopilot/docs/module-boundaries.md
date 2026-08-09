@@ -38,7 +38,8 @@
   事件与动作采样共同消费；
 - `collision` 拥有“已解析路径交会 → 按来源接触机会”和“尚无受支持轨迹的未来实现 → 未解析交会证据”
   两段协议；它不预测实体运动，也不解释生命损失、终止风险或动作价值；
-- `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”的协议，供战斗、机会与生命补充模型消费；
+- `weapons` 拥有“攻击模型 → 与目标无关的期望攻击容量”和“武器组合与目标完成机制 → 目标相关的加权
+  锁定区间”两段协议；前者供战斗、波内完成与生命补充模型消费，后者供空间机会模型消费；
 - `health` 拥有“接触机会与无时序聚合交会证据 → 条件生命损失与终止风险”、“当前生命、即时威胁与清场前补充 →
   生命库存及单位价值”、“任意来源生命损失与生命库存 → 材料等价成本”三段协议，结果供导航风险、拾取
   机会与动作效用共同消费；
@@ -104,7 +105,7 @@
 - `bot/planning/motion/observed_motion_predictor.gd` 只负责纯观测运动外推；
   `bot/planning/motion/enemy_motion_predictor.gd` 对稳定目标位置响应作自适应中点积分，并在不适用时改用
   观测运动外推；`bot/planning/motion/projectile_motion_predictor.gd` 解析积分已形成的确定性弹道，并统一
-  提供该弹道的保守位移上界，供规划域过滤与动作时域扩展共同消费；
+  提供该弹道的保守位移与角速度上界，供规划域过滤与动作时间采样共同消费；
   `bot/planning/motion/enemy_reach_envelope_model.gd` 派生敌人的最大位移和接触支撑半径；
   `bot/planning/motion/maneuver_space_model.gd` 计算可达敌人圆盘与已知地图边界遮蔽角区间的并集，不选择路线。
 - `bot/planning/local_enemy_interaction_projector.gd` 结合敌人可达包络、压力作用范围与武器锁定距离，构造
@@ -146,11 +147,15 @@
 - `bot/planning/engagement/engagement_target_projector.gd` 把敌人轨迹与树木投影为统一的可交战
   目标契约；契约公开移动、完成状态、收益、负担、死亡后果与武器响应，不指定目标优先级。
 - `bot/planning/weapons/weapon_attack_capacity_model.gd` 定义与目标无关的期望主路径攻击率、单次命中伤害和
-  生命偷取率；`bot/planning/engagement/weapon_outcome_forecast_model.gd` 把这些容量与动作路径上的统一可见
-  目标投影为局部命中、伤害与完成容量；
-  `bot/planning/engagement/weapon_path_contact_model.gd` 统一解释锁定后主路径与额外直接路径的几何接触份额，
-  不拥有锁定准入、攻击容量或目标价值；
-  `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样点的敌人攻击工作
+  生命偷取率，供 `engagement`、`health` 与同目录模型复用。
+- `bot/planning/weapons/weapon_targeting_interval_model.gd` 在不解释目标价值或路线的前提下，保留每把武器的
+  最小与最大锁定距离，并针对生命目标按主路径伤害率、针对命中上限目标按主路径命中率归一化区间份额；
+  根目录的 `spatial_opportunity_value_model.gd` 消费这些区间。
+- `bot/planning/engagement/weapon_outcome_forecast_model.gd` 独立把攻击容量与动作路径上的统一可见目标投影为
+  局部命中、伤害与完成容量。
+- `bot/planning/engagement/weapon_path_contact_model.gd` 统一解释锁定后主路径与额外直接路径的几何接触份额，
+  不拥有锁定准入、攻击容量或目标价值。
+- `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样点的敌人攻击工作
   累计与有限目标容量结算，并单独约束树木总收获价值；敌人的剩余生命、离散完成代理和价值始终属于同一
   `target_id`。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
@@ -186,8 +191,8 @@
   `committed_terminal_health_risk` 只拥有执行资格。预测和评分是两个边界，
   选择器不拥有二者。
 - `bot/planning/movement_action_generator.gd` 从可执行输入空间构造均匀基线，补入导航意图公开的胜出导航
-  方向，并按规划器提出的细分方向构造新候选；它还根据时间模型以及敌人与投射物的可达上界，为本轮所有
-  候选选择同一个动作比较时域；
+  方向，并按规划器提出的细分方向构造新候选；它还从时间模型取得只随波末裁剪的近端动作比较时域，并按
+  玩家位移和解析曲线弹相位派生统一时间采样；敌人与投射物数量不扩张该时域；
   `bot/planning/movement_action_selector.gd` 从已评分候选中排除可避免的提交期确定终止碰撞，再选择总效用
   最高者；
   `bot/planning/actuation_state_projector.gd` 统一把值快照推进到后台结果预计抵达执行器的时刻，消费当前仍

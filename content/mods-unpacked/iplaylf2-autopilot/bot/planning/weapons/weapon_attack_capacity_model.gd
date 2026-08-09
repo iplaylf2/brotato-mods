@@ -2,7 +2,7 @@ extends Reference
 
 # Owns target-independent automatic-weapon capacity: expected attack cadence,
 # damage per delivered hit, and primary-path hit, damage, and lifesteal rates.
-# Spatial delivery belongs to WeaponOutcomeForecastModel.
+# It does not own targeting intervals or action-conditioned spatial delivery.
 
 
 func expected_damage_per_hit(attack_model: Dictionary) -> float:
@@ -28,13 +28,8 @@ func expected_attack_count(
 func expected_primary_damage_rate(weapons: Array, is_moving: bool = false) -> float:
 	var result := 0.0
 	for observed_weapon in weapons:
-		var attack_model: Dictionary = observed_weapon.attack_model
-		if is_moving and not attack_model.timing.permitted_while_moving:
-			continue
-		result += (
-			expected_damage_per_hit(attack_model)
-			* _expected_primary_hits_per_attack(attack_model)
-			/ attack_model.timing.expected_attack_interval_seconds
+		result += expected_primary_damage_rate_for_attack_model(
+			observed_weapon.attack_model, is_moving
 		)
 	return result
 
@@ -42,14 +37,30 @@ func expected_primary_damage_rate(weapons: Array, is_moving: bool = false) -> fl
 func expected_primary_hit_rate(weapons: Array, is_moving: bool = false) -> float:
 	var result := 0.0
 	for observed_weapon in weapons:
-		var attack_model: Dictionary = observed_weapon.attack_model
-		if is_moving and not attack_model.timing.permitted_while_moving:
-			continue
-		result += (
-			_expected_primary_hits_per_attack(attack_model)
-			/ attack_model.timing.expected_attack_interval_seconds
+		result += expected_primary_hit_rate_for_attack_model(
+			observed_weapon.attack_model, is_moving
 		)
 	return result
+
+
+func expected_primary_damage_rate_for_attack_model(
+	attack_model: Dictionary, is_moving: bool = false
+) -> float:
+	return (
+		expected_damage_per_hit(attack_model)
+		* expected_primary_hit_rate_for_attack_model(attack_model, is_moving)
+	)
+
+
+func expected_primary_hit_rate_for_attack_model(
+	attack_model: Dictionary, is_moving: bool = false
+) -> float:
+	if is_moving and not attack_model.timing.permitted_while_moving:
+		return 0.0
+	return (
+		_expected_primary_hits_per_attack(attack_model)
+		/ attack_model.timing.expected_attack_interval_seconds
+	)
 
 
 func expected_primary_lifesteal_rate(weapons: Array, is_moving: bool = false) -> float:

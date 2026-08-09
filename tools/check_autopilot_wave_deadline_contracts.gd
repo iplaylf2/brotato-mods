@@ -15,6 +15,8 @@ func run(fixtures: Reference) -> bool:
 	_check_short_deadline_combat_setup()
 	_check_pickup_deadline()
 	_check_autonomous_target_access()
+	_check_target_specific_interval_capacity()
+	_check_minimum_targeting_distance_access()
 	_check_long_range_access_gradients()
 	return not _failed
 
@@ -136,6 +138,79 @@ func _check_autonomous_target_access() -> void:
 		(
 			"an autonomously approaching target must create no pursuit reward or search "
 			+ "direction, while movement that prevents deadline access must lose value"
+		)
+	)
+
+
+func _check_target_specific_interval_capacity() -> void:
+	var near_attack: Dictionary = _fixtures.weapon_attack_model()
+	near_attack.delivery.maximum_targeting_distance = 200.0
+	near_attack.impact.damage = 10.0
+	var far_attack: Dictionary = _fixtures.weapon_attack_model()
+	far_attack.delivery.minimum_targeting_distance = 300.0
+	far_attack.delivery.maximum_targeting_distance = 800.0
+	far_attack.impact.damage = 1.0
+	var weapons := [
+		{"slot": 0, "attack_model": near_attack},
+		{"slot": 1, "attack_model": far_attack},
+	]
+	var interval_script_path := PLANNING_PATH + "weapons/weapon_targeting_interval_model.gd"
+	var interval_model: Reference = load(interval_script_path).new()
+	var health_intervals: Array = interval_model.normalized_intervals(
+		weapons, {"weapon_response": {"hit_limit_progress_per_hit": 0.0}}
+	)
+	var hit_intervals: Array = interval_model.normalized_intervals(
+		weapons, {"weapon_response": {"hit_limit_progress_per_hit": 1.0}}
+	)
+	_expect(
+		(
+			health_intervals.size() == 2
+			and health_intervals[0].capacity_share > 0.9
+			and is_equal_approx(hit_intervals[0].capacity_share, 0.5)
+			and is_equal_approx(hit_intervals[1].capacity_share, 0.5)
+		),
+		(
+			"targeting intervals must use damage capacity for health targets and hit "
+			+ "capacity for hit-limited neutrals"
+		)
+	)
+
+
+func _check_minimum_targeting_distance_access() -> void:
+	var enemy: Dictionary = _fixtures.enemy_track(Vector2(100.0, 0.0), Vector2.ZERO, false)
+	var observation: Dictionary = _fixtures.planning_observation([enemy])
+	var attack: Dictionary = _fixtures.weapon_attack_model()
+	attack.delivery.minimum_targeting_distance = 300.0
+	attack.delivery.maximum_targeting_distance = 800.0
+	observation.player_state.weapons = [{"slot": 0, "attack_model": attack}]
+	var context := {
+		"state_factors":
+		{
+			"health_inventory_value":
+			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0},
+			"continuation_horizon_seconds": 1.0,
+		},
+		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0}),
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 1.0}),
+	}
+	var spatial: Reference = load(PLANNING_PATH + "spatial_opportunity_value_model.gd").new()
+	var retreat: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(-250.0, 0.0), 0.5
+	)
+	var approach: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(50.0, 0.0), 0.5
+	)
+	var candidates: Array = spatial.candidate_directions(observation, context)
+	_expect(
+		(
+			retreat.target_access_opportunity > 0.0
+			and approach.target_access_opportunity < 0.0
+			and not candidates.empty()
+			and candidates[0].direction.dot(Vector2.LEFT) > 0.99
+		),
+		(
+			"a weapon dead zone must create an outward setup gradient and an outward search "
+			+ "direction without a weapon-specific movement policy"
 		)
 	)
 

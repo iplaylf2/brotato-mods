@@ -26,7 +26,7 @@ func derive(observation: Dictionary) -> Dictionary:
 	var control_distance: float = command_speed * timing.tactical_control_interval_seconds
 	var near_term_distance: float = command_speed * timing.near_term_horizon_seconds
 	var default_local_horizon_distance: float = command_speed * timing.default_local_horizon_seconds
-	var direction_count: int = _direction_count(player_radius, control_distance)
+	var direction_count: int = _direction_count(player_radius, near_term_distance)
 	_cached_physics_frame = physics_frame
 	_cached_geometry = {
 		"player_radius": player_radius,
@@ -51,11 +51,14 @@ func derive(observation: Dictionary) -> Dictionary:
 	return _cached_geometry
 
 
-func _direction_count(player_radius: float, control_distance: float) -> int:
-	# Adjacent commands may not end the committed control interval more than one
-	# player radius apart. This converts collision geometry into angular fidelity.
-	if control_distance <= player_radius * 0.5:
+func _direction_count(player_radius: float, near_term_distance: float) -> int:
+	# Adjacent headings must leave overlapping player footprints at the end of the
+	# tactical prediction horizon. Deriving the lattice from only the submitted
+	# control interval collapsed fast characters to four directions even though
+	# their scored paths had already separated by several body widths.
+	var collision_diameter := player_radius * 2.0
+	if near_term_distance <= player_radius:
 		return 4
-	var half_angle := asin(clamp(player_radius / (2.0 * control_distance), 0.0, 1.0))
+	var half_angle := asin(clamp(collision_diameter / (2.0 * near_term_distance), 0.0, 1.0))
 	var count := int(ceil(PI / max(0.01, half_angle)))
 	return int(max(4, count + count % 2))

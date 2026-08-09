@@ -235,26 +235,30 @@ func _check_action_forecast_domain() -> void:
 	var actions: Array = generator.generate(observation, {"movement_preference": Vector2.ZERO})
 	var timing: Dictionary = load(PLANNING_PATH + "planning_timing_model.gd").derive(observation)
 	_expect(
-		_all_actions_share_forecast(actions, timing.maximum_local_horizon_seconds),
 		(
-			"a reachable pursuer must keep candidate comparisons on the shared extended "
-			+ "horizon even when its current heading does not intersect the previous input"
+			_all_actions_share_forecast(actions, timing.near_term_horizon_seconds)
+			and actions.size() == 9
+			and actions[0].samples.size() == 4
+		),
+		(
+			"tactical search must cover overlapping body footprints across the near-term "
+			+ "horizon without extending detailed work as enemy density rises"
 		)
 	)
 	observation.physics_frame += 1
 	observation.enemy_tracks[0].relative_position = Vector2(2000.0, 0.0)
 	actions = generator.generate(observation, {"movement_preference": Vector2.ZERO})
 	_expect(
-		_all_actions_share_forecast(actions, timing.default_local_horizon_seconds),
-		"a threat outside the local reachable domain must not expand action-search work"
+		_all_actions_share_forecast(actions, timing.near_term_horizon_seconds),
+		"remote threats must leave the invariant tactical work horizon unchanged"
 	)
 	observation.physics_frame += 1
 	observation.enemy_tracks[0].relative_position = Vector2(230.0, 0.0)
-	observation.wave_state.seconds_remaining = 0.25
+	observation.wave_state.seconds_remaining = 0.1
 	actions = generator.generate(observation, {"movement_preference": Vector2.ZERO})
 	_expect(
-		_all_actions_share_forecast(actions, 0.25),
-		"the shared threat horizon must remain clipped to observable time before cleanup"
+		_all_actions_share_forecast(actions, 0.1),
+		"the near-term tactical horizon must remain clipped to observable time before cleanup"
 	)
 
 

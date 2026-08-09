@@ -25,6 +25,9 @@ const PickupCollectionGeometryModel := preload(
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
 )
+const WeaponTargetingIntervalModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_targeting_interval_model.gd"
+)
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
 )
@@ -33,6 +36,7 @@ var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _rule_event_value_model: Reference = RuleEventValueModel.new()
 var _pickup_collection_geometry_model: Reference = PickupCollectionGeometryModel.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
+var _weapon_targeting_interval_model: Reference = WeaponTargetingIntervalModel.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _prepared_physics_frame := -1
 var _prepared_geometry := {}
@@ -271,9 +275,6 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		_prepared_spawn_warnings.push_back({"warning": warning, "value": value})
 		if value > 0.0:
 			_append_prepared_candidate(warning.relative_position, value * access_potential)
-	var maximum_targeting_distance := _maximum_weapon_targeting_distance(observation)
-	if maximum_targeting_distance <= 0.0:
-		return
 	for target in _engagement_target_projector.project_navigation_targets(observation, context):
 		var value: float = (
 			target.value.net_completion_value
@@ -284,21 +285,30 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		)
 		if value <= 0.0:
 			continue
-		var gap: float = max(0.0, target.relative_position.length() - maximum_targeting_distance)
-		var access_potential: float = _deadline_accessibility(
-			gap, deadline_reach_distance, characteristic_reach_distance
+		var targeting_intervals: Array = _weapon_targeting_interval_model.normalized_intervals(
+			observation.player_state.weapons, target
 		)
-		var enters_without_player_movement := _enters_targeting_range_without_player_movement(
-			target, maximum_targeting_distance, observation.wave_state.seconds_remaining
-		)
-		if not enters_without_player_movement:
-			_append_prepared_candidate(target.relative_position, value * access_potential)
-		if gap > 0.0 and (access_potential > 0.0 or enters_without_player_movement):
+		for interval in targeting_intervals:
+			var interval_value: float = value * interval.capacity_share
+			var gap: float = _weapon_targeting_interval_model.distance_gap(
+				target.relative_position.length(), interval
+			)
+			var access_potential: float = _deadline_accessibility(
+				gap, deadline_reach_distance, characteristic_reach_distance
+			)
+			var enters_without_player_movement := _enters_targeting_interval_without_player_movement(
+				target, interval, observation.wave_state.seconds_remaining
+			)
+			var access_direction: Vector2 = _weapon_targeting_interval_model.access_direction(
+				target.relative_position, interval
+			)
+			if not enters_without_player_movement and access_direction != Vector2.ZERO:
+				_append_prepared_candidate(access_direction, interval_value * access_potential)
 			_prepared_target_access_entries.push_back(
 				{
 					"target": target,
-					"value": value,
-					"targeting_distance": maximum_targeting_distance,
+					"value": interval_value,
+					"targeting_interval": interval,
 				}
 			)
 
@@ -317,13 +327,13 @@ func _target_access_delta(
 			target.motion_track, forecast_seconds, player_displacement
 		)
 		var stationary_gap: float = _autonomous_targeting_gap(
-			target, stationary_position, seconds_until_deadline, entry.targeting_distance
+			target, stationary_position, seconds_until_deadline, entry.targeting_interval
 		)
 		var candidate_gap: float = _autonomous_targeting_gap(
 			target,
 			candidate_position - player_displacement,
 			seconds_until_deadline,
-			entry.targeting_distance
+			entry.targeting_interval
 		)
 		result += (
 			entry.value
@@ -337,24 +347,37 @@ func _target_access_delta(
 	return result
 
 
-func _enters_targeting_range_without_player_movement(
-	target: Dictionary, targeting_distance: float, deadline_seconds: float
+func _enters_targeting_interval_without_player_movement(
+	target: Dictionary, targeting_interval: Dictionary, deadline_seconds: float
 ) -> bool:
-	if target.relative_position.length() <= targeting_distance:
+	if (
+		_weapon_targeting_interval_model.distance_gap(
+			target.relative_position.length(), targeting_interval
+		)
+		<= 0.0
+	):
 		return true
 	return (
 		_autonomous_targeting_gap(
-			target, target.relative_position, deadline_seconds, targeting_distance
+			target, target.relative_position, deadline_seconds, targeting_interval
 		)
 		<= 0.0
 	)
 
 
 func _autonomous_targeting_gap(
-	target: Dictionary, relative_position: Vector2, seconds: float, targeting_distance: float
+	target: Dictionary, relative_position: Vector2, seconds: float, targeting_interval: Dictionary
 ) -> float:
-	var current_gap: float = max(0.0, relative_position.length() - targeting_distance)
+	var current_distance := relative_position.length()
+	var current_gap: float = _weapon_targeting_interval_model.distance_gap(
+		current_distance, targeting_interval
+	)
 	if current_gap <= 0.0 or seconds <= 0.0:
+		return current_gap
+	# A target that is already inside a weapon's dead zone cannot create range by
+	# closing on the player. Only candidate retreat changes interval access under
+	# the supported target-position response model.
+	if current_distance < targeting_interval.minimum_distance:
 		return current_gap
 	var motion_track: Dictionary = target.motion_track
 	var response: Dictionary = motion_track.behavior_profile.get("target_position_response", {})
@@ -371,15 +394,10 @@ func _autonomous_targeting_gap(
 		)
 		* response_confidence
 	)
-	var terminal_gap_floor: float = max(0.0, preferred_distance - targeting_distance)
+	var terminal_gap_floor: float = max(
+		0.0, preferred_distance - targeting_interval.maximum_distance
+	)
 	return max(terminal_gap_floor, current_gap - closing_speed * seconds)
-
-
-func _maximum_weapon_targeting_distance(observation: Dictionary) -> float:
-	var result := 0.0
-	for weapon in observation.player_state.weapons:
-		result = max(result, float(weapon.attack_model.delivery.maximum_targeting_distance))
-	return result
 
 
 func _pickup_value(

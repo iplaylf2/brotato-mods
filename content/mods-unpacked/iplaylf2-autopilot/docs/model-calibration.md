@@ -211,12 +211,13 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 ### 统一时空派生
 
 `PlanningTimingModel` 与 `MovementGeometryModel` 统一拥有时间和空间派生关系。设物理频率为 `f`、玩家
-碰撞半径为 `r`、当前可执行移动速度为 `v`，控制、近端、默认局部、局部上限和导航时域分别为
-`Tc`、`Tnear`、`Tdefault`、`Tlocal_max`、`Tnav`，当前关系为：
+碰撞半径为 `r`、当前可执行移动速度为 `v`，控制、动作、近端、默认局部、局部上限和导航时域分别为
+`Tc`、`Taction`、`Tnear`、`Tdefault`、`Tlocal_max`、`Tnav`，当前关系为：
 
 ```text
 Tc                            = 3 / f
 Tnear                         = 4Tc
+Taction                       = min(Tnear, wave_seconds_remaining)
 Tdefault                      = max(8Tc, 4r / v)
 Tlocal_max                    = Tdefault + 6Tc
 Tnav                          = Tlocal_max + 10Tc
@@ -235,7 +236,8 @@ TTC e-fold time               = Tlocal_effective
 TTC cutoff                    = Tnav_effective
 ```
 
-动作方向数取满足相邻控制期端点弦长不超过 `r` 的最小偶数，并完整保留为每轮局部动作基线。近似战略
+动作方向数取满足相邻方向在 `Tnear` 末端的弦长不超过 `2r` 的最小偶数，使相邻玩家碰撞圆保持相交，
+并完整保留为每轮局部动作基线。近似战略
 导航随预算压力保留四至八个均匀方向；机会聚合方向只作为预算内搜索提案，经过轨迹评价并胜出后才会进入
 局部候选。
 
@@ -483,10 +485,13 @@ expected_run_continuation_value_loss = pt × C
 `selected_trajectory.value_breakdown.target_access_opportunity` 核对胜出轨迹。该字段只包含玩家移动相对
 同刻零输入反事实新增的截止射程访问，并受波内完成份额、存在置信度和剩余清理窗口约束。
 
-目标在零输入下会于清理截止前自行进入射程时，接近、不动和仍会被追上的远离都应为零；只有远离足以
-阻止截止前的射程访问时，才产生负值。静止树木没有自主闭合距离，接近与远离应保留方向相反、随距离衰减
-的连续梯度。进入射程后访问项饱和；最近目标次序、贯穿、弹射、范围容量和实际完成价值只在局部武器
-结果中检查。轨迹采样时刻到达或越过波末后，尚未兑现的访问结果必须为零。
+每把武器的最小和最大锁定距离应形成独立区间；生命目标按主路径伤害率、命中上限目标按主路径命中率
+归一化各区间份额。目标在零输入下会于清理截止前自行进入某一区间时，接近、不动和仍会被追上的远离对
+该区间都应为零；只有移动足以阻止截止前访问时，才产生负值。静止树木没有自主闭合距离：位于最大距离外
+时接近应为正，位于最小距离内时远离应为正，反向移动应为负。进入区间后访问项饱和。
+
+这项检查只覆盖截止访问。最近目标次序、贯穿、弹射、范围容量和实际完成价值属于局部武器结果；轨迹
+采样时刻到达或越过波末后，尚未兑现的访问结果必须为零。
 
 #### 局部武器结果与目标完成
 
@@ -542,10 +547,9 @@ expected_run_continuation_value_loss = pt × C
 `terminal_health_loss_unit_value`。确认即时命中储备覆盖玩家完整动作集合与威胁运动的联合可达域；动作
 窗内碰撞按 `immediate_survival_buffer` 和剩余延续时域计价，局部与导航环境暴露使用同一单位损失价值，
 未来补充只改变补给库存与波次尺度敌人负担的边际价格；超过即时缓冲的部分仍按终止价值计价。复盘时还应
-核对动作时域扩展的广相筛选：筛选命中时，各候选共享扩展后的比较时域；未命中的远处
-威胁不增加搜索工作；扩展时域仍截断到波末。这些结论应从 `decision.model.timing`、
-`decision.model.derived.action_forecast_seconds` 和威胁位置、速度及稳定运动画像联合判断，不能只检查某条
-线性外推是否相交。
+确认所有候选共享近端动作时域，且该时域只随波末裁剪，不随敌人密度或单条威胁扩张；更远风险应通过
+战略环境暴露、局部交互域和 TTC 职责进入，而不是增加逐动作时间采样。联合检查
+`decision.model.timing`、`decision.model.derived.action_forecast_seconds`、方向数和时间采样数。
 拾取恢复按 `terminal_health_loss_unit_value` 产生即时生命收益，同时
 `consumed_consumable_recovery_supply` 按 `replenishment_unit_value` 结清离开地图的储备，两者净额应等于
 `recovery_conversion_unit_value`。满血接触不应继续免费享受该储备带来的生命折价。地雷路径还应联合检查
