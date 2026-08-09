@@ -71,7 +71,9 @@ func accumulate_outcome(
 	var forecast_seconds: float = action.forecast_seconds
 	var displacement: Vector2 = action.samples.back().displacement
 	var is_moving: bool = action.movement != Vector2.ZERO
-	var transition_seconds: float = min(forecast_seconds, planning_context.control_interval_seconds)
+	var transition_seconds: float = min(
+		forecast_seconds, planning_context.tactical_control_interval_seconds
+	)
 	# Nearest-target ownership changes on narrow Voronoi boundaries. A shared 3x3
 	# interpolation grid blurred those boundaries and made an off-axis action that
 	# exposes a tree look identical to one that leaves a nearer enemy selected.

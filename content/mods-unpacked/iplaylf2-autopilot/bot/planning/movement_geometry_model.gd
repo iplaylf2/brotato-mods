@@ -4,8 +4,8 @@ extends Reference
 # candidate movement speed, and the movement timing model. This replaces
 # nominal-player constants that were duplicated across predictors.
 
-const MovementTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
+const PlanningTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
 )
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
@@ -22,8 +22,8 @@ func derive(observation: Dictionary) -> Dictionary:
 		return _cached_geometry
 	var player_radius: float = float(observation.player_state.collision_radius)
 	var command_speed: float = max(1.0, _player_kinematics.predict_command_speed(observation, true))
-	var timing: Dictionary = MovementTimingModel.derive(observation)
-	var control_distance: float = command_speed * timing.control_interval_seconds
+	var timing: Dictionary = PlanningTimingModel.derive(observation)
+	var control_distance: float = command_speed * timing.tactical_control_interval_seconds
 	var near_term_distance: float = command_speed * timing.near_term_horizon_seconds
 	var default_local_horizon_distance: float = command_speed * timing.default_local_horizon_seconds
 	var direction_count: int = _direction_count(player_radius, control_distance)

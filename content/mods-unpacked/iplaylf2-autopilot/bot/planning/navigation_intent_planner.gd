@@ -8,8 +8,8 @@ extends Reference
 const BattlefieldInfluenceModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/battlefield_influence_model.gd"
 )
-const MovementTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
+const PlanningTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
 )
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
@@ -46,7 +46,7 @@ func plan(
 	compute_budget_policy: Reference
 ) -> Dictionary:
 	var geometry: Dictionary = _movement_geometry.derive(observation)
-	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var timing: Dictionary = PlanningTimingModel.derive(observation)
 	var horizon_seconds: float = timing.effective_navigation_horizon_seconds
 	var map_extent: Dictionary = _map_extent(observation)
 	var trajectory_distance: float = min(

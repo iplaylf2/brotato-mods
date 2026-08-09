@@ -11,8 +11,8 @@ const PlayerKinematicsModel := preload(
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
 )
-const MovementTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
+const PlanningTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
 )
 const EnemyMotionPredictor := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/motion/enemy_motion_predictor.gd"
@@ -30,7 +30,7 @@ func set_enemy_motion_predictor(predictor: Reference) -> void:
 func evaluate(observation: Dictionary, action: Dictionary, committed_seconds: float) -> Dictionary:
 	_enemy_motion_predictor.begin_physics_frame(observation.get("physics_frame", -1))
 	var geometry: Dictionary = _movement_geometry.derive(observation)
-	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var timing: Dictionary = PlanningTimingModel.derive(observation)
 	var local_horizon_seconds: float = timing.effective_local_horizon_seconds
 	var navigation_horizon_seconds: float = timing.effective_navigation_horizon_seconds
 	var player_velocity: Vector2 = _player_kinematics.predict_average_velocity(

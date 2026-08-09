@@ -116,18 +116,18 @@ func predict_base(
 		observation,
 		action,
 		planning_context.environmental_pressure_weights,
-		planning_context.control_interval_seconds,
+		planning_context.tactical_control_interval_seconds,
 		planning_context.enemy_completion_value_ledger
 	)
 	outcome.merge(battlefield_outcome, true)
 	outcome.merge(
 		_unresolved_collision_risk_model.evaluate(
-			observation, action, planning_context.control_interval_seconds
+			observation, action, planning_context.tactical_control_interval_seconds
 		),
 		true
 	)
 	var committed_action: Dictionary = _committed_action(
-		observation, action, planning_context.control_interval_seconds
+		observation, action, planning_context.tactical_control_interval_seconds
 	)
 	_predict_action_outcomes(observation, action, outcome)
 	outcome.collision_risk = max(
@@ -299,9 +299,9 @@ func _interpolated_navigation_value_rate(direction: Vector2, directional_samples
 
 
 func _committed_action(
-	observation: Dictionary, action: Dictionary, control_interval_seconds: float
+	observation: Dictionary, action: Dictionary, tactical_control_interval_seconds: float
 ) -> Dictionary:
-	var committed_seconds: float = min(action.forecast_seconds, control_interval_seconds)
+	var committed_seconds: float = min(action.forecast_seconds, tactical_control_interval_seconds)
 	var committed_samples := []
 	for sample in action.samples:
 		if sample.time > committed_seconds + 0.0001:

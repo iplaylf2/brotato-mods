@@ -20,8 +20,8 @@ const EnemyCompletionValueModel := preload(
 const WaveCompletionForecastModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/engagement/wave_completion_forecast_model.gd"
 )
-const MovementTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
+const PlanningTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
 )
 const RunContinuationValueModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/run_continuation_value_model.gd"
@@ -51,7 +51,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 	)
 	var marginal_health_unit_value: float = health_inventory_value.marginal_health_unit_value
 	var terminal_health_loss_unit_value: float = health_inventory_value.terminal_health_loss_unit_value
-	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var timing: Dictionary = PlanningTimingModel.derive(observation)
 	# Exposure represents a marginal near-term hit, so price it through the same
 	# inventory curve as predicted health loss. A survivable point loses value as
 	# the remaining continuation horizon shrinks; exhausting the immediate buffer

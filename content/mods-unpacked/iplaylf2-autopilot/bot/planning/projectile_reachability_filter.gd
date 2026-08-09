@@ -4,8 +4,8 @@ extends Reference
 # region within the navigation horizon under the available motion bounds. Other
 # observation domains pass through unchanged.
 
-const MovementTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
+const PlanningTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
 )
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
@@ -19,7 +19,7 @@ var _projectile_motion_predictor: Reference = ProjectileMotionPredictor.new()
 
 
 func filter(observation: Dictionary) -> Dictionary:
-	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var timing: Dictionary = PlanningTimingModel.derive(observation)
 	var geometry: Dictionary = _movement_geometry.derive(observation)
 	var horizon_seconds: float = timing.effective_navigation_horizon_seconds
 	var included_projectiles := []

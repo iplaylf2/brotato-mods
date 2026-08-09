@@ -196,7 +196,7 @@ func _check_damaging_consumable_pricing() -> void:
 		observation,
 		action,
 		outcome,
-		{"enemy_completion_value_ledger": {}, "control_interval_seconds": 0.1}
+		{"enemy_completion_value_ledger": {}, "tactical_control_interval_seconds": 0.1}
 	)
 	_expect(
 		(
@@ -221,7 +221,7 @@ func _check_damaging_consumable_pricing() -> void:
 		observation,
 		action,
 		delayed_outcome,
-		{"enemy_completion_value_ledger": {}, "control_interval_seconds": 0.1}
+		{"enemy_completion_value_ledger": {}, "tactical_control_interval_seconds": 0.1}
 	)
 	_expect(
 		(

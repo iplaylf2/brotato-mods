@@ -7,8 +7,8 @@ extends Reference
 const HealthReplenishmentForecastModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/health/health_replenishment_forecast_model.gd"
 )
-const MovementTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
+const PlanningTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
 )
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
@@ -65,8 +65,8 @@ func estimate(
 
 func _immediate_hit_reserve(observation: Dictionary) -> float:
 	var maximum_raw_damage := 0.0
-	var horizon: float = MovementTimingModel.clip_to_wave_remaining(
-		observation, MovementTimingModel.control_interval_seconds()
+	var horizon: float = PlanningTimingModel.clip_to_wave_remaining(
+		observation, PlanningTimingModel.tactical_control_interval_seconds()
 	)
 	var geometry: Dictionary = _movement_geometry_model.derive(observation)
 	# Inventory value is action-independent, so reserve the strongest hit reachable

@@ -1,13 +1,9 @@
 extends Reference
 
-# Owns the Godot 3 on-demand worker lifecycle and the synchronized transfer of
-# planning requests and pure-value results. The mutable planner graph is created,
-# configured, executed, and released on this thread; callers retain scheduling
-# and result application.
-
-const MovementPlanner := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_planner.gd"
-)
+# Owns one persistent Godot 3 worker and the synchronized transfer of on-demand
+# planning requests and pure-value results. Each worker receives one planner
+# script before startup; its mutable planner graph is then created, executed,
+# and released exclusively on that thread.
 
 var _thread: Thread
 var _mutex: Mutex = Mutex.new()
@@ -18,18 +14,23 @@ var _results_ready := false
 var _in_flight := false
 var _stop_requested := false
 var _player_count := 0
+var _planner_script: Script
 var _planners := []
 
 
-func start(player_count: int) -> bool:
+func start(player_count: int, planner_script: Script) -> bool:
 	if _thread != null:
 		return true
+	if planner_script == null:
+		return false
 	_stop_requested = false
 	_player_count = player_count
+	_planner_script = planner_script
 	_thread = Thread.new()
 	if _thread.start(self, "_run") == OK:
 		return true
 	_thread = null
+	_planner_script = null
 	return false
 
 
@@ -86,7 +87,7 @@ func shutdown() -> void:
 func _run(_unused) -> void:
 	_planners.resize(_player_count)
 	for player_index in _player_count:
-		_planners[player_index] = MovementPlanner.new()
+		_planners[player_index] = _planner_script.new()
 	while true:
 		_semaphore.wait()
 		_mutex.lock()
@@ -109,15 +110,11 @@ func _compute(requests: Array) -> Array:
 	for request in requests:
 		var player_index: int = request.player_index
 		var planner: Reference = _planners[player_index]
-		planner.set_frame_budget_context(request.frame_budget_context)
 		results.push_back(
 			{
 				"player_index": player_index,
 				"observation": request.observation,
-				"plan":
-				planner.plan(
-					request.observation, request.active_movement, request.request_created_usec
-				),
+				"output": planner.plan(request),
 			}
 		)
 	return results

@@ -175,8 +175,10 @@ func _apply_consumable_health_damage(
 	outcome.forecast_terminal_health_risk = max(
 		outcome.forecast_terminal_health_risk, outcome.forecast_terminal_consumable_risk
 	)
-	var control_interval: float = planning_context.get("control_interval_seconds", 0.0)
-	if event.time > control_interval:
+	var tactical_control_interval: float = planning_context.get(
+		"tactical_control_interval_seconds", 0.0
+	)
+	if event.time > tactical_control_interval:
 		return
 	outcome.committed_consumable_health_loss += damage
 	outcome.committed_expected_health_loss += damage

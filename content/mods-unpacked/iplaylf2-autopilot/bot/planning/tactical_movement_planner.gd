@@ -1,7 +1,9 @@
 extends Reference
 
-# Public planning boundary. It scores every retained movement action with one
-# complete semantic model and returns an inspectable utility ledger.
+# Tactical planning boundary for executable movement. It scores every retained
+# action from a fresh observation with one complete semantic model. Strategic
+# navigation is a held, bounded-age input: it can shape opportunity progress but
+# never delays local collision, health, or action evaluation.
 
 const MovementActionGenerator := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_generator.gd"
@@ -27,11 +29,8 @@ const MovementUtilityModel := preload(
 const MovementActionSelector := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_action_selector.gd"
 )
-const NavigationIntentPlanner := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/navigation_intent_planner.gd"
-)
-const MovementTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
+const PlanningTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
 )
 const MovementGeometryModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_geometry_model.gd"
@@ -51,7 +50,6 @@ var _direction_refiner: Reference = AdaptiveDirectionRefiner.new()
 var _outcome_predictor: Reference = MovementOutcomePredictor.new()
 var _utility_model: Reference = MovementUtilityModel.new()
 var _action_selector: Reference = MovementActionSelector.new()
-var _navigation_intent_planner: Reference = NavigationIntentPlanner.new()
 var _movement_geometry: Reference = MovementGeometryModel.new()
 var _local_enemy_interaction_projector: Reference = LocalEnemyInteractionProjector.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
@@ -62,17 +60,14 @@ func _init() -> void:
 	# Candidate models ask many of the same (track, time, player position)
 	# questions. One frame-scoped predictor owns those projections so semantic
 	# models share computation without owning independent mutable caches.
-	_navigation_intent_planner.set_enemy_motion_predictor(_enemy_motion_predictor)
 	_outcome_predictor.set_enemy_motion_predictor(_enemy_motion_predictor)
 
 
-func set_frame_budget_context(frame_budget_context: Dictionary) -> void:
-	_compute_budget_policy.set_frame_budget_context(frame_budget_context)
-
-
-func plan(
-	observation: Dictionary, active_movement: Vector2, request_created_usec: int
-) -> Dictionary:
+func plan(request: Dictionary) -> Dictionary:
+	var observation: Dictionary = request.observation
+	var active_movement: Vector2 = request.active_movement
+	var request_created_usec: int = request.request_created_usec
+	_compute_budget_policy.set_frame_budget_context(request.frame_budget_context)
 	if observation.empty() or not observation.has("player_state"):
 		return _empty_plan("observation_unavailable")
 	if observation.player_state.dead:
@@ -98,22 +93,19 @@ func plan(
 	var planning_observation: Dictionary = projectile_filter.filtered_observation
 	var context: Dictionary = _utility_model.build_context(planning_observation)
 	var movement_geometry: Dictionary = _movement_geometry.derive(planning_observation)
-	var timing: Dictionary = MovementTimingModel.derive(planning_observation)
-	context.control_interval_seconds = timing.control_interval_seconds
-	var search_work_allocation: Dictionary = _search_work_allocator.allocate(
+	var timing: Dictionary = PlanningTimingModel.derive(planning_observation)
+	context.tactical_control_interval_seconds = timing.tactical_control_interval_seconds
+	var search_work_allocation: Dictionary = _search_work_allocator.allocate_tactical(
 		compute_budget, int(movement_geometry.direction_count)
 	)
 	phase_duration_usec.observation_preparation = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
-	var navigation_intent: Dictionary = _navigation_intent_planner.plan(
-		planning_observation,
-		context,
-		compute_budget,
-		search_work_allocation,
-		_compute_budget_policy
+	var strategic_navigation_guidance: Dictionary = request.get("strategic_navigation_guidance", {})
+	var navigation_intent: Dictionary = _navigation_intent_from_guidance(
+		strategic_navigation_guidance
 	)
 	context.navigation_trajectory_value_samples = navigation_intent.trajectory_value_samples
-	phase_duration_usec.navigation = OS.get_ticks_usec() - phase_started_usec
+	phase_duration_usec.navigation_guidance_handoff = OS.get_ticks_usec() - phase_started_usec
 	phase_started_usec = OS.get_ticks_usec()
 	var actions: Array = _action_generator.generate(planning_observation, navigation_intent)
 	var local_domain: Dictionary = _local_enemy_interaction_projector.project(
@@ -190,6 +182,9 @@ func plan(
 	plan.local_enemy_interaction_domain = local_domain.duplicate(false)
 	plan.local_enemy_interaction_domain.erase("observation")
 	plan.navigation_intent = navigation_intent.duplicate(true)
+	plan.strategic_navigation_guidance_diagnostics = (_strategic_navigation_guidance_diagnostics(
+		observation, strategic_navigation_guidance
+	))
 	plan.action_count = actions.size()
 	plan.refined_action_count = refined_action_count
 	plan.ranked_actions = _summarize_actions(ranked_actions, 3)
@@ -201,13 +196,16 @@ func _model_diagnostics(
 	observation: Dictionary, plan: Dictionary, navigation_intent: Dictionary
 ) -> Dictionary:
 	var movement_geometry: Dictionary = _movement_geometry.derive(observation)
-	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var timing: Dictionary = PlanningTimingModel.derive(observation)
 	return {
 		"timing":
 		{
 			"derivation": "physics_ticks_and_collision_traversal",
-			"replan_physics_ticks": MovementTimingModel.REPLAN_PHYSICS_TICKS,
-			"control_interval_seconds": MovementTimingModel.control_interval_seconds(),
+			"tactical_control_physics_ticks": PlanningTimingModel.TACTICAL_CONTROL_PHYSICS_TICKS,
+			"strategic_navigation_guidance_interval_physics_ticks":
+			PlanningTimingModel.strategic_guidance_interval_physics_ticks(),
+			"tactical_control_interval_seconds":
+			PlanningTimingModel.tactical_control_interval_seconds(),
 			"near_term_horizon_seconds": timing.near_term_horizon_seconds,
 			"default_local_horizon_seconds": timing.default_local_horizon_seconds,
 			"maximum_local_horizon_seconds": timing.maximum_local_horizon_seconds,
@@ -226,6 +224,47 @@ func _model_diagnostics(
 			"control_distance": navigation_intent.control_distance,
 			"enemy_position_response_cache": _enemy_motion_predictor.cache_diagnostics(),
 		},
+	}
+
+
+func _navigation_intent_from_guidance(guidance: Dictionary) -> Dictionary:
+	if guidance.get("status", "") == "ready":
+		var intent = guidance.get("navigation_intent", {})
+		if typeof(intent) == TYPE_DICTIONARY and intent.has("trajectory_value_samples"):
+			return intent
+	return {
+		"movement_preference": Vector2.ZERO,
+		"trajectory_value_samples": [],
+		"trajectory_value_gain": 0.0,
+		"selected_trajectory": {},
+		"baseline_direction_evaluation_count": 0,
+		"extra_direction_evaluation_count": 0,
+		"extra_direction_evaluation_limit": 0,
+		"baseline_field_sample_evaluation_count": 0,
+		"extra_field_sample_evaluation_count": 0,
+		"trajectory_sample_count": 0,
+		"sampling_radius": 0.0,
+		"local_prediction_radius": 0.0,
+		"control_distance": 0.0,
+		"source_scope": "unavailable",
+	}
+
+
+func _strategic_navigation_guidance_diagnostics(
+	observation: Dictionary, guidance: Dictionary
+) -> Dictionary:
+	var source_frame: int = int(guidance.get("source_physics_frame", -1))
+	return {
+		"status": guidance.get("status", "unavailable"),
+		"source_physics_frame": source_frame if source_frame >= 0 else null,
+		"age_physics_ticks":
+		(
+			max(0, int(observation.get("physics_frame", 0)) - source_frame)
+			if source_frame >= 0
+			else null
+		),
+		"compute_budget": guidance.get("compute_budget", {}).duplicate(true),
+		"search_work_allocation": guidance.get("search_work_allocation", {}).duplicate(true),
 	}
 
 

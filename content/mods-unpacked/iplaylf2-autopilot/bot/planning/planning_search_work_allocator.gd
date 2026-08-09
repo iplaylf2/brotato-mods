@@ -1,32 +1,40 @@
 extends Reference
 
-# Maps planning budget pressure into optional search work. Navigation retains a
-# bounded all-angle evidence lattice because its selected value direction is an
-# input to local action generation. Movement geometry owns the local action
-# baseline; this allocator owns the navigation baseline and optional work limits.
+# Maps each planning loop's independent budget pressure into only the work that
+# loop owns. Movement geometry owns the tactical baseline; this allocator owns
+# tactical refinement limits and the strategic navigation lattice.
 
 const NAVIGATION_BASELINE_DIRECTION_COUNT := 8
 const NAVIGATION_MINIMUM_DIRECTION_COUNT := 4
 const MINIMUM_REFINEMENT_FIDELITY := 0.25
 
 
-func allocate(compute_budget: Dictionary, movement_refinement_capacity: int) -> Dictionary:
+func allocate_tactical(compute_budget: Dictionary, movement_refinement_capacity: int) -> Dictionary:
 	var budget_pressure: float = compute_budget.budget_pressure
 	var refinement_fidelity := _retained_refinement_fidelity(budget_pressure)
 	return {
-		"allocation_model": "budgeted_optional_search_work",
+		"allocation_model": "budgeted_tactical_search_work",
 		"budget_pressure": budget_pressure,
 		"minimum_refinement_fidelity": MINIMUM_REFINEMENT_FIDELITY,
 		"refinement_fidelity": refinement_fidelity,
-		# Local action geometry retains its full collision-derived lattice. Strategic
-		# navigation is an approximate value field, so its uniform scan yields first
-		# when measured turnaround pressure is saturated; interpolation still gives
-		# every local action a continuation value.
+		"movement_refinement_limit":
+		_extra_work_limit(movement_refinement_capacity, refinement_fidelity),
+	}
+
+
+func allocate_strategic(compute_budget: Dictionary) -> Dictionary:
+	var budget_pressure: float = compute_budget.budget_pressure
+	var refinement_fidelity := _retained_refinement_fidelity(budget_pressure)
+	return {
+		"allocation_model": "budgeted_strategic_search_work",
+		"budget_pressure": budget_pressure,
+		"minimum_refinement_fidelity": MINIMUM_REFINEMENT_FIDELITY,
+		"refinement_fidelity": refinement_fidelity,
+		# The approximate value field yields uniform resolution before it can consume
+		# capacity reserved for the independently scheduled tactical loop.
 		"navigation_baseline_direction_count": _navigation_baseline_count(budget_pressure),
 		"navigation_extra_evaluation_limit":
 		_extra_work_limit(NAVIGATION_BASELINE_DIRECTION_COUNT, refinement_fidelity),
-		"movement_refinement_limit":
-		_extra_work_limit(movement_refinement_capacity, refinement_fidelity),
 	}
 
 

@@ -42,7 +42,7 @@ func allocate(planning_started_usec: int) -> Dictionary:
 		+ polling_allowance_usec
 	)
 	return {
-		"budget_model": "half_control_window_cap",
+		"budget_model": "partitioned_half_control_window_cap",
 		"budget_pressure": budget_pressure,
 		"has_deadline": has_deadline,
 		"planning_started_usec": planning_started_usec,
@@ -66,6 +66,8 @@ func allocate(planning_started_usec: int) -> Dictionary:
 		_frame_budget_context.get("planning_window_physics_frames", 1),
 		"has_frame_time_sample": _frame_budget_context.get("has_frame_time_sample", false),
 		"scheduled_planner_count": _frame_budget_context.get("scheduled_planner_count", 1),
+		"planning_loop_capacity_share":
+		_frame_budget_context.get("planning_loop_capacity_share", 1.0),
 		"estimated_work_unit_duration_usec": _work_unit_duration_usec_ema.duplicate(true),
 	}
 
@@ -136,4 +138,11 @@ func _planning_duration_budget_usec() -> float:
 	var planning_window: float = _frame_budget_context.get("planning_window_usec", frame_capacity)
 	var aggregate_headroom := max(0.0, frame_capacity - physics_process_peak) * window_frames
 	var freshness_budget := planning_window * MAXIMUM_CONTROL_WINDOW_BUDGET_FRACTION
-	return min(freshness_budget, aggregate_headroom) / scheduled_planner_count
+	var planning_loop_capacity_share: float = clamp(
+		float(_frame_budget_context.get("planning_loop_capacity_share", 1.0)), 0.0, 1.0
+	)
+	return (
+		min(freshness_budget, aggregate_headroom)
+		* planning_loop_capacity_share
+		/ scheduled_planner_count
+	)

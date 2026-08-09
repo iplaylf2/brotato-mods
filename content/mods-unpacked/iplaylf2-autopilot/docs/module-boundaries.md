@@ -11,9 +11,9 @@
 | `mod_main.gd` | 安装主场景与 RunData 扩展，接入 Mod Loader 配置并发布控制/采样启用状态 | `is_enabled()`、`is_sampling_enabled()` 与对应信号；不持有对局或战斗期状态 |
 | `extensions/run_data.gd` | 生成整局采样 ID，并随原版对局状态保存和恢复 | 扩展 `RunData.reset()`、`get_state()` 与 `resume_from_state()`；`get_battle_sample_run_id()` 是主场景组合根的只读入口 |
 | `extensions/main.gd` | 作为组合根响应玩家生成、设置切换和房间清理，按需创建或停止观察、控制与记录边界 | 主场景公开 `autopilot_observation_service`、`autopilot_controller` 和 `get_current_battle_sample_path()`；不公开采样组件，也不实现观察、规划、存储或整局身份语义 |
-| `bot/control` | 调度后台规划并适配原版移动控制 | `AutopilotController` 只在控制开启时存在；`AutopilotMovementBehavior` 是唯一控制输出，`PlanningWorker` 是包内协作者 |
+| `bot/control` | 调度多速率后台规划并适配原版移动控制 | `AutopilotController` 只在控制开启时存在；`AutopilotMovementBehavior` 是唯一控制输出，两个独立的 `PlanningWorker` 实例是包内协作者 |
 | `bot/sampling` | 协调 human/bot 战斗采样并异步写入分段文件 | `BattleSampleRecorder` 只在采样开启时存在；`BattleSampleWriter` 是包内协作者 |
-| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价，以及候选执行资格与效用选择 | `MovementPlanner.set_frame_budget_context()` 与 `plan()`；`MovementTimingModel.control_interval_seconds()` 是控制层共享的调度契约，其余组件是规划包内部协作者 |
+| `bot/planning` | 管理导航意图、运动学、碰撞证据、动作搜索、机会与资源定价，以及候选执行资格与效用选择 | `TacticalMovementPlanner.plan()` 是战术入口，`StrategicNavigationPlanner.plan()` 是战略入口；`PlanningTimingModel` 公开两级调度契约，其余组件是规划包内部协作者 |
 | `bot/observation` | 读取当前玩家与可见世界，维护局内观察记忆，组装公共观察 | `ObservationService.initialize()` 接入主场景与玩家；`get_observation()` 提供防御性副本；`get_planning_observation()` 截取不含场景节点并与观察状态隔离的规划值快照 |
 | `bot/knowledge` | 适配版本数据并编译稳定机制，向观察层提供不含场景节点的语义结果 | 不跨层公开运行时服务，只由观察层调用 |
 
@@ -21,7 +21,7 @@
 其公开只读入口取得 ID。战斗期依赖从主场景组合根向 `control`、`sampling` 与 `observation` 单向展开；
 `control → observation`、`control → planning`、`sampling → observation`，`observation → knowledge`。
 `planning` 只接收已经移除场景节点的观察字典，不反向依赖 `control`、`sampling`、`observation` 或
-`knowledge`。控制层对 `MovementTimingModel` 的依赖只共享重规划间隔；时域派生及其解释权仍属于规划包。
+`knowledge`。控制层对 `PlanningTimingModel` 的依赖只共享多速率调度间隔；时域派生及其解释权仍属于规划包。
 
 所有新增能力必须先满足玩家权限边界。玩家效果的原版字段映射由 `bot/knowledge/player_effects` 拥有，
 消耗品稳定画像由 `bot/knowledge/pickups` 拥有；公共规则轴及其解释权属于规划模型，不能随原版字段数量
@@ -30,7 +30,8 @@
 
 ## 规划包的子目录边界
 
-`bot/planning` 根目录是主要协作包。大多数组件共同服务规划入口 `MovementPlanner`，并存在密集的包内
+`bot/planning` 根目录是主要协作包。大多数组件共同服务 `TacticalMovementPlanner` 与
+`StrategicNavigationPlanner` 两个跨域规划入口，并存在密集的包内
 依赖。由多个组件共同定义、且可被不同规划流程单独消费的稳定协议进入子目录：
 
 - `motion` 拥有“规范运动观察与稳定响应 → 未来位置、可达包络与角向机动约束”的协议，供暴露、交会、
@@ -98,7 +99,7 @@
 
 ### 运动、碰撞与生命
 
-- `bot/planning/movement_timing_model.gd` 唯一定义规划时域及其波次剩余时间裁剪；
+- `bot/planning/planning_timing_model.gd` 唯一定义多速率调度、规划时域及其波次剩余时间裁剪；
   `bot/planning/movement_geometry_model.gd` 统一派生共享空间尺度。
 - `bot/planning/motion/observed_motion_predictor.gd` 只负责纯观测运动外推；
   `bot/planning/motion/enemy_motion_predictor.gd` 对稳定目标位置响应作自适应中点积分，并在不适用时改用
@@ -190,22 +191,23 @@
   `bot/planning/movement_action_selector.gd` 从已评分候选中排除可避免的提交期确定终止碰撞，再选择总效用
   最高者；
   `bot/planning/actuation_state_projector.gd` 统一把值快照推进到后台结果预计抵达执行器的时刻，消费当前仍
-  生效的移动输入与运动预测，不解释风险偏好；`MovementPlanner` 协调生效时刻投影、生成、预测、评分、
-  细分与选择，不把新行为政策藏进选择器。
+  生效的移动输入与运动预测，不解释风险偏好；`TacticalMovementPlanner` 协调生效时刻投影、生成、预测、
+  评分、细分与选择，不把新行为政策藏进选择器。
 
 ### 控制与计算预算
 
 - `bot/control/physics_frame_budget_monitor.gd` 独占 Godot 性能监视与物理回调峰值估计，向规划
-  边界公开帧预算上下文；`bot/control/planning_worker.gd` 独占工作线程、信号量、互斥交接和回收，并在该
-  线程创建、配置、执行和释放规划器；`bot/control/autopilot_controller.gd` 只提交值快照、当前仍生效的
-  移动输入、请求创建时刻与预算上下文，独占调度、失败时释放控制与结果提交。规划器不访问场景节点或
-  可变观察状态。
+  边界公开帧预算上下文；`bot/control/planning_worker.gd` 独占单个工作线程、信号量、互斥交接和回收，
+  控制器分别为战术与战略实例化它。`bot/control/autopilot_controller.gd` 只提交值快照、当前仍生效的
+  移动输入、请求创建时刻、容量份额与预算上下文，独占两级调度、战略指导的来源帧/期限检查、失败时释放
+  控制与战术结果提交。两个线程不共享规划器实例；规划器不访问场景节点或可变观察状态。
 - `bot/planning/planning_compute_budget_policy.gd` 以半个控制窗为预算上限，把帧预算上下文转换成统一最终
-  截止、规划开始后的延迟估计与连续预算压力，并维护
-  额外工作的耗时估计；`bot/planning/planning_search_work_allocator.gd` 把预算压力映射为导航额外评价和
-  移动细分额度，并在四至八个均匀方向间分配导航基线。两者都不拥有局部动作基线、导航机会或行为效用；
-  由碰撞几何派生的局部动作格点不随预算缩减。`MovementPlanner` 把该估计与实际排队时间合成总延迟，
-  再调用 `ActuationStateProjector`。
+  截止，再乘所属规划环的容量份额，并在线程内独立维护延迟估计、连续预算压力和额外工作耗时；
+  `bot/planning/planning_search_work_allocator.gd` 通过独立入口把预算压力映射为战略导航评价或战术移动
+  细分额度，并在四至八个均匀方向间分配战略导航基线。两者都不拥有局部动作基线、导航机会或行为效用；
+  由碰撞几何派生的局部动作格点不随预算缩减。`StrategicNavigationPlanner` 独占长时域价值场，
+  `TacticalMovementPlanner` 独占可执行动作、碰撞、生命与选择；两者分别把自身估计与实际排队时间合成
+  总延迟，再调用各自的 `ActuationStateProjector`。
 - `bot/planning/projectile_reachability_filter.gd` 只拥有投射物的规划域可达性过滤；弹道积分与位移上界仍由
   `bot/planning/motion/projectile_motion_predictor.gd` 提供；
   `bot/planning/adaptive_direction_refiner.gd` 只根据已评分方向提出下一角区间中点，候选构造、评价和停止
@@ -221,7 +223,7 @@
   失败提升为移动控制失败。它省略敌人轨迹中重复的稳定机制画像与行为证据，但保留每条样本当时的玩家
   效果规则，以及解释路径风险所需的攻击因果字段和当前攻击时间窗；冲撞画像明确保留触发距离、速度、
   持续时间、目标分布和 `next_charge_attack_window`。采样压缩只改变持久化投影，不改变
-  规划输入或字段语义。`MovementPlanner` 仍独占规划结果与诊断语义。
+  规划输入或字段语义。`TacticalMovementPlanner` 仍独占可执行计划与战术诊断语义。
 
 ## 组件角色命名
 
@@ -239,7 +241,7 @@
 | `Model` | 封装可复用的领域关系或评价规律 | 领域动词 |
 | `Generator` | 按已给空间与画像构造候选集合，不拥有评价或选择 | `generate`、`make_*` |
 | `Selector` | 从已评分候选中选择结果，不拥有预测或评分 | `select` |
-| `Planner` | 协调候选生成、预测、评价与选择，产出完整决策 | `plan` |
+| `Planner` | 协调候选生成、预测、评价与选择，产出完整决策或指导 | `plan` |
 | `Worker` | 在受同步协议保护的后台拥有任务执行生命周期，不拥有任务语义或结果应用 | `start`、`submit`、`poll`、`shutdown` |
 | `Monitor` | 读取运行时监视值，维护平滑状态并公开上下文 | `observe_*`、`build_context` |
 | `Filter` | 按明确判据产生输入子集，并公开过滤诊断 | `filter` |
@@ -253,3 +255,8 @@
 数据按产物命名，例如 `attack_model`、`rule_projection`、`behavior_profile` 和 `navigation_intent`；组件使用
 上表的角色后缀。这样可以区分投影结果与执行投影的 `Projector`，以及导航意图与生成它的
 `NavigationIntentPlanner`。
+
+多速率规划使用三层固定术语：`navigation_intent` 是战略搜索直接产生的方向价值结果；
+`strategic_navigation_guidance` 是跨线程传递的完整值信封，包含该意图、来源帧和战略计算账本；
+`strategic_navigation_guidance_diagnostics` 是战术计划持久化的信封摘要，不重复保存意图。通用
+`PlanningWorker` 的结果信封使用中性的 `output`，不能把战略指导误称为 `plan`。

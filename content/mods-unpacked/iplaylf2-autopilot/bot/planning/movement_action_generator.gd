@@ -5,8 +5,8 @@ extends Reference
 # threat reach domains can overlap. It is not an execution commitment. Zero
 # velocity is the origin of the same action space, not a mode.
 
-const MovementTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/movement_timing_model.gd"
+const PlanningTimingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
 )
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
@@ -30,7 +30,7 @@ var _enemy_reach_envelope_model: Reference = EnemyReachEnvelopeModel.new()
 
 
 func generate(observation: Dictionary, navigation_intent: Dictionary) -> Array:
-	var timing: Dictionary = MovementTimingModel.derive(observation)
+	var timing: Dictionary = PlanningTimingModel.derive(observation)
 	var forecast_seconds := _forecast_window(observation, timing)
 	var sample_count := _forecast_sample_count(observation, forecast_seconds, timing)
 	var direction_count: int = _movement_geometry.derive(observation).direction_count
@@ -137,7 +137,7 @@ func _forecast_window(observation: Dictionary, timing: Dictionary) -> float:
 		)
 		if projectile.relative_position.length() <= contact_support:
 			return maximum_horizon
-	return MovementTimingModel.clip_to_wave_remaining(
+	return PlanningTimingModel.clip_to_wave_remaining(
 		observation, timing.default_local_horizon_seconds
 	)
 
@@ -164,7 +164,7 @@ func _forecast_sample_count(
 		)
 	# At least one sample per future control commitment keeps temporal events and
 	# spatial sweeps on the same resolution contract.
-	var control_samples := int(ceil(forecast_seconds / timing.control_interval_seconds))
+	var control_samples := int(ceil(forecast_seconds / timing.tactical_control_interval_seconds))
 	return int(max(max(1, spatial_samples), max(phase_samples, control_samples)))
 
 

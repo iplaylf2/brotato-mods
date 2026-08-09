@@ -233,7 +233,7 @@ func _check_action_forecast_domain() -> void:
 	observation.player_state.movement.input_vector = Vector2.RIGHT
 	var generator: Reference = load(PLANNING_PATH + "movement_action_generator.gd").new()
 	var actions: Array = generator.generate(observation, {"movement_preference": Vector2.ZERO})
-	var timing: Dictionary = load(PLANNING_PATH + "movement_timing_model.gd").derive(observation)
+	var timing: Dictionary = load(PLANNING_PATH + "planning_timing_model.gd").derive(observation)
 	_expect(
 		_all_actions_share_forecast(actions, timing.maximum_local_horizon_seconds),
 		(
@@ -364,24 +364,31 @@ func _check_item_box_tier_expectation() -> void:
 
 
 func _check_planning_budget_and_search_allocation() -> void:
+	var timing_model: Script = load(PLANNING_PATH + "planning_timing_model.gd")
+	_expect(
+		(
+			timing_model.TACTICAL_CONTROL_PHYSICS_TICKS == 3
+			and timing_model.strategic_guidance_interval_physics_ticks() == 12
+			and timing_model.strategic_guidance_max_age_physics_ticks() == 24
+		),
+		"multi-rate planning must expose a fast tactical cadence and bounded held guidance"
+	)
 	var budget_policy: Reference = load(PLANNING_PATH + "planning_compute_budget_policy.gd").new()
 	budget_policy.set_frame_budget_context(
 		{
 			"has_frame_time_sample": true,
 			"physics_frame_capacity_usec": 16666.0,
 			"physics_process_peak_usec_ema": 5000.0,
-			"planning_window_usec": 100000.0,
-			"planning_window_physics_frames": 6,
+			"planning_window_usec": 50000.0,
+			"planning_window_physics_frames": 3,
 			"scheduled_planner_count": 1,
+			"planning_loop_capacity_share": 0.8,
 		}
 	)
 	var budget: Dictionary = budget_policy.allocate(OS.get_ticks_usec())
 	_expect(
-		(
-			budget.planning_duration_budget_usec > 16666.0 - 5000.0
-			and budget.planning_duration_budget_usec <= 50000.0
-		),
-		"planning budget must not exceed half the control window"
+		is_equal_approx(budget.planning_duration_budget_usec, 20000.0),
+		"a planning loop must receive only its declared share of the half-window cap"
 	)
 	_expect(
 		is_equal_approx(budget.expected_post_start_actuation_delay_usec, 16666.0),
@@ -389,18 +396,21 @@ func _check_planning_budget_and_search_allocation() -> void:
 	)
 	var allocator_script: Script = load(PLANNING_PATH + "planning_search_work_allocator.gd")
 	var allocator: Reference = allocator_script.new()
-	var search: Dictionary = allocator.allocate({"budget_pressure": 1.0}, 12)
-	var unconstrained_search: Dictionary = allocator.allocate({"budget_pressure": 0.0}, 12)
+	var search: Dictionary = allocator.allocate_tactical({"budget_pressure": 1.0}, 12)
+	var strategic_search: Dictionary = allocator.allocate_strategic({"budget_pressure": 1.0})
+	var unconstrained_search: Dictionary = allocator.allocate_strategic({"budget_pressure": 0.0})
 	_expect(
 		(
 			search.movement_refinement_limit == 0
-			and search.navigation_extra_evaluation_limit == 0
+			and not search.has("navigation_extra_evaluation_limit")
+			and strategic_search.navigation_extra_evaluation_limit == 0
+			and not strategic_search.has("movement_refinement_limit")
 			and (
-				search.navigation_baseline_direction_count
+				strategic_search.navigation_baseline_direction_count
 				< unconstrained_search.navigation_baseline_direction_count
 			)
 		),
-		"saturated pressure must reduce the strategic baseline and remove optional search work"
+		"each saturated planning loop must reduce only the optional search work it owns"
 	)
 
 
@@ -801,7 +811,7 @@ func _check_run_continuation_risk_and_action_selection() -> void:
 			"committed_terminal_health_risk": 0.0,
 		},
 		{
-			"control_interval_seconds": 0.1,
+			"tactical_control_interval_seconds": 0.1,
 			"objective_weights": {"survival": {"expected_run_continuation_value_loss": -1.0}},
 			"state_factors":
 			{

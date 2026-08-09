@@ -145,7 +145,7 @@ func _check_navigation_horizon_consistency() -> void:
 		],
 	}
 	var context := {
-		"control_interval_seconds": 0.1,
+		"tactical_control_interval_seconds": 0.1,
 		"environmental_pressure_weights": _influence_weights(),
 		"state_factors": {"positive_damage_is_terminal_rule": false},
 		"enemy_completion_value_ledger": _completion_value_ledger({}),
@@ -200,7 +200,7 @@ func _check_trajectory_value_field() -> void:
 		compute_policy
 	)
 	var spatial: Reference = load(PLANNING_PATH + "spatial_opportunity_value_model.gd").new()
-	var timing: Dictionary = load(PLANNING_PATH + "movement_timing_model.gd").derive(observation)
+	var timing: Dictionary = load(PLANNING_PATH + "planning_timing_model.gd").derive(observation)
 	var endpoint_delta: Dictionary = spatial.point_value_delta(
 		observation,
 		context,
@@ -473,7 +473,7 @@ func _check_weapon_outcome_contracts() -> void:
 		"samples": [{"time": 0.5, "displacement": Vector2.ZERO, "movement": Vector2.ZERO}],
 	}
 	var context := {
-		"control_interval_seconds": 0.1,
+		"tactical_control_interval_seconds": 0.1,
 		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0, 2: 100.0}),
 		"state_factors": {"health_inventory_value": {}},
 		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 0.0, 2: 0.0}),

@@ -26,8 +26,8 @@ Mod Loader 日志会报告当前文件的虚拟路径和绝对路径；主场景
 var path: String = main.get_current_battle_sample_path()
 ```
 
-bot 分段中，每位玩家的第一次决策必定采样，之后每 10 次重规划采样一次。控制期为六个物理 tick，在
-60 Hz 下名义为 `0.1` 秒，因此常规采样间隔约为 `1` 秒。规划失败等非 `ready` 结果不等待采样周期。
+bot 分段中，每位玩家的第一次决策必定采样，之后每 10 次战术重规划采样一次。战术控制期为三个物理
+tick，在 60 Hz 下名义为 `0.05` 秒，因此常规采样间隔约为 `0.5` 秒。规划失败等非 `ready` 结果不等待采样周期。
 human 分段不运行规划器，约每秒记录一次公共观察与原版已经采用的移动输入。若规划工作线程在运行中拒绝
 新请求，控制器先交还移动控制，记录器再结束 bot 分段并转入 human 分段。实际间隔会受物理帧调度影响；
 复盘时必须以 `physics_frame` 对齐，bot 样本还应以 `decision_index` 检查决策缺口。
@@ -65,7 +65,7 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 控制来源，便于不解析内容时筛选 human 参考样本和 bot 决策样本。复原一条样本时，应先合并这三层上下文。
 
 原版正常波次的最长计时是第 20 波的 90 秒；无尽波由 `ZoneService.get_wave_data()` 固定为 60 秒。按约
-1 秒一次采样计算，单人最长普通波约 90 条，四人约 360 条，适合将每个“波次 × 控制来源”分段保存在
+0.5 秒一次采样计算，单人最长普通波约 180 条，四人约 720 条，适合将每个“波次 × 控制来源”分段保存在
 单个文件中。
 
 为控制体积，敌人轨迹的采样投影只保留解释已记录账本所需的行为画像标量，省略重复的行为证据与测量内
@@ -90,7 +90,7 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 采样是定期截面，不是逐帧回放。两条 `decision_sample` 之间仍会发生未记录的重规划，因此不能从文件
 恢复每个控制期的移动输入，也不能把后一条观察直接归因于前一条采样决策。
 
-局部预测窗通常长于一个六物理 tick 的提交期；控制器只执行所选动作到下一次重规划。校准时应区分：
+局部预测窗通常长于一个三物理 tick 的战术提交期；控制器只执行所选动作到下一次战术重规划。校准时应区分：
 
 - 同一条样本中的 `previous_movement` 与当前运动观察可以验证正在生效的输入、速度和扰动关系；
 - 新选动作的提交期终点通常落在下一条定期样本之前，不能假定采样记录了该终点；
@@ -116,17 +116,19 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 
 #### 规划预算与搜索工作分配
 
-`decision.compute_budget` 同时记录本轮截止、单项耗时估计和实测规划耗时。后台规划预算由一个重规划
-控制窗内各物理帧的可用余量聚合，而不是要求整轮规划塞进单个物理帧；再按同窗规划器数量均分，并以
-半个控制窗为预算上限。预算政策不会向规划分配超过半个名义控制窗的额度；这是延迟控制目标，不保证
-基线工作、线程调度或结果轮询一定在截止前完成。
+`decision.compute_budget` 记录战术环的截止、单项耗时估计和实测耗时；
+`decision.strategic_navigation_guidance_diagnostics.compute_budget` 记录当前所用战略指导的独立计算账本。
+两级预算都先聚合各自控制窗内的物理帧余量，再按玩家数均分并以半个窗口为总上限，最后按战术 `0.8`、
+战略 `0.2` 的容量份额分账。战略环每十二个物理 tick 更新，战术环每三个物理 tick 更新；两者使用独立
+邮箱，战略超时不会占用战术工作队列，但两条线程仍会争用 CPU。截止是延迟和争用控制目标，不保证基线
+工作、线程调度或结果轮询一定在截止前完成。
 
 复盘时先检查 `has_frame_time_sample`。该值为 `false` 表示尚无有效物理回调峰值样本：本轮没有计算截止，
 受截止控制的额外工作不会启动，`planning_duration_budget_usec = 0`，且预算利用率为 `null`。此时
 `budget_pressure = 0`，不会把未知余量误判为过载。存在帧样本但实测余量为零时，压力为 `1`；余量为正
 但尚无规划耗时估计时，压力同样为 `0`；余量为正且已有估计时，压力由此前规划耗时 EMA 相对本轮余量
-的比例平方得到。`decision.search_work_allocation` 记录随压力在四至八个均匀方向间收缩的导航覆盖，以及
-可变的细分保真度和离散工作额度；几何动作方向基线另见
+的比例平方得到。战略指导的 `search_work_allocation` 记录随压力在四至八个均匀方向间收缩的导航覆盖；
+战术 `decision.search_work_allocation` 主要解释可变的动作细分保真度和离散工作额度。几何动作方向基线另见
 `decision.model.derived.geometry_direction_count`。这些字段只解释搜索覆盖和
 可选工作，不代表碰撞采样精度、动作结果优劣或目标价值。导航基线只包含均匀方向；机会聚合方向和角区间
 细分均受截止准入控制。只有经过完整轨迹评价并胜出的方向才会补入动作基线，未经评价的搜索提案不影响
@@ -134,13 +136,15 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 
 `planning_duration_budget_utilization` 使用本轮实测耗时除以本轮预算。大于 `1` 表示本轮超出预算；单次
 超出可能来自基线工作、工作量突变、单项耗时低估、系统调度或性能监视延迟。连续超出时，应比较
-`action_count`、`refined_action_count`、导航的 `extra_direction_evaluation_count` 与
-`extra_field_sample_evaluation_count`、
-`planning_turnaround_usec`、`estimated_work_unit_duration_usec`、`budget_pressure` 与
+`action_count`、`refined_action_count`、导航的 `extra_direction_evaluation_count`、
+`extra_field_sample_evaluation_count`、`planning_turnaround_usec`、`estimated_work_unit_duration_usec`、
+`budget_pressure` 与
 `decision.search_work_allocation`。
 导航额外评价和移动角度细分均为零、局部方向数保持几何派生基线，且压力饱和后仍然超预算时，应再检查
-`phase_duration_usec`；这说明规划准备、价值导航和所有保留动作的完整预测已经超过由主线程余量派生的
-后台计算额度。常规规划计算不在物理线程执行，但长期超额会增加决策延迟并与游戏争用 CPU。
+战术 `phase_duration_usec`；这说明观察准备和所有保留动作的完整预测已经超过战术份额。战略性能则单独
+检查 `decision.strategic_navigation_guidance_diagnostics.compute_budget.phase_duration_usec.navigation`、
+来源帧与指导年龄；战略长期超额会降低指导刷新率。它不会直接占用战术工作队列，但 CPU 争用仍可能增加
+战术周转时间。
 同时比较 `decision.actuation_projection.delay_seconds`：它把已发生的排队时间、此前规划耗时与轮询上界
 合成为观察到预计动作生效时刻的因果前缀，通常应覆盖大部分实测周转时间。若实测周转长期显著更大，
 碰撞模型即使计算正确也会从偏旧的时空基准开始，应优先裁掉边际搜索或优化公共预测，而不是提高风险
@@ -148,12 +152,13 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 `decision.projectile_filter` 的纳入与延后投射物计数用于解释可达性过滤效果。
 `decision.local_enemy_interaction_domain` 用于解释敌人轨迹的局部空间粗筛：输入数包含完整的可见与
 短期记忆轨迹，相关数只包含动作窗内可威胁玩家的轨迹，以及可进入自动武器锁定区的可见轨迹。它减少的
-是经几何证明不会影响当前动作的重复精算，不影响导航、敌人完成价值或波内完成预测所覆盖的机会。比较优化
-前后性能时，应同时按可见敌人数、相关轨迹数和输入轨迹数分层；只按总轨迹数会把交互域收益误判为候选降级。
-`decision.model.derived.enemy_position_response_cache` 记录规划器统一拥有的位置响应缓存。缓存以物理帧、
-轨迹、预测时刻和候选玩家位移为键；导航暴露、空间机会、局部碰撞、事件和武器结果预测共享相同的查询。
-优化前后应在相同候选数与相关轨迹数下比较导航及动作阶段耗时，确认收益来自消除重复积分，而不是少算
-目标、方向或碰撞采样。
+是经几何证明不会影响当前动作的重复精算，不影响导航、敌人完成价值或波内完成预测所覆盖的机会。比较
+优化前后性能时，应同时按可见敌人数、相关轨迹数和输入轨迹数分层；只按总轨迹数会把交互域收益误判为
+候选降级。
+`decision.model.derived.enemy_position_response_cache` 记录战术规划器拥有的位置响应缓存。缓存以物理帧、
+轨迹、预测时刻和候选玩家位移为键，供局部碰撞、事件和武器结果预测共享；战略规划器另有线程私有缓存，
+不跨代际传给战术线程。优化前后应在相同候选数与相关轨迹数下分别比较战略导航及战术动作耗时，确认收益
+来自线程解耦和各自内部的重复积分消除，而不是少算目标、方向或碰撞采样。
 
 `decision.wave_completion_forecast` 记录统一目标共享的 `primary_hit_capacity`、把每个目标独立估算时产生的
 `independent_demand_hits`、实际 `allocated_hits` 和竞争缩放。敌人需求使用最后可见时的剩余生命；树木需求
@@ -186,8 +191,9 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 没有帧样本时则写为 `null`。复盘工具应先按 `has_frame_time_sample` 区分未知与实测过载，再对正预算样本
 比较利用率或计算分位数。
 
-规划耗时和单项耗时 EMA 直接使用实测值，不按候选数量反推未实际测得的基准耗时。计量范围从
-`MovementPlanner.plan()` 开始，到动作选择完成为止。完整帧性能验证还要覆盖 60 Hz 观察与记忆更新、
+规划耗时和单项耗时 EMA 直接使用实测值，不按候选数量反推未实际测得的基准耗时。战术计量范围从
+`TacticalMovementPlanner.plan()` 开始，到动作选择完成为止；战略计量范围从
+`StrategicNavigationPlanner.plan()` 开始，到导航意图完成为止。完整帧性能验证还要覆盖 60 Hz 观察与记忆更新、
 按重规划频率物化公共观察快照、后台规划和采样写入造成的 CPU 争用与调度延迟、控制器收尾，以及实际
 游戏帧表现。
 
@@ -204,16 +210,16 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 
 ### 统一时空派生
 
-`MovementTimingModel` 与 `MovementGeometryModel` 统一拥有时间和空间派生关系。设物理频率为 `f`、玩家
+`PlanningTimingModel` 与 `MovementGeometryModel` 统一拥有时间和空间派生关系。设物理频率为 `f`、玩家
 碰撞半径为 `r`、当前可执行移动速度为 `v`，控制、近端、默认局部、局部上限和导航时域分别为
 `Tc`、`Tnear`、`Tdefault`、`Tlocal_max`、`Tnav`，当前关系为：
 
 ```text
-Tc                            = 6 / f
-Tnear                         = 2Tc
-Tdefault                      = max(4Tc, 4r / v)
-Tlocal_max                    = Tdefault + 3Tc
-Tnav                          = Tlocal_max + 5Tc
+Tc                            = 3 / f
+Tnear                         = 4Tc
+Tdefault                      = max(8Tc, 4r / v)
+Tlocal_max                    = Tdefault + 6Tc
+Tnav                          = Tlocal_max + 10Tc
 Tlocal_effective              = min(Tlocal_max, wave_seconds_remaining)
 Tnav_effective                = min(Tnav, wave_seconds_remaining)
 control_distance              = v × Tc
@@ -232,6 +238,7 @@ TTC cutoff                    = Tnav_effective
 动作方向数取满足相邻控制期端点弦长不超过 `r` 的最小偶数，并完整保留为每轮局部动作基线。近似战略
 导航随预算压力保留四至八个均匀方向；机会聚合方向只作为预算内搜索提案，经过轨迹评价并胜出后才会进入
 局部候选。
+
 动作时间采样数同时满足相邻玩家位移不超过 `2r`、每个控制期至少一个样本、
 确定性曲线弹相位步长不超过 `π/2`，且不随预算压力降低。由几何派生的方向基线数和时间采样数会随角色
 尺寸、速度、物理频率与可见弹道变化。导航轨迹按默认局部移动距离确定采样间距，并为任何非空时域至少
@@ -295,8 +302,9 @@ expected_run_continuation_value_loss = pt × C
 
 以下参数目前有合理职责，但没有足够证据把具体数值视为可靠常数：
 
-1. `MovementTimingModel` 的六物理 tick 提交期、`2/4/3/5` 个控制步边界，以及默认局部窗至少覆盖两个
-   碰撞直径的要求，共同决定绝大多数时间与空间尺度。这些是可解释的无量纲设计参数，仍需通过不同速度、
+1. `PlanningTimingModel` 的三物理 tick 战术提交期、十二 tick 战略周期、两个战略周期的指导期限、
+   `4/8/6/10` 个战术控制步边界，以及默认局部窗至少覆盖两个碰撞直径的要求，共同决定绝大多数时间与
+   空间尺度。这些是可解释的无量纲设计参数，仍需通过不同速度、
    尺寸和物理频率下的受伤率、方向反转频率和规划耗时复核，而不是把当前秒数当作永久常量。
 2. `MovementUtilityModel` 使用材料等价总账：一单位材料的基础价值为 `1`；收集地面材料时，
    `OpportunityPricingModel` 再按本波已过去时间从 `0` 连续增加至 `1` 的成长时机价值，表达避免推迟至
