@@ -295,20 +295,16 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		)
 		for interval in targeting_intervals:
 			var interval_value: float = value * interval.capacity_share
-			var gap: float = _weapon_targeting_interval_model.distance_gap(
-				target.relative_position.length(), interval
-			)
-			var access_potential: float = _deadline_accessibility(
-				gap, deadline_reach_distance, characteristic_reach_distance
-			)
-			var enters_without_player_movement := _enters_targeting_interval_without_player_movement(
-				target, interval, observation.wave_state.seconds_remaining
+			var current_accessibility: float = _target_accessibility(
+				target, target.relative_position, observation.wave_state.seconds_remaining, interval
 			)
 			var access_direction: Vector2 = _weapon_targeting_interval_model.access_direction(
 				target.relative_position, interval
 			)
-			if not enters_without_player_movement and access_direction != Vector2.ZERO:
-				_append_prepared_candidate(access_direction, interval_value * access_potential)
+			if current_accessibility < 1.0 and access_direction != Vector2.ZERO:
+				_append_prepared_candidate(
+					access_direction, interval_value * (1.0 - current_accessibility)
+				)
 			_prepared_target_access_entries.push_back(
 				{
 					"target": target,
@@ -322,7 +318,6 @@ func _target_access_delta(
 	player_displacement: Vector2, forecast_seconds: float, seconds_until_deadline: float
 ) -> float:
 	var result := 0.0
-	var deadline_reach_distance: float = _prepared_geometry.command_speed * seconds_until_deadline
 	for entry in _prepared_target_access_entries:
 		var target: Dictionary = entry.target
 		var stationary_position: Vector2 = _enemy_motion_predictor.predict_position(
@@ -331,78 +326,80 @@ func _target_access_delta(
 		var candidate_position: Vector2 = _enemy_motion_predictor.predict_position(
 			target.motion_track, forecast_seconds, player_displacement
 		)
-		var stationary_gap: float = _autonomous_targeting_gap(
+		var stationary_accessibility: float = _target_accessibility(
 			target, stationary_position, seconds_until_deadline, entry.targeting_interval
 		)
-		var candidate_gap: float = _autonomous_targeting_gap(
+		var candidate_accessibility: float = _target_accessibility(
 			target,
 			candidate_position - player_displacement,
 			seconds_until_deadline,
 			entry.targeting_interval
 		)
-		result += (
-			entry.value
-			* _deadline_accessibility_delta(
-				stationary_gap,
-				candidate_gap,
-				deadline_reach_distance,
-				_prepared_geometry.opportunity_reach_distance
-			)
-		)
+		result += entry.value * (candidate_accessibility - stationary_accessibility)
 	return result
 
 
-func _enters_targeting_interval_without_player_movement(
-	target: Dictionary, targeting_interval: Dictionary, deadline_seconds: float
-) -> bool:
-	if (
-		_weapon_targeting_interval_model.distance_gap(
-			target.relative_position.length(), targeting_interval
-		)
-		<= 0.0
-	):
-		return true
-	return (
-		_autonomous_targeting_gap(
-			target, target.relative_position, deadline_seconds, targeting_interval
-		)
-		<= 0.0
-	)
-
-
-func _autonomous_targeting_gap(
+func _target_accessibility(
 	target: Dictionary, relative_position: Vector2, seconds: float, targeting_interval: Dictionary
 ) -> float:
 	var current_distance := relative_position.length()
 	var current_gap: float = _weapon_targeting_interval_model.distance_gap(
 		current_distance, targeting_interval
 	)
-	if current_gap <= 0.0 or seconds <= 0.0:
-		return current_gap
-	# A target that is already inside a weapon's dead zone cannot create range by
-	# closing on the player. Only candidate retreat changes interval access under
-	# the supported target-position response model.
-	if current_distance < targeting_interval.minimum_distance:
-		return current_gap
+	if current_gap <= 0.0:
+		return 1.0
+	if seconds <= 0.0:
+		return 0.0
+	var player_speed: float = max(0.0, _prepared_geometry.command_speed)
 	var motion_track: Dictionary = target.motion_track
 	var response: Dictionary = motion_track.behavior_profile.get("target_position_response", {})
-	if not response.get("responds_to_target_position", false):
-		return current_gap
-	var preferred_distance: float = max(0.0, response.get("preferred_distance", 0.0))
-	if relative_position.length() <= preferred_distance:
-		return current_gap
-	var response_confidence: float = clamp(response.get("confidence", 0.0), 0.0, 1.0)
-	var closing_speed: float = (
-		max(
-			max(0.0, response.get("movement_speed", 0.0)),
-			motion_track.get("estimated_velocity", Vector2.ZERO).length()
+	var assisted_gap := 0.0
+	var response_speed := 0.0
+	if response.get("responds_to_target_position", false):
+		var preferred_distance: float = max(0.0, response.get("preferred_distance", 0.0))
+		if current_distance > targeting_interval.maximum_distance:
+			assisted_gap = min(current_gap, max(0.0, current_distance - preferred_distance))
+		elif (
+			current_distance < targeting_interval.minimum_distance
+			and response.get("moves_away_inside_preferred_distance", false)
+		):
+			assisted_gap = min(current_gap, max(0.0, preferred_distance - current_distance))
+		var response_confidence: float = clamp(response.get("confidence", 0.0), 0.0, 1.0)
+		response_speed = (
+			max(
+				max(0.0, response.get("movement_speed", 0.0)),
+				motion_track.get("estimated_velocity", Vector2.ZERO).length()
+			)
+			* response_confidence
 		)
-		* response_confidence
+	# Player motion and supported target response close the part of the gap on which
+	# they agree. If the target stops at its preferred distance, only player motion
+	# pays the remainder. This is an arrival-time estimate, not a pursuit policy.
+	var arrival_seconds := 0.0
+	if assisted_gap > 0.0:
+		if player_speed + response_speed <= 0.0:
+			return 0.0
+		arrival_seconds += assisted_gap / (player_speed + response_speed)
+	var unassisted_gap: float = current_gap - assisted_gap
+	if unassisted_gap > 0.0:
+		if player_speed <= 0.0:
+			return 0.0
+		arrival_seconds += unassisted_gap / player_speed
+	if arrival_seconds >= seconds:
+		return 0.0
+	var characteristic_seconds: float = (
+		_prepared_geometry.opportunity_reach_distance
+		/ max(1.0, player_speed)
 	)
-	var terminal_gap_floor: float = max(
-		0.0, preferred_distance - targeting_interval.maximum_distance
+	var deadline_floor := exp(-seconds / max(0.01, characteristic_seconds))
+	return clamp(
+		(
+			(exp(-arrival_seconds / max(0.01, characteristic_seconds)) - deadline_floor)
+			/ max(0.0001, 1.0 - deadline_floor)
+		),
+		0.0,
+		1.0
 	)
-	return max(terminal_gap_floor, current_gap - closing_speed * seconds)
 
 
 func _pickup_value(

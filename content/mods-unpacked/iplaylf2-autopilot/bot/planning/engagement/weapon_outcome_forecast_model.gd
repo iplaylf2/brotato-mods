@@ -220,8 +220,10 @@ func _accumulate_committed_attacks(
 	result: Dictionary
 ) -> void:
 	# Vanilla checks movement permission only when an attack starts. Evaluate an
-	# already-started melee contact at the estimated opening of its contact phase;
-	# the ordinary schedule below represents only attacks that have not started.
+	# already-started melee contact over its remaining active hitbox window; the
+	# ordinary schedule below represents only attacks that have not started. A
+	# single opening sample cannot distinguish moving into a live swing from moving
+	# away after the hitbox has already opened.
 	for observed_weapon in observation.player_state.weapons:
 		var timing: Dictionary = observed_weapon.attack_model.timing
 		if not timing.committed_contact_pending:
@@ -234,17 +236,20 @@ func _accumulate_committed_attacks(
 		)
 		if contact_expiry_seconds <= 0.0 or contact_seconds > contact_expiry_seconds:
 			continue
-		var displacement_fraction: float = contact_seconds / max(0.0001, forecast_seconds)
-		var player_displacement: Vector2 = terminal_displacement * displacement_fraction
 		var attack_model: Dictionary = _movement_state_projector.project_attack_model(
 			observed_weapon, observation, is_moving
 		)
-		var target_samples: Array = _sample_targets(
-			observation, player_displacement, contact_seconds
+		var coverage: Dictionary = _best_committed_contact_coverage(
+			observation,
+			attack_model,
+			terminal_displacement,
+			forecast_seconds,
+			contact_seconds,
+			min(contact_expiry_seconds, forecast_seconds),
+			transition_width
 		)
-		var coverage: Dictionary = _summarize_target_coverage(
-			attack_model, target_samples, transition_width
-		)
+		if coverage.empty():
+			continue
 		_accumulate_weapon_outcome(
 			attack_model,
 			coverage,
@@ -256,6 +261,46 @@ func _accumulate_committed_attacks(
 			result,
 			1.0
 		)
+
+
+func _best_committed_contact_coverage(
+	observation: Dictionary,
+	attack_model: Dictionary,
+	terminal_displacement: Vector2,
+	forecast_seconds: float,
+	contact_start_seconds: float,
+	contact_end_seconds: float,
+	transition_width: float
+) -> Dictionary:
+	if contact_end_seconds < contact_start_seconds:
+		return {}
+	# The active interval is short (vanilla melee uses one outbound half-phase).
+	# Start/mid/end samples retain its temporal extent without rolling individual
+	# hitbox frames. The attack can damage a target only once, so use the single
+	# cross-section with the greatest expected hit count rather than summing samples.
+	var sample_times := [contact_start_seconds]
+	if contact_end_seconds > contact_start_seconds + 0.0001:
+		sample_times.push_back((contact_start_seconds + contact_end_seconds) * 0.5)
+		sample_times.push_back(contact_end_seconds)
+	var best := {}
+	var best_expected_hits := -1.0
+	for sample_time in sample_times:
+		var displacement_fraction: float = float(sample_time) / max(0.0001, forecast_seconds)
+		var player_displacement: Vector2 = terminal_displacement * displacement_fraction
+		var target_samples: Array = _sample_targets(
+			observation, player_displacement, float(sample_time)
+		)
+		var coverage: Dictionary = _summarize_target_coverage(
+			attack_model, target_samples, transition_width
+		)
+		var expected_hits: float = (
+			_expected_target_hits(attack_model, coverage).total
+			* coverage.target_availability
+		)
+		if expected_hits > best_expected_hits:
+			best = coverage
+			best_expected_hits = expected_hits
+	return best
 
 
 func _accumulate_outcome_at_path_sample(

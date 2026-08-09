@@ -12,6 +12,7 @@ var _fixtures: Reference
 func run(fixtures: Reference) -> bool:
 	_fixtures = fixtures
 	_check_moving_committed_melee_contact()
+	_check_active_contact_window_recovery()
 	_check_sweep_positioning_quality()
 	return not _failed
 
@@ -144,6 +145,50 @@ func _check_sweep_positioning_quality() -> void:
 		(
 			"positioning that adds feasible sweep coverage must retain more utility than "
 			+ "an otherwise equivalent path that hits only the primary target"
+		)
+	)
+
+
+func _check_active_contact_window_recovery() -> void:
+	var forecast_script: Script = load(
+		PLANNING_PATH + "engagement/weapon_outcome_forecast_model.gd"
+	)
+	var forecast: Reference = forecast_script.new()
+	var enemy: Dictionary = _fixtures.enemy_track(Vector2(150.0, 0.0), Vector2.ZERO, false)
+	enemy.last_measurement.health = {"current": 20.0, "maximum": 20.0, "ratio": 1.0}
+	enemy.behavior_profile.durability = {"maximum_health": 20.0}
+	var observation: Dictionary = _fixtures.planning_observation([enemy])
+	observation.player_state.effective_stats.percent_damage = 0.0
+	observation.player_state.effective_stats.attack_speed = 0.0
+	var attack_model: Dictionary = _fixtures.weapon_attack_model()
+	attack_model.timing.attack_in_progress = true
+	attack_model.timing.seconds_until_next_attack = 10.0
+	attack_model.timing.committed_contact_pending = true
+	attack_model.timing.seconds_until_committed_contact = 0.0
+	attack_model.timing.seconds_until_committed_contact_expires = 0.5
+	attack_model.delivery.maximum_targeting_distance = 200.0
+	attack_model.delivery.paths.maximum_travel_distance = 100.0
+	observation.player_state.weapons = [{"slot": 0, "attack_model": attack_model}]
+	var context: Dictionary = load(PLANNING_PATH + "movement_utility_model.gd").new().build_context(
+		observation
+	)
+	context.tactical_control_interval_seconds = 0.1
+	var recover_outcome := _empty_outcome(forecast_script.OUTCOME_FIELDS)
+	var abandon_outcome := _empty_outcome(forecast_script.OUTCOME_FIELDS)
+	forecast.accumulate_outcome(
+		observation, _action(Vector2.RIGHT, Vector2(50.0, 0.0)), recover_outcome, context
+	)
+	forecast.accumulate_outcome(
+		observation, _action(Vector2.LEFT, Vector2(-50.0, 0.0)), abandon_outcome, context
+	)
+	_expect(
+		(
+			recover_outcome.expected_weapon_damage > 0.0
+			and is_equal_approx(abandon_outcome.expected_weapon_damage, 0.0)
+		),
+		(
+			"a target missed when the hitbox opens but reached before it closes must retain "
+			+ "the committed hit instead of making every action look like an empty swing"
 		)
 	)
 
