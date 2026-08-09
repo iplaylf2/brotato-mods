@@ -161,13 +161,15 @@ func build_context(observation: Dictionary) -> Dictionary:
 func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	var scored_outcome := outcome.duplicate(false)
 	var health_inventory_value: Dictionary = context.state_factors.health_inventory_value
-	var forecast_seconds: float = max(0.0, outcome.get("forecast_seconds", 0.0))
+	var health_forecast_seconds: float = max(
+		0.0, outcome.get("contact_forecast_seconds", outcome.get("forecast_seconds", 0.0))
+	)
 	var continuation_horizon_seconds: float = max(
 		0.01, context.state_factors.continuation_horizon_seconds
 	)
 	var forecast_continuation_ratio: float = clamp(
 		(
-			(context.state_factors.wave_seconds_remaining - forecast_seconds)
+			(context.state_factors.wave_seconds_remaining - health_forecast_seconds)
 			/ continuation_horizon_seconds
 		),
 		0.0,
@@ -178,10 +180,11 @@ func evaluate(outcome: Dictionary, context: Dictionary) -> Dictionary:
 	)
 	scored_outcome.forecast_health_inventory_loss_value = health_inventory_loss_value
 	# Health depletion already follows the convex immediate-inventory curve above.
-	# Run capital is lost only on a terminal branch of the same forecast that earns
-	# combat, economy, and navigation value. Pricing only the committed prefix lets
-	# a sustained lethal trajectory collect its full forecast benefit without its
-	# terminal cost. Ordinary buffer erosion remains outside this probability term.
+	# Run capital is lost only on a terminal branch: contact uses the cheap local
+	# geometry horizon, while earned combat, economy, and navigation consequences
+	# retain the controllable action horizon. Pricing only the committed prefix lets
+	# a sustained lethal trajectory keep near-term benefits without its terminal
+	# cost. Ordinary buffer erosion remains outside this probability term.
 	var terminal_probability: float = clamp(
 		float(outcome.get("forecast_terminal_health_risk", 0.0)), 0.0, 1.0
 	)

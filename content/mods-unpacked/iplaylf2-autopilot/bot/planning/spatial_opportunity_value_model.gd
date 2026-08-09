@@ -227,6 +227,11 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		var gap: float = _pickup_initial_collection_gap(observation, pickup)
 		if gap <= 0.0:
 			continue
+		# The detailed tactical forecast owns pickups it can actually collect. Keeping
+		# the same nearby pickup in the strategic option field would pay once for the
+		# collection and again for preserving access to it.
+		if gap <= _prepared_geometry.near_term_distance:
+			continue
 		var base_value: float = (
 			_pickup_value(observation, context, pickup, health_inventory_value)
 			* pickup.existence_confidence
@@ -559,13 +564,26 @@ func _deadline_accessibility_delta(
 func _optional_access_value_delta(
 	value: float, stationary_accessibility: float, candidate_accessibility: float
 ) -> float:
-	var accessibility_delta := candidate_accessibility - stationary_accessibility
+	var accessibility_delta := _conditional_accessibility_delta(
+		stationary_accessibility, candidate_accessibility
+	)
 	# Accessibility is an option, not an obligation to collect. Losing access to a
 	# harmful pickup therefore cannot manufacture a reward; an action that actually
 	# crosses it is still charged by PlayerRuleOutcomePredictor.
 	if value < 0.0 and accessibility_delta < 0.0:
 		return 0.0
 	return value * accessibility_delta
+
+
+func _conditional_accessibility_delta(stationary: float, candidate: float) -> float:
+	var delta := candidate - stationary
+	# Accessibility is an unexercised option. Normalize gains by the unclaimed part
+	# so entering the collection circle realizes one complete pickup even early in
+	# a long wave. Losses use the access currently held and remain bounded to one
+	# forfeited option.
+	if delta >= 0.0:
+		return clamp(delta / max(0.0001, 1.0 - stationary), 0.0, 1.0)
+	return clamp(delta / max(0.0001, stationary), -1.0, 0.0)
 
 
 func _optional_varying_access_value_delta(

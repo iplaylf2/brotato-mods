@@ -56,6 +56,7 @@ func run(fixtures: Reference) -> bool:
 	_check_actuation_state_projection(fixtures)
 	_check_resolved_projectile_sweep(fixtures)
 	_check_collision_evidence_ownership(fixtures)
+	_check_contact_lookahead(fixtures)
 	return not _failed
 
 
@@ -190,6 +191,33 @@ func _check_collision_evidence_ownership(fixtures: Reference) -> void:
 		(
 			"entities with supported motion paths must not leak into the unresolved "
 			+ "collision account"
+		)
+	)
+
+
+func _check_contact_lookahead(fixtures: Reference) -> void:
+	var projector: Reference = load(PLANNING_PATH + "collision/contact_lookahead_projector.gd").new()
+	var enemy: Dictionary = fixtures.enemy_track(Vector2(120.0, 0.0), Vector2(-300.0, 0.0), false)
+	var observation: Dictionary = fixtures.planning_observation([enemy])
+	var stationary_action := {
+		"movement": Vector2.ZERO,
+		"forecast_seconds": 0.2,
+		"contact_forecast_seconds": 0.4,
+	}
+	var stationary: Dictionary = projector.project(observation, stationary_action)
+	var escape_action: Dictionary = stationary_action.duplicate(false)
+	escape_action.movement = Vector2.LEFT
+	var escape: Dictionary = projector.project(observation, escape_action)
+	_expect(
+		(
+			stationary.contact_opportunities.size() > 0
+			and stationary.contact_opportunities[0].time_seconds > 0.2
+			and stationary.maximum_raw_damage == 3.0
+			and escape.contact_opportunities.empty()
+		),
+		(
+			"the body-traversal contact horizon must expose an imminent post-action hit "
+			+ "while preserving a geometrically clear escape"
 		)
 	)
 

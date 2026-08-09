@@ -237,6 +237,9 @@ func _check_action_forecast_domain() -> void:
 	_expect(
 		(
 			_all_actions_share_forecast(actions, timing.near_term_horizon_seconds)
+			and is_equal_approx(
+				actions[0].contact_forecast_seconds, timing.default_local_horizon_seconds
+			)
 			and actions.size() == 9
 			and actions[0].samples.size() == 4
 		),

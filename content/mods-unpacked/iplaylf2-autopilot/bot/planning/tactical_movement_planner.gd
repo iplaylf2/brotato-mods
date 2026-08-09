@@ -109,7 +109,7 @@ func plan(request: Dictionary) -> Dictionary:
 	phase_started_usec = OS.get_ticks_usec()
 	var actions: Array = _action_generator.generate(planning_observation, navigation_intent)
 	var local_domain: Dictionary = _local_enemy_interaction_projector.project(
-		planning_observation, actions[0].forecast_seconds
+		planning_observation, actions[0].contact_forecast_seconds
 	)
 	var local_observation: Dictionary = local_domain.observation
 	var scored_actions := []
@@ -328,6 +328,7 @@ func _summarize_outcome(outcome: Dictionary) -> Dictionary:
 	# logs would turn forecast resolution into avoidable serialization overhead.
 	summary.erase("contact_opportunities")
 	summary.erase("committed_contact_opportunities")
+	summary.erase("contact_lookahead_opportunities")
 	summary.erase("pickup_events")
 	return summary
 

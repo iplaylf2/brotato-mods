@@ -14,6 +14,7 @@ func run(fixtures: Reference) -> bool:
 	_check_material_pickup_multiplier_quantity()
 	_check_remembered_consumable_collection()
 	_check_crossed_pickup_opportunity()
+	_check_conditional_pickup_progress()
 	_check_recovery_supply_pricing()
 	_check_damaging_consumable_pricing()
 	return not _failed
@@ -331,6 +332,49 @@ func _check_crossed_pickup_opportunity() -> void:
 			"a navigation path must retain an absorbing pickup reward after crossing "
 			+ "the collection circle instead of losing it after overshoot"
 		)
+	)
+
+
+func _check_conditional_pickup_progress() -> void:
+	var spatial_script: Script = load(PLANNING_PATH + "spatial_opportunity_value_model.gd")
+	var observation: Dictionary = _fixtures.planning_observation([])
+	observation.remembered_entities = [
+		{
+			"kind": "material",
+			"relative_position": Vector2(160.0, 0.0),
+			"existence_confidence": 1.0,
+			"material_quantity": 1.0,
+		}
+	]
+	var context := {
+		"state_factors": {"health_inventory_value": {}},
+		"enemy_completion_value_ledger": {},
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({}),
+	}
+	var spatial: Reference = spatial_script.new()
+	var collection: Dictionary = spatial.point_value_delta(
+		observation, context, Vector2(140.0, 0.0), 1.0
+	)
+	_expect(
+		collection.material_opportunity > 0.99,
+		(
+			"collecting a material must realize the remaining option instead of only the "
+			+ "tiny raw accessibility delta available early in a long wave"
+		)
+	)
+
+	observation.physics_frame += 1
+	observation.remembered_entities[0].relative_position = Vector2(35.0, 0.0)
+	var local_spatial: Reference = spatial_script.new()
+	var local_value: Dictionary = local_spatial.point_value_delta(
+		observation, context, Vector2(20.0, 0.0), 0.2
+	)
+	_expect(
+		(
+			is_zero_approx(local_value.material_opportunity)
+			and local_spatial.candidate_directions(observation, context).empty()
+		),
+		"a pickup inside the detailed action reach must not also enter strategic value"
 	)
 
 

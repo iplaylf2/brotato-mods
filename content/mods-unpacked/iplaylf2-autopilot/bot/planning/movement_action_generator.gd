@@ -1,9 +1,9 @@
 extends Reference
 
 # Discretizes the feasible movement-input space for the next control interval.
-# All candidates share one comparison horizon, extended when local player and
-# threat reach domains can overlap. It is not an execution commitment. Zero
-# velocity is the origin of the same action space, not a mode.
+# All candidates share a detailed consequence horizon and a longer geometric
+# contact horizon. Neither is an execution commitment. Zero velocity is the
+# origin of the same action space, not a mode.
 
 const PlanningTimingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
@@ -70,6 +70,7 @@ func _make_action(
 	forecast_seconds: float,
 	sample_count: int
 ) -> Dictionary:
+	var timing: Dictionary = PlanningTimingModel.derive(observation)
 	var samples := []
 	for step in range(1, sample_count + 1):
 		# Equal spacing makes the maximum swept segment explicit: sample_count is
@@ -89,6 +90,13 @@ func _make_action(
 		"action_id": action_id,
 		"movement": movement,
 		"forecast_seconds": forecast_seconds,
+		# Detailed consequences stop at the near-term horizon. Contact alone keeps a
+		# body-traversal lookahead horizon so an action cannot hide an imminent hit just
+		# beyond the detailed forecast.
+		"contact_forecast_seconds":
+		PlanningTimingModel.clip_to_wave_remaining(
+			observation, timing.default_local_horizon_seconds
+		),
 		"samples": samples,
 	}
 

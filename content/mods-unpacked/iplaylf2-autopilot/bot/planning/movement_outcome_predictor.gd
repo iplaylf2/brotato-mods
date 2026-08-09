@@ -1,9 +1,9 @@
 extends Reference
 
-# Predicts the outcome of one feasible movement vector over a threat-timed
-# forecast. Every scored consequence uses that same forecast; the shorter
-# control interval is retained only as an execution diagnostic for the input
-# that will actually be submitted before replanning.
+# Predicts the outcome of one feasible movement vector. Expensive environment,
+# pickup, rule, and weapon consequences use the near-term action window. A
+# contact-only geometric lookahead extends through one default local
+# traversal, while the shorter control interval remains the only committed input.
 
 const WeaponOutcomeForecastModel := preload("engagement/weapon_outcome_forecast_model.gd")
 const BattlefieldInfluenceModel := preload(
@@ -39,6 +39,7 @@ const PickupCollectionProjector := preload(
 		+ "pickup_collection_projector.gd"
 	)
 )
+const ContactLookaheadProjector := preload("collision/contact_lookahead_projector.gd")
 
 var _weapon_outcome_forecast_model: Reference = WeaponOutcomeForecastModel.new()
 var _battlefield_influence_model: Reference = BattlefieldInfluenceModel.new()
@@ -50,6 +51,7 @@ var _player_kinematics_model: Reference = PlayerKinematicsModel.new()
 var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _collision_health_impact_model: Reference = CollisionHealthImpactModel.new()
 var _pickup_collection_projector: Reference = PickupCollectionProjector.new()
+var _contact_lookahead_projector: Reference = ContactLookaheadProjector.new()
 
 
 func set_enemy_motion_predictor(predictor: Reference) -> void:
@@ -57,6 +59,7 @@ func set_enemy_motion_predictor(predictor: Reference) -> void:
 	_battlefield_influence_model.set_enemy_motion_predictor(predictor)
 	_unresolved_collision_risk_model.set_enemy_motion_predictor(predictor)
 	_player_rule_outcome_predictor.set_enemy_motion_predictor(predictor)
+	_contact_lookahead_projector.set_enemy_motion_predictor(predictor)
 
 
 func predict(
@@ -126,15 +129,25 @@ func predict_base(
 		),
 		true
 	)
+	var contact_lookahead: Dictionary = _contact_lookahead_projector.project(observation, action)
+	outcome.contact_forecast_seconds = contact_lookahead.horizon_seconds
+	outcome.contact_lookahead_peak_collision_risk = contact_lookahead.peak_collision_risk
+	outcome.contact_lookahead_evidence_seconds = contact_lookahead.contact_evidence_seconds
+	var lookahead_raw_damage_seconds: float = contact_lookahead.raw_damage_evidence_seconds
+	outcome.contact_lookahead_raw_damage_evidence_seconds = lookahead_raw_damage_seconds
+	outcome.contact_lookahead_maximum_raw_damage = contact_lookahead.maximum_raw_damage
+	outcome.contact_lookahead_opportunities = contact_lookahead.contact_opportunities
 	var committed_action: Dictionary = _committed_action(
 		observation, action, planning_context.tactical_control_interval_seconds
 	)
 	_predict_action_outcomes(observation, action, outcome)
 	outcome.collision_risk = max(
-		outcome.peak_path_collision_risk, outcome.unresolved_collision_risk
+		max(outcome.peak_path_collision_risk, outcome.contact_lookahead_peak_collision_risk),
+		outcome.unresolved_collision_risk
 	)
 	outcome.hostile_collision_risk = max(
-		outcome.peak_path_collision_risk, outcome.hostile_unresolved_collision_risk
+		max(outcome.peak_path_collision_risk, outcome.contact_lookahead_peak_collision_risk),
+		outcome.hostile_unresolved_collision_risk
 	)
 	var committed_impact: Dictionary = _collision_health_impact_model.evaluate(
 		observation,
@@ -146,9 +159,11 @@ func predict_base(
 	outcome.expected_contact_resolution_count = committed_impact.expected_contact_resolution_count
 	outcome.committed_expected_health_loss = committed_impact.expected_health_loss
 	outcome.committed_terminal_collision_risk = committed_impact.terminal_collision_risk
+	var contact_forecast_action: Dictionary = action.duplicate(false)
+	contact_forecast_action.forecast_seconds = outcome.contact_forecast_seconds
 	var forecast_impact: Dictionary = _collision_health_impact_model.evaluate(
 		observation,
-		action,
+		contact_forecast_action,
 		_forecast_collision_evidence(outcome),
 		planning_context.state_factors.positive_damage_is_terminal_rule
 	)
@@ -157,7 +172,10 @@ func predict_base(
 	var forecast_resolution_count: float = forecast_impact.expected_contact_resolution_count
 	outcome.forecast_expected_contact_resolution_count = forecast_resolution_count
 	outcome.committed_contact_opportunity_count = outcome.committed_contact_opportunities.size()
-	outcome.forecast_contact_opportunity_count = outcome.contact_opportunities.size()
+	outcome.forecast_contact_opportunity_count = (
+		outcome.contact_opportunities.size()
+		+ outcome.contact_lookahead_opportunities.size()
+	)
 	var forecast_maximum_adjusted_hit_damage: float = forecast_impact.maximum_armor_adjusted_hit_damage
 	outcome.forecast_maximum_armor_adjusted_hit_damage = forecast_maximum_adjusted_hit_damage
 	outcome.movement_damage_exposure_reduction = (
@@ -192,17 +210,28 @@ func _committed_collision_evidence(outcome: Dictionary) -> Dictionary:
 
 
 func _forecast_collision_evidence(outcome: Dictionary) -> Dictionary:
+	var opportunities: Array = outcome.contact_opportunities.duplicate()
+	opportunities.append_array(outcome.contact_lookahead_opportunities)
 	return {
-		"path_collision_risk": outcome.peak_path_collision_risk,
-		"path_contact_evidence_seconds": outcome.path_contact_evidence_seconds,
-		"path_raw_damage_evidence_seconds": outcome.path_raw_damage_evidence_seconds,
-		"maximum_path_raw_damage": outcome.maximum_path_collision_raw_damage,
+		"path_collision_risk":
+		max(outcome.peak_path_collision_risk, outcome.contact_lookahead_peak_collision_risk),
+		"path_contact_evidence_seconds":
+		outcome.path_contact_evidence_seconds + outcome.contact_lookahead_evidence_seconds,
+		"path_raw_damage_evidence_seconds":
+		(
+			outcome.path_raw_damage_evidence_seconds
+			+ outcome.contact_lookahead_raw_damage_evidence_seconds
+		),
+		"maximum_path_raw_damage":
+		max(
+			outcome.maximum_path_collision_raw_damage, outcome.contact_lookahead_maximum_raw_damage
+		),
 		"unresolved_collision_risk": outcome.forecast_hostile_unresolved_collision_risk,
 		"unresolved_contact_evidence_sum": outcome.forecast_hostile_unresolved_contact_evidence_sum,
 		"unresolved_raw_damage_evidence_sum":
 		outcome.forecast_hostile_unresolved_raw_damage_evidence_sum,
 		"maximum_unresolved_raw_damage": outcome.forecast_maximum_unresolved_collision_raw_damage,
-		"contact_opportunities": outcome.contact_opportunities,
+		"contact_opportunities": opportunities,
 	}
 
 

@@ -90,11 +90,12 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 采样是定期截面，不是逐帧回放。两条 `decision_sample` 之间仍会发生未记录的重规划，因此不能从文件
 恢复每个控制期的移动输入，也不能把后一条观察直接归因于前一条采样决策。
 
-局部预测窗通常长于一个三物理 tick 的战术提交期；控制器只执行所选动作到下一次战术重规划。校准时应区分：
+近端动作窗和默认局部接触窗都长于一个三物理 tick 的战术提交期；控制器只执行所选动作到下一次战术重规划。校准时应区分：
 
 - 同一条样本中的 `previous_movement` 与当前运动观察可以验证正在生效的输入、速度和扰动关系；
 - 新选动作的提交期终点通常落在下一条定期样本之前，不能假定采样记录了该终点；
-- 更长预测窗的环境暴露、碰撞、拾取、规则和武器结果都是“持续采用该候选动作”时的同窗条件预测；碰撞由
+- 近端动作窗的环境暴露、拾取、规则和武器结果，以及默认局部窗内只延续几何扫掠的接触结果，都是
+  “持续采用该候选动作”时的条件预测；碰撞由
   `forecast_expected_health_loss` 形成条件生命成本，完整状态分布的 `forecast_terminal_health_risk` 形成
   同窗对局延续价值损失。本次提交期子集以 `committed_expected_health_loss` 和
   `committed_terminal_health_risk` 保留为执行资格诊断；控制器仍只提交一个控制期，
@@ -151,7 +152,7 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 权重。
 `decision.projectile_filter` 的纳入与延后投射物计数用于解释可达性过滤效果。
 `decision.local_enemy_interaction_domain` 用于解释敌人轨迹的局部空间粗筛：输入数包含完整的可见与
-短期记忆轨迹，相关数只包含动作窗内可威胁玩家的轨迹，以及可进入自动武器锁定区的可见轨迹。它减少的
+短期记忆轨迹，相关数只包含默认局部接触窗内可威胁玩家的轨迹，以及可进入自动武器锁定区的可见轨迹。它减少的
 是经几何证明不会影响当前动作的重复精算，不影响导航、敌人完成价值或波内完成预测所覆盖的机会。比较
 优化前后性能时，应同时按可见敌人数、相关轨迹数和输入轨迹数分层；只按总轨迹数会把交互域收益误判为
 候选降级。
@@ -211,13 +212,14 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 ### 统一时空派生
 
 `PlanningTimingModel` 与 `MovementGeometryModel` 统一拥有时间和空间派生关系。设物理频率为 `f`、玩家
-碰撞半径为 `r`、当前可执行移动速度为 `v`，控制、动作、近端、默认局部、局部上限和导航时域分别为
-`Tc`、`Taction`、`Tnear`、`Tdefault`、`Tlocal_max`、`Tnav`，当前关系为：
+碰撞半径为 `r`、当前可执行移动速度为 `v`，控制、动作、接触、近端、默认局部、局部上限和导航
+时域分别为 `Tc`、`Taction`、`Tcontact`、`Tnear`、`Tdefault`、`Tlocal_max`、`Tnav`，当前关系为：
 
 ```text
 Tc                            = 3 / f
 Tnear                         = 4Tc
 Taction                       = min(Tnear, wave_seconds_remaining)
+Tcontact                      = min(Tdefault, wave_seconds_remaining)
 Tdefault                      = max(8Tc, 4r / v)
 Tlocal_max                    = Tdefault + 6Tc
 Tnav                          = Tlocal_max + 10Tc
@@ -256,8 +258,9 @@ TTC cutoff                    = Tnav_effective
 补给库存使用清场时域，即时生存缓冲使用下一控制期。设当前生命为 `H`、玩家完整动作集合、当前击退与
 威胁运动在下一控制期内形成的联合可达域中，最强接触或投射物一击经护甲折算后的伤害储备为 `R`、
 清场前按到达时间、存在置信度和目标完成份额折算的生命补充为 `S`、同期被动流失为 `D`、材料等价风险
-尺度为 `K`，完整动作预测窗长度及其预期生命损失分别为 `Tf`、`Lf`，当前持有材料与已有道具、武器按
-公共价格代理形成的对局延续价值为 `C`，提交期内各已建模生命损失来源汇总后的终止概率为 `pt`，则：
+尺度为 `K`。碰撞在 `Tcontact` 内结算，其他生命变化在 `Taction` 内结算；合并后的预期生命损失为 `Lf`，
+统一以 `Tcontact` 作为生命账本的截止时刻 `Tf`。当前持有材料与已有道具、武器按公共价格代理
+形成的对局延续价值为 `C`，预测窗内各已建模生命损失来源汇总后的终止概率为 `pf`，则：
 
 ```text
 immediate_survival_buffer       = B  = max(1, H - R)
@@ -268,7 +271,7 @@ survivable_action_loss          = Ls = min(Lf, max(0, B - 1))
 continuation_horizon_ratio(t)    = q(t) = clamp((本波剩余时间 - t) / 最大导航时域, 0, 1)
 survivable_loss_value                = q(Tf) × integral[x=0..Ls] K / max(1, B - x) dx
 terminal_loss_value                  = max(0, Lf - Ls) × terminal_health_loss_unit_value
-expected_run_continuation_value_loss = pt × C
+expected_run_continuation_value_loss = pf × C
 ```
 
 已观察消耗品按到达后仍可利用的波次比例和存在证据计入 `S`；单人失视消耗品不会仅因时间或进入吸附范围而
@@ -277,8 +280,8 @@ expected_run_continuation_value_loss = pt × C
 收益能否兑现，也裁剪非致命生命在清场前还能提供多久的延续价值；它不改变耗尽即时缓冲的终止成本。
 
 `S` 是整波补给总量，不证明其中任何一份会先于当前局部威胁兑现，因此只改变波次尺度的延续库存与补给
-机会。完整动作预测窗中的生命损失按即时生存缓冲 `B` 的损失曲线和动作窗结束时的 `q(Tf)` 计价；提交期
-生命损失只有在终止分支上损失对局延续价值；局部与导航环境暴露按同一损失模型在当前时刻的
+机会。生命结算预测窗中的损失按即时生存缓冲 `B` 的损失曲线和窗末 `q(Tf)` 计价；提交期终止风险只决定
+动作是否已不可撤销，预测窗终止风险负责损失对局延续价值；局部与导航环境暴露按同一损失模型在当前时刻的
 `q(0)` 计算一单位生命损失价值。
 导航只提交下一个控制期，整波未来补给不能扩大该控制期的即时生存缓冲。这样同一份未来果实或吸血不能在
 连续重规划中被反复借用来压低眼前的接触风险。
@@ -296,7 +299,7 @@ expected_run_continuation_value_loss = pt × C
 拾取一单位地面补充时，即时恢复按 `terminal_health_loss_unit_value` 增值、同量地图储备按
 `marginal_health_unit_value` 结清，净值为两者之差；新破坏树木产生的补充尚未被库存计入，则直接按
 `marginal_health_unit_value` 增值。
-伤害型消耗品不进入补给库存：完整动作预测窗内的直接伤害进入 `Lf`，提交期内的终止分量进入 `pt`；
+伤害型消耗品不进入补给库存：近端动作窗内的直接伤害进入 `Lf`，其终止分量进入 `pf`；
 导航机会使用同一生命损失曲线和对局延续价值。其余拾取后果仍可与生命成本交换，模型不需要毒物身份或
 低血阈值。
 
@@ -398,14 +401,17 @@ expected_run_continuation_value_loss = pt × C
 拾取率，并按 `material_quantity` 区分普通材料、合并材料与奖励材料，确认它与原版拾取或波末转换使用的
 `Gold.value` 一致。进入吸附范围但
 尚未进入收集圈且仍可在剩余波时内到达时，机会价值必须继续存在；无法在波末前进入收集圈的接近进度必须
-归零。超过有效导航距离但仍能在波末前到达的材料应保留距离衰减后的正接近梯度；接近应为正、远离应为
+归零。可由近端动作窗直接收集的拾取物只进入动作结果，不再进入战略机会场。其余拾取物的接近增益按起点
+尚未兑现的可达选项归一化：路径进入收集圈应兑现一份完整机会，不能因为开波早期波末可达性已接近饱和而
+只得到微小增量。超过有效导航距离但仍能在波末前到达的材料应保留距离衰减后的正接近梯度；接近应为正、远离应为
 负，且边际影响应随距离增加而下降。无法在波末前到达的材料还应从额外方向提案中移除，不能占用搜索预算
 或重新形成全图硬目标。轨迹采样没有改善任何材料可达性时，路径机会不应提供正收益。
 波末样本还应确认动作、导航和 TTC 时域均不超过 `wave_state.seconds_remaining`。动作预测窗内的拾取是
 持续采用该候选输入时的条件结果，不是已经执行的事实。另行区分导航意图中的轨迹聚合价值增益
 `trajectory_value_gain` 与动作结果中的预测窗兑现值 `navigation_trajectory_value_gain`：后者应先将相邻
 `trajectory_value_samples` 的单位距离聚合价值作环形线性插值，再乘以输入相对零输入在动作预测窗内
-造成的位移。它与输出、暴露和条件承伤使用同一持续动作时域，不能缩短为提交期后再与完整动作窗收益比较。
+造成的位移。它与输出、环境暴露和拾取规则使用同一近端动作时域，不能缩短为提交期后再与完整动作窗收益
+比较；碰撞生命结果另由默认局部接触窗结算。
 材料密集或路线穿过多个材料簇时，重点比较逐控制期反转率。出现 `material_assimilation.active` 的敌人时，
 还应比较材料与玩家、敌人的预计到达次序、后续实际材料消失及候选排序；没有可争夺材料时，该画像本身
 不应形成固定击杀优先级。
@@ -528,9 +534,10 @@ expected_run_continuation_value_loss = pt × C
 `field_utility_breakdown.expected_run_continuation_value_loss`。联合检查
 `context.state_factors.run_continuation_value`、
 `selection_diagnostics.excluded_certain_terminal_candidate_count`、`viable_candidate_count` 和
-`selected_committed_terminal_health_risk`。确定且可避免的提交期终止应被排除；完整预测窗的终止概率
-必须与同窗负担解除、目标完成、生命窃取、恢复和导航收益一起按当前对局延续价值交换。提交期只决定候选
-能否安全执行到下一次重规划，不能替代完整预测窗的价值账本。
+`selected_committed_terminal_health_risk`。确定且可避免的提交期终止应被排除；默认局部接触窗内的碰撞
+终止概率与近端动作窗内的其他生命变化，必须和该动作的负担解除、目标完成、生命窃取、恢复及导航收益
+一起按当前对局延续价值交换。提交期只决定候选能否安全执行到下一次重规划，不能替代组合生命结算窗的
+价值账本。
 位置扫掠已公开接触时刻，因此应核对观察到的当前无敌剩余时间是否正确截去前缀机会，
 且后续受伤无敌时间是否随实际伤害变化。
 尚无逐次时刻的未解析交会证据只能保留无时序聚合解释；不得用无敌计时器按比例缩放该聚合风险，
@@ -547,9 +554,11 @@ expected_run_continuation_value_loss = pt × C
 `terminal_health_loss_unit_value`。确认即时命中储备覆盖玩家完整动作集合与威胁运动的联合可达域；动作
 窗内碰撞按 `immediate_survival_buffer` 和剩余延续时域计价，局部与导航环境暴露使用同一单位损失价值，
 未来补充只改变补给库存与波次尺度敌人负担的边际价格；超过即时缓冲的部分仍按终止价值计价。复盘时还应
-确认所有候选共享近端动作时域，且该时域只随波末裁剪，不随敌人密度或单条威胁扩张；更远风险应通过
-战略环境暴露、局部交互域和 TTC 职责进入，而不是增加逐动作时间采样。联合检查
-`decision.model.timing`、`decision.model.derived.action_forecast_seconds`、方向数和时间采样数。
+确认所有候选共享近端动作时域和默认局部接触时域，且两者只随波末裁剪，不随敌人密度或单条威胁扩张；
+后一个时域只能增加几何接触扫掠，不能重新扩大武器、拾取、规则或完整环境采样。联合检查
+`decision.model.timing`、`decision.model.derived.action_forecast_seconds`、
+`decision.outcome.contact_forecast_seconds`、
+`contact_lookahead_peak_collision_risk`、方向数和近端时间采样数。
 拾取恢复按 `terminal_health_loss_unit_value` 产生即时生命收益，同时
 `consumed_consumable_recovery_supply` 按 `replenishment_unit_value` 结清离开地图的储备，两者净额应等于
 `recovery_conversion_unit_value`。满血接触不应继续免费享受该储备带来的生命折价。地雷路径还应联合检查
