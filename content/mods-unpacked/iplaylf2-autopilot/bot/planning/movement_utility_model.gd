@@ -114,6 +114,7 @@ func build_context(observation: Dictionary) -> Dictionary:
 			},
 			"combat":
 			{
+				"expected_committed_damage_progress_value": 1.0,
 				"expected_enemy_reward_delta_value": 1.0,
 				"expected_enemy_burden_relief_value": 1.0,
 				"expected_enemy_death_consequence_value": -1.0,

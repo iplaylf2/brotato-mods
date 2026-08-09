@@ -59,6 +59,9 @@ func weapon_attack_model() -> Dictionary:
 			"attack_in_progress": false,
 			"seconds_until_next_attack": 0.0,
 			"seconds_until_attack_phase_complete": 0.0,
+			"committed_contact_pending": false,
+			"seconds_until_committed_contact": 0.0,
+			"seconds_until_committed_contact_expires": 0.0,
 			"permitted_while_moving": true,
 		},
 		"delivery":

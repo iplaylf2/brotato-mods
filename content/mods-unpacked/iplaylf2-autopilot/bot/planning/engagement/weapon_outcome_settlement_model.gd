@@ -23,7 +23,8 @@ func accumulate_target_work(
 	expected_damage: float,
 	critical_chance: float,
 	reward_delta_value: float,
-	stat_upgrade_equivalents_per_credited_kill := 0.0
+	stat_upgrade_equivalents_per_credited_kill := 0.0,
+	committed_expected_damage := 0.0
 ) -> void:
 	var hits := max(0.0, expected_hits)
 	var damage := max(0.0, expected_damage)
@@ -38,6 +39,7 @@ func accumulate_target_work(
 			"critical_hit_mass": 0.0,
 			"reward_delta_value_mass": 0.0,
 			"stat_upgrade_equivalent_hit_mass": 0.0,
+			"committed_expected_damage": 0.0,
 		}
 	var work: Dictionary = work_by_target_id[target_id]
 	work.expected_hits += hits
@@ -48,9 +50,12 @@ func accumulate_target_work(
 		hits
 		* max(0.0, float(stat_upgrade_equivalents_per_credited_kill))
 	)
+	work.committed_expected_damage += max(0.0, committed_expected_damage)
 
 
-func settle_enemy_work(outcome: Dictionary, work_by_target_id: Dictionary) -> void:
+func settle_enemy_work(
+	outcome: Dictionary, work_by_target_id: Dictionary, completion_fraction_by_target_id: Dictionary
+) -> void:
 	var conserved_hits := 0.0
 	var conserved_damage := 0.0
 	for work in work_by_target_id.values():
@@ -68,6 +73,19 @@ func settle_enemy_work(outcome: Dictionary, work_by_target_id: Dictionary) -> vo
 		)
 		var completion_equivalent: float = _damage_completion_work_model.bounded_completion_equivalent(
 			expected_hits, required_hits
+		)
+		var committed_progress_fraction: float = (
+			min(remaining_health, work.committed_expected_damage)
+			/ remaining_health
+		)
+		# Completion already realizes the target's reward, burden relief, and death
+		# consequence below. Only the persistent committed damage not represented by
+		# that terminal transition remains as progress value, and only to the extent
+		# the shared wave forecast supports eventual completion of this target.
+		outcome.expected_committed_damage_progress_value += (
+			max(0.0, committed_progress_fraction - completion_equivalent)
+			* max(0.0, target.value.net_completion_value)
+			* clamp(float(completion_fraction_by_target_id[target.target_id]), 0.0, 1.0)
 		)
 		if completion_equivalent <= 0.0:
 			continue

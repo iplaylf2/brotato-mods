@@ -82,6 +82,7 @@ func predict_base(
 		"consumed_consumable_recovery_supply": 0.0,
 		"consumed_single_use_support_supply": 0.0,
 		"expected_weapon_damage": 0.0,
+		"expected_committed_damage_progress_value": 0.0,
 		"expected_allied_completion_value": 0.0,
 		"expected_enemy_completion_equivalents": 0.0,
 		"expected_enemy_reward_delta_value": 0.0,

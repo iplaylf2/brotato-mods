@@ -45,9 +45,10 @@ func _adapt_timing(
 	# the visible attack phase so planning can consume the known vanilla rhythm
 	# without replacing either current fact with a stationary average.
 	var remaining_cooldown_seconds := max(0.0, float(weapon._current_cooldown) / 60.0)
-	var seconds_until_next_attack := _seconds_until_next_attack(
+	var attack_phase: Dictionary = _attack_phase(
 		weapon, stats, player_index, remaining_cooldown_seconds
 	)
+	var seconds_until_next_attack: float = attack_phase.seconds_until_next_attack
 	var seconds_until_attack_phase_complete := max(
 		0.0, seconds_until_next_attack - remaining_cooldown_seconds
 	)
@@ -57,17 +58,26 @@ func _adapt_timing(
 		"attack_in_progress": weapon._is_shooting,
 		"seconds_until_next_attack": seconds_until_next_attack,
 		"seconds_until_attack_phase_complete": seconds_until_attack_phase_complete,
+		"committed_contact_pending": attack_phase.committed_contact_pending,
+		"seconds_until_committed_contact": attack_phase.seconds_until_committed_contact,
+		"seconds_until_committed_contact_expires":
+		attack_phase.seconds_until_committed_contact_expires,
 		"permitted_while_moving": attacks_allowed_while_moving,
 	}
 
 
-func _seconds_until_next_attack(
+func _attack_phase(
 	weapon: Node, stats: Resource, player_index: int, remaining_cooldown_seconds: float
-) -> float:
+) -> Dictionary:
 	var weapon_id := weapon.get_instance_id()
 	if not weapon._is_shooting:
 		_shooting_started_physics_frame_by_weapon_id.erase(weapon_id)
-		return remaining_cooldown_seconds
+		return {
+			"seconds_until_next_attack": remaining_cooldown_seconds,
+			"committed_contact_pending": false,
+			"seconds_until_committed_contact": 0.0,
+			"seconds_until_committed_contact_expires": 0.0,
+		}
 	var physics_frame := int(Engine.get_physics_frames())
 	if not _shooting_started_physics_frame_by_weapon_id.has(weapon_id):
 		_shooting_started_physics_frame_by_weapon_id[weapon_id] = physics_frame
@@ -77,11 +87,30 @@ func _seconds_until_next_attack(
 	)
 	var total_animation_seconds: float = stats.get_cooldown_value(player_index, 0.0)
 	if stats is MeleeWeaponStats and weapon._shooting_behavior.shooting_data != null:
-		# Melee updates this public-facing animation rhythm with the committed target
-		# distance, so prefer the already revealed attack's actual stable duration.
+		# Melee shooting data has already incorporated the committed target distance,
+		# so use its revealed phase duration instead of recomputing an average.
 		total_animation_seconds = (weapon._shooting_behavior.shooting_data.get_shooting_total_duration())
 	var remaining_animation_seconds := max(0.0, total_animation_seconds - elapsed_seconds)
-	return remaining_cooldown_seconds + remaining_animation_seconds
+	var result := {
+		"seconds_until_next_attack": remaining_cooldown_seconds + remaining_animation_seconds,
+		"committed_contact_pending": false,
+		"seconds_until_committed_contact": 0.0,
+		"seconds_until_committed_contact_expires": 0.0,
+	}
+	if not stats is MeleeWeaponStats or weapon._shooting_behavior.shooting_data == null:
+		return result
+	var shooting_data: Resource = weapon._shooting_behavior.shooting_data
+	var contact_start_seconds: float = max(0.0, shooting_data.recoil_duration - elapsed_seconds)
+	var contact_end_seconds: float = (
+		total_animation_seconds
+		if stats.deal_dmg_on_return
+		else shooting_data.recoil_duration + shooting_data.atk_duration / 2.0
+	)
+	var contact_expires_seconds := max(0.0, contact_end_seconds - elapsed_seconds)
+	result.committed_contact_pending = contact_expires_seconds > 0.0
+	result.seconds_until_committed_contact = contact_start_seconds
+	result.seconds_until_committed_contact_expires = contact_expires_seconds
+	return result
 
 
 func _adapt_delivery(weapon: Node, stats: Resource) -> Dictionary:

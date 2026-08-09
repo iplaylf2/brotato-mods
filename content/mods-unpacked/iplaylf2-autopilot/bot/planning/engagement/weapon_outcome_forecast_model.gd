@@ -43,6 +43,7 @@ const OUTCOME_FIELDS := [
 	"expected_attack_hits",
 	"expected_enemy_hits",
 	"expected_weapon_damage",
+	"expected_committed_damage_progress_value",
 	"expected_enemy_completion_equivalents",
 	"expected_enemy_reward_delta_value",
 	"expected_enemy_burden_relief_value",
@@ -95,7 +96,8 @@ func accumulate_outcome(
 		forecast_seconds,
 		transition_seconds,
 		is_moving,
-		outcome.get("pickup_events", {"material": [], "consumable": []})
+		outcome.get("pickup_events", {"material": [], "consumable": []}),
+		planning_context.wave_completion_forecast.completion_fraction_by_target_id
 	)
 	for key in OUTCOME_FIELDS:
 		if key == "expected_lifesteal_recovery":
@@ -142,13 +144,24 @@ func _estimate_outcome_along_path(
 	forecast_seconds: float,
 	transition_seconds: float,
 	is_moving: bool,
-	pickup_events: Dictionary
+	pickup_events: Dictionary,
+	completion_fraction_by_target_id: Dictionary
 ) -> Dictionary:
 	var result: Dictionary = _empty_outcome_sample()
 	var enemy_work_by_target_id := {}
 	var transition_width: float = max(
 		observation.player_state.collision_radius,
 		observation.player_state.runtime_stats.move_speed * transition_seconds
+	)
+	_accumulate_committed_attacks(
+		observation,
+		terminal_displacement,
+		forecast_seconds,
+		transition_width,
+		is_moving,
+		pickup_events,
+		enemy_work_by_target_id,
+		result
 	)
 	# Simpson integration preserves both the initial opportunity and the time at
 	# which candidate movement creates or loses an attack window. Applying the
@@ -190,8 +203,59 @@ func _estimate_outcome_along_path(
 		enemy_work_by_target_id,
 		result
 	)
-	_weapon_outcome_settlement_model.settle_enemy_work(result, enemy_work_by_target_id)
+	_weapon_outcome_settlement_model.settle_enemy_work(
+		result, enemy_work_by_target_id, completion_fraction_by_target_id
+	)
 	return result
+
+
+func _accumulate_committed_attacks(
+	observation: Dictionary,
+	terminal_displacement: Vector2,
+	forecast_seconds: float,
+	transition_width: float,
+	is_moving: bool,
+	pickup_events: Dictionary,
+	enemy_work_by_target_id: Dictionary,
+	result: Dictionary
+) -> void:
+	# Vanilla checks movement permission only when an attack starts. Evaluate an
+	# already-started melee contact at the estimated opening of its contact phase;
+	# the ordinary schedule below represents only attacks that have not started.
+	for observed_weapon in observation.player_state.weapons:
+		var timing: Dictionary = observed_weapon.attack_model.timing
+		if not timing.committed_contact_pending:
+			continue
+		var contact_seconds: float = max(0.0, float(timing.seconds_until_committed_contact))
+		if contact_seconds > forecast_seconds:
+			continue
+		var contact_expiry_seconds: float = max(
+			0.0, float(timing.seconds_until_committed_contact_expires)
+		)
+		if contact_expiry_seconds <= 0.0 or contact_seconds > contact_expiry_seconds:
+			continue
+		var displacement_fraction: float = contact_seconds / max(0.0001, forecast_seconds)
+		var player_displacement: Vector2 = terminal_displacement * displacement_fraction
+		var attack_model: Dictionary = _movement_state_projector.project_attack_model(
+			observed_weapon, observation, is_moving
+		)
+		var target_samples: Array = _sample_targets(
+			observation, player_displacement, contact_seconds
+		)
+		var coverage: Dictionary = _summarize_target_coverage(
+			attack_model, target_samples, transition_width
+		)
+		_accumulate_weapon_outcome(
+			attack_model,
+			coverage,
+			forecast_seconds,
+			forecast_seconds,
+			observation.player_state.effect_rules,
+			pickup_events,
+			enemy_work_by_target_id,
+			result,
+			1.0
+		)
 
 
 func _accumulate_outcome_at_path_sample(
@@ -278,15 +342,20 @@ func _accumulate_weapon_outcome(
 	effect_rules: Array,
 	pickup_events: Dictionary,
 	enemy_work_by_target_id: Dictionary,
-	outcome: Dictionary
+	outcome: Dictionary,
+	expected_attack_count_override = null
 ) -> void:
-	var expected_attack_count: float = (
-		_weapon_attack_schedule_model.expected_attack_count(
-			attack_model, forecast_seconds, effect_rules, pickup_events
+	var expected_attack_count: float
+	if expected_attack_count_override == null:
+		expected_attack_count = (
+			_weapon_attack_schedule_model.expected_attack_count(
+				attack_model, forecast_seconds, effect_rules, pickup_events
+			)
+			* exposure_seconds
+			/ max(0.0001, forecast_seconds)
 		)
-		* exposure_seconds
-		/ max(0.0001, forecast_seconds)
-	)
+	else:
+		expected_attack_count = max(0.0, float(expected_attack_count_override))
 	if expected_attack_count <= 0.0:
 		return
 	if coverage.target_availability <= 0.0:
@@ -316,7 +385,8 @@ func _accumulate_weapon_outcome(
 		enemy_damage,
 		attack_model.impact.critical_chance,
 		_stat_upgrade_equivalents_per_credited_kill(attack_model),
-		enemy_work_by_target_id
+		enemy_work_by_target_id,
+		expected_attack_count_override != null
 	)
 	outcome.expected_tree_completion_value += (max(
 		tree_hits * coverage.mean_tree_completion_value_per_hit,
@@ -581,7 +651,8 @@ func _accumulate_enemy_target_work(
 	expected_enemy_damage: float,
 	critical_chance: float,
 	stat_upgrade_equivalents_per_credited_kill: float,
-	work_by_target_id: Dictionary
+	work_by_target_id: Dictionary,
+	is_committed_attack: bool
 ) -> void:
 	if expected_enemy_hits <= 0.0 or expected_enemy_damage <= 0.0:
 		return
@@ -604,7 +675,8 @@ func _accumulate_enemy_target_work(
 			realized_hits * damage_per_hit,
 			critical_chance,
 			_action_conditioned_reward_delta(target, covered.sample.distance),
-			stat_upgrade_equivalents_per_credited_kill
+			stat_upgrade_equivalents_per_credited_kill,
+			realized_hits * damage_per_hit if is_committed_attack else 0.0
 		)
 
 

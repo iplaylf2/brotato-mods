@@ -17,6 +17,10 @@ func primary_contact_fraction(
 	var path_count := max(0, int(paths.count))
 	if path_count <= 0:
 		return 0.0
+	if float(paths.angular_half_extent) > 0.0:
+		return _swept_sector_contact(
+			paths, target_position, target_position, max(0.0, target_radius)
+		)
 	var contact_sum := 0.0
 	for path_index in path_count:
 		contact_sum += _path_contact(
@@ -42,6 +46,10 @@ func additional_contact_fraction(
 		return 0.0
 	var paths: Dictionary = attack_model.delivery.paths
 	var path_count := max(0, int(paths.count))
+	if path_count <= 0:
+		return 0.0
+	if float(paths.angular_half_extent) > 0.0:
+		return _swept_sector_contact(paths, aim_position, target_position, max(0.0, target_radius))
 	var best_contact := 0.0
 	for path_index in path_count:
 		best_contact = max(
@@ -57,6 +65,25 @@ func additional_contact_fraction(
 			)
 		)
 	return best_contact
+
+
+func _swept_sector_contact(
+	paths: Dictionary, aim_position: Vector2, target_position: Vector2, target_radius: float
+) -> float:
+	# A sweep is represented by its occupied sector at contact, not by an invented
+	# frame-by-frame blade trajectory or an uncertainty band around the boundary.
+	var distance: float = target_position.length()
+	if distance <= target_radius:
+		return 1.0
+	var maximum_distance := max(0.0, float(paths.maximum_travel_distance))
+	if distance > maximum_distance + target_radius:
+		return 0.0
+	var angle_delta: float = abs(
+		fposmod(target_position.angle() - aim_position.angle() + PI, TAU) - PI
+	)
+	var angular_half_extent := max(0.0, float(paths.angular_half_extent))
+	var angular_clearance: float = max(0.0, angle_delta - angular_half_extent) * distance
+	return 1.0 if angular_clearance <= target_radius else 0.0
 
 
 func _path_contact(

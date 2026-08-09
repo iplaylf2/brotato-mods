@@ -162,14 +162,15 @@
 - `bot/planning/weapons/weapon_targeting_interval_model.gd` 在不解释目标价值或路线的前提下，保留每把武器的
   最小与最大锁定距离，并针对生命目标按主路径伤害率、针对命中上限目标按主路径命中率归一化区间份额；
   根目录的 `spatial_opportunity_value_model.gd` 消费这些区间。
-- `bot/planning/engagement/weapon_outcome_forecast_model.gd` 协调攻击调度、目标覆盖、最近目标选择与命中归属，
-  沿动作路径生成逐目标攻击工作；有限容量和价值结算委托给同目录的结果结算模型。
+- `bot/planning/engagement/weapon_outcome_forecast_model.gd` 协调攻击调度、已提交接触、目标覆盖、最近目标
+  选择与命中归属，沿动作路径生成逐目标攻击工作；有限容量和价值结算委托给同目录的结果结算模型。
 - `bot/planning/engagement/weapon_path_contact_model.gd` 统一解释锁定后主路径与额外直接路径的几何接触份额，
-  不拥有锁定准入、攻击容量或目标价值。
+  刺击使用走廊，扫击使用原版角范围对应的连续扇区；它不拥有锁定准入、攻击容量或目标价值。
 - `bot/planning/engagement/weapon_outcome_settlement_model.gd` 独占跨武器、跨路径采样点的敌人攻击工作
   累计、有限目标容量结算与武器归属击杀成长的贡献分摊，并单独约束树木总收获价值；奖励、伤害、完成和
   成长进度代理随同一 `target_id` 结算，避免把某个目标或武器的工作记给另一个对象。动作条件死亡奖励随
-  同一目标的预计命中质量按路径采样点累计，不交换预计击杀位置。
+  同一目标的预计命中质量按路径采样点累计，不交换预计击杀位置。它还消费本波逐目标完成份额，结算
+  已提交攻击的非致死进度价值。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
   `bot/planning/engagement/damage_completion_work_model.gd` 统一把剩余生命和单次伤害换算为离散击打工作量，
   并把首个已知攻击机会之后按长期速率累计的连续容量换算为截止前完成代理；

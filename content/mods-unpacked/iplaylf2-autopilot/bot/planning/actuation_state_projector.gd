@@ -61,6 +61,16 @@ func _project_player_state(observation: Dictionary, active_movement: Vector2, de
 		timing.seconds_until_attack_phase_complete = max(
 			0.0, float(timing.seconds_until_attack_phase_complete) - delay
 		)
+		timing.seconds_until_committed_contact = max(
+			0.0, float(timing.seconds_until_committed_contact) - delay
+		)
+		timing.seconds_until_committed_contact_expires = max(
+			0.0, float(timing.seconds_until_committed_contact_expires) - delay
+		)
+		timing.committed_contact_pending = (
+			timing.committed_contact_pending
+			and timing.seconds_until_committed_contact_expires > 0.0
+		)
 	var movement: Dictionary = player_state.movement
 	movement.input_vector = active_movement
 	movement.is_moving = active_movement != Vector2.ZERO

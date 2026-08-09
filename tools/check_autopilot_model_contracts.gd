@@ -49,6 +49,11 @@ func _init() -> void:
 		_failed = true
 	_check_spatial_target_control()
 	_check_weapon_outcome_contracts()
+	var committed_attack_checks_path: String = tools_dir.plus_file(
+		"check_autopilot_committed_attack_contracts.gd"
+	)
+	if not load(committed_attack_checks_path).new().run(_fixtures):
+		_failed = true
 	_check_local_enemy_interaction_projection()
 	_check_wave_completion_forecast()
 	_check_health_inventory_loss()
