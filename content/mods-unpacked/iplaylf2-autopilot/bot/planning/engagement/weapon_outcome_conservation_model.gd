@@ -2,8 +2,9 @@ extends Reference
 
 # Conserves finite target capacities after weapon outcomes have been accumulated.
 # Enemy attack work remains keyed by target until every weapon and path sample has
-# contributed. Settlement then keeps hits, damage, completion, and value attached
-# to the same target. Tree harvest value retains its separate aggregate bound.
+# contributed. Settlement then keeps hits, damage, completion, action-conditioned
+# reward state, and value attached to the same target. Tree harvest value retains
+# its separate aggregate bound.
 
 const DamageCompletionWorkModel := preload(
 	(
@@ -20,7 +21,8 @@ func accumulate_target_work(
 	target: Dictionary,
 	expected_hits: float,
 	expected_damage: float,
-	critical_chance: float
+	critical_chance: float,
+	reward_delta_value: float
 ) -> void:
 	var hits := max(0.0, expected_hits)
 	var damage := max(0.0, expected_damage)
@@ -33,11 +35,13 @@ func accumulate_target_work(
 			"expected_hits": 0.0,
 			"expected_damage": 0.0,
 			"critical_hit_mass": 0.0,
+			"reward_delta_value_mass": 0.0,
 		}
 	var work: Dictionary = work_by_target_id[target_id]
 	work.expected_hits += hits
 	work.expected_damage += damage
 	work.critical_hit_mass += hits * clamp(critical_chance, 0.0, 1.0)
+	work.reward_delta_value_mass += hits * reward_delta_value
 
 
 func settle_enemy_work(outcome: Dictionary, work_by_target_id: Dictionary) -> void:
@@ -62,8 +66,13 @@ func settle_enemy_work(outcome: Dictionary, work_by_target_id: Dictionary) -> vo
 		if completion <= 0.0:
 			continue
 		var value: Dictionary = target.value
+		var reward_delta_value: float = (
+			work.reward_delta_value_mass / expected_hits
+			if work.has("reward_delta_value_mass")
+			else value.reward_delta_value
+		)
 		outcome.expected_enemy_completion_equivalents += completion
-		outcome.expected_enemy_reward_delta_value += completion * value.reward_delta_value
+		outcome.expected_enemy_reward_delta_value += completion * reward_delta_value
 		outcome.expected_enemy_burden_relief_value += completion * value.burden_relief_value
 		outcome.expected_enemy_death_consequence_value += (
 			completion

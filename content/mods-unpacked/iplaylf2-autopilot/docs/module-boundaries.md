@@ -58,6 +58,9 @@
 
 ### 版本知识
 
+- `bot/knowledge/player_effects/player_effect_adapter.gd` 聚合目标版本玩家效果适配器；其中
+  `combat_rule_adapter.gd` 把影响战斗结果或死亡奖励的原版资源编译为通用事件规则。它可以读取距离曲线
+  资源，但不估计目标完成、解释候选路径或计算材料价值。
 - `bot/knowledge/allies/ally_mechanic_compiler.gd` 与
   `bot/knowledge/structures/structure_mechanic_compiler.gd` 分别拥有友方实体和构筑物的稳定作用画像。
 - `bot/knowledge/pickups/consumable_profile_adapter.gd` 适配可见消耗品的稳定生命效果与语义特征画像。
@@ -161,7 +164,8 @@
   不拥有锁定准入、攻击容量或目标价值。
 - `bot/planning/engagement/weapon_outcome_conservation_model.gd` 独占跨武器、跨路径采样点的敌人攻击工作
   累计与有限目标容量结算，并单独约束树木总收获价值；敌人的剩余生命、离散完成代理和价值始终属于同一
-  `target_id`。
+  `target_id`。动作条件死亡奖励随同一目标的预计命中质量按路径采样点累计，不能在目标间交换预计击杀
+  位置。
 - `bot/planning/engagement/wave_completion_forecast_model.gd` 按统一 `target_id` 分配本波共享主路径容量；
   `bot/planning/engagement/damage_completion_work_model.gd` 统一把剩余生命和单次伤害换算为离散击打工作量，
   并把首个已知攻击机会之后按长期速率累计的连续容量换算为截止前完成代理；
@@ -178,7 +182,8 @@
   存在置信度，一次形成候选路径收集事件；动作基础收益与规则后果共享该事件集合，不分别扫描可见世界。
 - `bot/planning/opportunity_pricing_model.gd` 把地面材料、地面消耗品、实体死亡奖励与树木保留后果换算为
   材料等价边际价值，并分别把消耗品生命损失与确定属性变化委托给生命损失和属性机会定价；它不拥有敌人
-  威胁或死亡转移机制。
+  威胁、目标完成或路径采样。敌人死亡材料的距离曲线在这里换算为材料价值；当前或预计距离由账本与武器
+  结果模型提供，原版资源字段仍只存在于 `knowledge/player_effects` 适配边界。
 - `bot/planning/death_reward_probability_model.gd` 把死亡奖励画像与当前波次、潮汐波和幸运组合为材料、
   消耗品及箱子的当前概率。
 - `bot/planning/stat_opportunity_pricing_model.gd` 按属性机会曲线和剩余机会时域，计算属性变化对未来事件

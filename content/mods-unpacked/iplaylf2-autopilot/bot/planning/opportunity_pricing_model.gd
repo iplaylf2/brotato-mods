@@ -1,8 +1,9 @@
 extends Reference
 
 # Prices observed materials, consumables, destructibles, and death rewards in
-# material-equivalent marginal value using only current public state. Route
-# accessibility and event realization remain in their owning predictors.
+# material-equivalent marginal value using only public state supplied by callers.
+# Route accessibility, target completion, and event realization remain in their
+# owning predictors; this model only prices any supplied estimated event distance.
 
 # Generating an item box creates a wave-end item choice that did not previously
 # exist. Its item-value profile uses the expected shop-price proxy under the exact
@@ -126,19 +127,66 @@ func expected_item_box_item_value(observation: Dictionary) -> float:
 
 
 func death_reward_value(observation: Dictionary, death_rewards: Dictionary) -> float:
-	var value: float = (
+	var profile: Dictionary = enemy_death_reward_profile(observation, death_rewards)
+	return profile.material_value + profile.other_value
+
+
+func enemy_death_reward_profile(observation: Dictionary, death_rewards: Dictionary) -> Dictionary:
+	var material_value: float = (
 		max(0.0, death_rewards.get("material_quantity", 0.0))
 		* _death_reward_probability_model.material_drop_probability(observation, death_rewards)
 	)
+	var other_value := 0.0
 	var item_box_probability: float = _death_reward_probability_model.item_box_drop_probability(
 		observation, death_rewards
 	)
 	if item_box_probability > 0.0:
-		value += item_box_probability * expected_item_box_item_value(observation)
-	value += _stat_opportunity_pricing_model.value(
+		other_value += item_box_probability * expected_item_box_item_value(observation)
+	other_value += _stat_opportunity_pricing_model.value(
 		observation, death_rewards.get("stat_changes", [])
 	)
-	return value
+	return {
+		"material_value": material_value,
+		"other_value": other_value,
+		"distance_curves":
+		_enemy_material_distance_curves(observation.player_state.get("effect_rules", [])),
+	}
+
+
+func enemy_death_reward_value_at_distance(profile: Dictionary, distance: float) -> float:
+	var multiplier := 1.0
+	for curve in profile.distance_curves:
+		multiplier *= _distance_curve_multiplier(curve, distance)
+	return max(0.0, profile.material_value * multiplier) + profile.other_value
+
+
+func _enemy_material_distance_curves(rules: Array) -> Array:
+	var curves := []
+	for rule in rules:
+		if rule.event != "enemy_death" or not rule.condition.get("killed_by_player", false):
+			continue
+		for consequence in rule.consequences:
+			if (
+				consequence.target == "enemy_material_reward"
+				and consequence.operation == "multiply_by_distance_curve"
+			):
+				curves.push_back(consequence.curve)
+	return curves
+
+
+func _distance_curve_multiplier(curve: Dictionary, distance: float) -> float:
+	assert(curve.kind == "clamped_linear_percentage")
+	var minimum: float = curve.minimum_percentage
+	var maximum: float = curve.maximum_percentage
+	var curve_range: float = max(0.0001, curve.range)
+	var input: float = max(0.0, distance) - curve.buffer
+	var slope: float = (abs(minimum) + abs(maximum)) / curve_range
+	var percentage := minimum + slope * input
+	if curve.inverted:
+		percentage = maximum - slope * input
+	# Vanilla converts the clamped percentage to an integer before applying it.
+	percentage = float(int(clamp(percentage, minimum, maximum)))
+	return max(0.0, 1.0 + percentage / 100.0)
 
 
 func _living_tree_preservation_value(observation: Dictionary) -> float:

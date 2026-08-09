@@ -1,8 +1,10 @@
 extends Reference
 
 # Prices the state transition caused by completing an enemy. Immediate kill
-# rewards, the burden removed while the wave is still active, and consequences
-# caused by death remain separate channels until the utility boundary.
+# rewards at the current target distance, the burden removed while the wave is
+# still active, and consequences caused by death remain separate channels until
+# the utility boundary. Local weapon settlement may reprice action-conditioned
+# rewards without rebuilding the shared ledger.
 
 const OpportunityPricingModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
@@ -47,9 +49,12 @@ func build_ledger(observation: Dictionary, marginal_health_unit_value: float) ->
 	var mean_absolute_net_completion_value := 0.0
 	var mean_burden_relief_value := 0.0
 	for track in tracks:
+		var death_reward_profile: Dictionary = _opportunity_pricing_model.enemy_death_reward_profile(
+			observation, track.behavior_profile.get("death_rewards", {})
+		)
 		var reward_delta_value: float = (
-			_opportunity_pricing_model.death_reward_value(
-				observation, track.behavior_profile.get("death_rewards", {})
+			_opportunity_pricing_model.enemy_death_reward_value_at_distance(
+				death_reward_profile, track.relative_position.length()
 			)
 			- preservation_value
 		)
@@ -67,13 +72,17 @@ func build_ledger(observation: Dictionary, marginal_health_unit_value: float) ->
 			- death_consequence_value
 		)
 		var remaining_health: float = _enemy_health_model.remaining_health(track)
-		entries_by_track_id[track.track_id] = {
+		var ledger_entry := {
 			"reward_delta_value": reward_delta_value,
 			"burden_relief_value": burden_relief_value,
 			"death_consequence_value": death_consequence_value,
 			"net_completion_value": net_completion_value,
 			"remaining_health": remaining_health,
 		}
+		if not death_reward_profile.distance_curves.empty():
+			ledger_entry.action_conditioned_reward_profile = death_reward_profile
+			ledger_entry.enemy_reward_preservation_value = preservation_value
+		entries_by_track_id[track.track_id] = ledger_entry
 		mean_net_completion_value += net_completion_value
 		mean_absolute_net_completion_value += abs(net_completion_value)
 		mean_burden_relief_value += burden_relief_value

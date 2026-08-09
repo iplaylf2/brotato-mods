@@ -2,8 +2,9 @@ extends Reference
 
 # Forecasts action-conditioned weapon outcomes along each retained movement path.
 # This model owns target coverage, nearest-target selection, and hit attribution by
-# completion mechanism. It does not roll out individual attacks, projectiles, contacts,
-# redirects, or triggered event chains.
+# completion mechanism, including the event state used to price a completed target.
+# It does not roll out individual attacks, projectiles, contacts, redirects, or
+# triggered event chains.
 
 const WeaponAttackCapacityModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/weapons/weapon_attack_capacity_model.gd"
@@ -32,6 +33,9 @@ const WeaponPathContactModel := preload(
 		+ "weapon_path_contact_model.gd"
 	)
 )
+const OpportunityPricingModel := preload(
+	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/opportunity_pricing_model.gd"
+)
 const OUTCOME_FIELDS := [
 	"expected_attack_hits",
 	"expected_enemy_hits",
@@ -52,6 +56,7 @@ var _engagement_target_projector: Reference = EngagementTargetProjector.new()
 var _enemy_motion_predictor: Reference = EnemyMotionPredictor.new()
 var _weapon_outcome_conservation_model: Reference = WeaponOutcomeConservationModel.new()
 var _weapon_path_contact_model: Reference = WeaponPathContactModel.new()
+var _opportunity_pricing_model: Reference = OpportunityPricingModel.new()
 var _prepared_physics_frame := -1
 var _prepared_targets := []
 var _prepared_tree_harvest_value_capacity := 0.0
@@ -574,8 +579,21 @@ func _accumulate_enemy_target_work(
 			target,
 			realized_hits,
 			realized_hits * damage_per_hit,
-			critical_chance
+			critical_chance,
+			_action_conditioned_reward_delta(target, covered.sample.distance)
 		)
+
+
+func _action_conditioned_reward_delta(target: Dictionary, distance: float) -> float:
+	var value: Dictionary = target.value
+	if not value.has("action_conditioned_reward_profile"):
+		return value.reward_delta_value
+	return (
+		_opportunity_pricing_model.enemy_death_reward_value_at_distance(
+			value.action_conditioned_reward_profile, distance
+		)
+		- value.get("enemy_reward_preservation_value", 0.0)
+	)
 
 
 func _expected_damage_per_attack(attack_model: Dictionary, coverage: Dictionary) -> float:

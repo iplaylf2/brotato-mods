@@ -16,6 +16,10 @@ const ENEMY_MECHANIC_COMPILER_PATH := (
 	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/enemies/"
 	+ "enemy_mechanic_compiler.gd"
 )
+const COMBAT_RULE_ADAPTER_PATH := (
+	"res://mods-unpacked/iplaylf2-autopilot/bot/knowledge/player_effects/"
+	+ "combat_rule_adapter.gd"
+)
 var _failed := false
 
 
@@ -38,6 +42,15 @@ class MaterialQuantityEffect:
 
 	func get_gold_value_modifier() -> float:
 		return modifier
+
+
+class DistanceScalingEffect:
+	extends Resource
+	var value := 100
+	var min_value := -100
+	var max_range := 200
+	var buffer := 0
+	var invert_scaling := false
 
 
 class DeathRewardUnit:
@@ -104,6 +117,7 @@ class EnemyMechanicUnit:
 func run() -> bool:
 	_check_enemy_mechanic_profiles()
 	_check_death_reward_profile()
+	_check_action_conditioned_enemy_material_reward()
 	_check_material_drop_probability()
 	return not _failed
 
@@ -221,6 +235,54 @@ func _check_death_reward_profile() -> void:
 		"material guarantees must not invent unsupported consumables"
 	)
 	unit.queue_free()
+
+
+func _check_action_conditioned_enemy_material_reward() -> void:
+	var effects := {
+		Keys.scale_materials_with_distance_hash: [DistanceScalingEffect.new()],
+		Keys.bonus_non_elemental_damage_against_burning_targets_hash: 0.0,
+		Keys.gold_on_crit_kill_hash: [],
+		Keys.heal_on_crit_kill_hash: 0.0,
+	}
+	var adapter: Reference = load(COMBAT_RULE_ADAPTER_PATH).new()
+	var rules: Array = adapter.adapt(effects)
+	_expect(
+		(
+			rules.size() == 1
+			and rules[0].event == "enemy_death"
+			and rules[0].consequences[0].target == "enemy_material_reward"
+		),
+		"distance-scaled enemy materials must cross the knowledge boundary as a generic rule"
+	)
+	var observation := {
+		"wave_state": {"number": 1, "seconds_remaining": 20.0, "duration_seconds": 20.0},
+		"player_state":
+		{
+			"effective_stats": {"luck": 0.0, "curse": 0.0},
+			"stat_opportunity_profiles": {},
+			"effect_rules": rules,
+		},
+	}
+	var death_rewards := {
+		"material_quantity": 10.0,
+		"material_drop_guaranteed": true,
+		"base_consumable_drop_chance": 0.0,
+		"item_box_conditional_chance": 0.0,
+		"stat_changes": [],
+	}
+	var pricing: Reference = load(PRICING_MODEL_PATH).new()
+	var profile: Dictionary = pricing.enemy_death_reward_profile(observation, death_rewards)
+	_expect(
+		(
+			is_equal_approx(pricing.enemy_death_reward_value_at_distance(profile, 0.0), 0.0)
+			and is_equal_approx(pricing.enemy_death_reward_value_at_distance(profile, 100.0), 10.0)
+			and is_equal_approx(pricing.enemy_death_reward_value_at_distance(profile, 200.0), 20.0)
+		),
+		(
+			"enemy material value must follow the observed clamped distance curve without "
+			+ "changing non-material death rewards"
+		)
+	)
 
 
 func _check_material_drop_probability() -> void:

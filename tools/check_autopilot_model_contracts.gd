@@ -636,6 +636,47 @@ func _check_weapon_outcome_contracts() -> void:
 		"this off-axis target geometry must value the toward-tree path above the away path"
 	)
 
+	# A distance-dependent death reward belongs to the action-conditioned separation,
+	# not the character identity or a blanket preference for non-zero input.
+	observation.physics_frame = 9
+	observation.visible_world.trees = []
+	low_value_track.relative_position = Vector2(150.0, 0.0)
+	low_value_track.last_measurement.health = {"current": 5.0, "maximum": 10.0, "ratio": 0.5}
+	low_value_track.behavior_profile.death_rewards.material_quantity = 10.0
+	low_value_track.behavior_profile.death_rewards.material_drop_guaranteed = true
+	observation.enemy_tracks = [low_value_track]
+	observation.player_state.weapons[0].attack_model.impact.damage = 10.0
+	observation.player_state.weapons[0].attack_model.timing.seconds_until_next_attack = 0.0
+	observation.player_state.effect_rules = [_distance_reward_rule()]
+	var pricing: Reference = load(PLANNING_PATH + "opportunity_pricing_model.gd").new()
+	var distance_profile: Dictionary = pricing.enemy_death_reward_profile(
+		observation, low_value_track.behavior_profile.death_rewards
+	)
+	context.enemy_completion_value_ledger = _completion_value_ledger({1: 15.0})
+	var distance_value_entry: Dictionary = context.enemy_completion_value_ledger.entries_by_track_id[1]
+	distance_value_entry.action_conditioned_reward_profile = distance_profile
+	distance_value_entry.enemy_reward_preservation_value = 0.0
+	var close_action: Dictionary = action.duplicate(true)
+	close_action.movement = Vector2.RIGHT
+	close_action.samples[0].displacement = Vector2(50.0, 0.0)
+	var distant_action: Dictionary = action.duplicate(true)
+	distant_action.movement = Vector2.LEFT
+	distant_action.samples[0].displacement = Vector2(-50.0, 0.0)
+	var close_reward_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	var distant_reward_outcome := _empty_weapon_outcome(field_script.OUTCOME_FIELDS)
+	field.accumulate_outcome(observation, close_action, close_reward_outcome, context)
+	field.accumulate_outcome(observation, distant_action, distant_reward_outcome, context)
+	_expect(
+		(
+			distant_reward_outcome.expected_enemy_reward_delta_value
+			> close_reward_outcome.expected_enemy_reward_delta_value
+		),
+		(
+			"weapon completion must price distance-scaled materials at the action-conditioned "
+			+ "target separation"
+		)
+	)
+
 
 func _check_health_inventory_loss() -> void:
 	var health_loss_model_path := PLANNING_PATH + "health/health_loss_value_model.gd"
@@ -835,6 +876,29 @@ func _completion_value_ledger(net_values: Dictionary) -> Dictionary:
 		"mean_net_completion_value": 0.0,
 		"mean_absolute_net_completion_value": 0.0,
 		"mean_burden_relief_value": 0.0,
+	}
+
+
+func _distance_reward_rule() -> Dictionary:
+	return {
+		"event": "enemy_death",
+		"condition": {"killed_by_player": true},
+		"consequences":
+		[
+			{
+				"target": "enemy_material_reward",
+				"operation": "multiply_by_distance_curve",
+				"curve":
+				{
+					"kind": "clamped_linear_percentage",
+					"minimum_percentage": -100.0,
+					"maximum_percentage": 100.0,
+					"range": 200.0,
+					"buffer": 0.0,
+					"inverted": false,
+				},
+			}
+		],
 	}
 
 

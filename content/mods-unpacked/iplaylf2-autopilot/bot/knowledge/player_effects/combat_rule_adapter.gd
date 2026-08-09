@@ -6,6 +6,7 @@ extends Reference
 
 func adapt(effects: Dictionary) -> Array:
 	var rules := []
+	_append_enemy_material_distance_rules(rules, effects[Keys.scale_materials_with_distance_hash])
 	var bonus_key: int = Keys.bonus_non_elemental_damage_against_burning_targets_hash
 	var burning_target_bonus: float = effects[bonus_key]
 	if burning_target_bonus != 0.0:
@@ -64,3 +65,31 @@ func adapt(effects: Dictionary) -> Array:
 			}
 		)
 	return rules
+
+
+func _append_enemy_material_distance_rules(rules: Array, scaling_effects: Array) -> void:
+	for effect in scaling_effects:
+		if effect == null or effect.max_range <= 0:
+			continue
+		rules.push_back(
+			{
+				"event": "enemy_death",
+				"condition": {"killed_by_player": true},
+				"consequences":
+				[
+					{
+						"target": "enemy_material_reward",
+						"operation": "multiply_by_distance_curve",
+						"curve":
+						{
+							"kind": "clamped_linear_percentage",
+							"minimum_percentage": float(effect.min_value),
+							"maximum_percentage": float(effect.value),
+							"range": float(effect.max_range),
+							"buffer": float(effect.buffer),
+							"inverted": bool(effect.invert_scaling),
+						},
+					}
+				],
+			}
+		)
