@@ -90,12 +90,12 @@ func _make_action(
 		"action_id": action_id,
 		"movement": movement,
 		"forecast_seconds": forecast_seconds,
-		# Detailed consequences stop at the near-term horizon. Contact alone keeps a
-		# body-traversal lookahead horizon so an action cannot hide an imminent hit just
-		# beyond the detailed forecast.
+		# Detailed consequences stop at the near-term horizon. Contact alone keeps the
+		# full locally predictable horizon so an action cannot hide a lethal convergence
+		# that lies beyond one body traversal but is already resolved by observed motion.
 		"contact_forecast_seconds":
 		PlanningTimingModel.clip_to_wave_remaining(
-			observation, timing.default_local_horizon_seconds
+			observation, timing.effective_local_horizon_seconds
 		),
 		"samples": samples,
 	}

@@ -238,14 +238,14 @@ func _check_action_forecast_domain() -> void:
 		(
 			_all_actions_share_forecast(actions, timing.near_term_horizon_seconds)
 			and is_equal_approx(
-				actions[0].contact_forecast_seconds, timing.default_local_horizon_seconds
+				actions[0].contact_forecast_seconds, timing.effective_local_horizon_seconds
 			)
 			and actions.size() == 9
 			and actions[0].samples.size() == 4
 		),
 		(
-			"tactical search must cover overlapping body footprints across the near-term "
-			+ "horizon without extending detailed work as enemy density rises"
+			"tactical search must keep detailed work near-term while resolved contact "
+			+ "geometry covers the full locally predictable horizon"
 		)
 	)
 	observation.physics_frame += 1

@@ -91,12 +91,13 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 采样是定期截面，不是逐帧回放。两条 `decision_sample` 之间仍会发生未记录的重规划，因此不能从文件
 恢复每个控制期的移动输入，也不能把后一条观察直接归因于前一条采样决策。
 
-近端动作窗和默认局部接触窗都长于一个三物理 tick 的战术提交期；控制器只执行所选动作到下一次战术重规划。校准时应区分：
+未受波末裁剪时，近端动作窗和完整可预测局部接触窗都长于一个三物理 tick 的战术提交期；控制器只执行
+所选动作到下一次战术重规划。校准时应区分：
 
 - 同一条样本中的 `previous_movement` 与当前运动观察可以验证正在生效的输入、速度和扰动关系；
 - 新选动作的提交期终点通常落在下一条定期样本之前，不能假定采样记录了该终点；
-- 近端动作窗的环境暴露、拾取、规则和武器结果，以及默认局部窗内只延续几何扫掠的接触结果，都是
-  “持续采用该候选动作”时的条件预测；碰撞由
+- 近端动作窗的环境暴露、拾取、规则和武器结果，以及完整可预测局部接触窗内只延续几何扫掠的接触结果，
+  都是“持续采用该候选动作”时的条件预测；碰撞由
   `forecast_expected_health_loss` 形成条件生命成本，完整状态分布的 `forecast_terminal_health_risk` 形成
   同窗对局延续价值损失；`forecast_terminal_health_time_seconds` 使相同终止概率下较早失去重规划机会的
   路径付出更高的连续紧迫度。本次提交期子集以 `committed_expected_health_loss` 和
@@ -154,7 +155,7 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 权重。
 `decision.projectile_filter` 的纳入与延后投射物计数用于解释可达性过滤效果。
 `decision.local_enemy_interaction_domain` 用于解释敌人轨迹的局部空间粗筛：输入数包含完整的可见与
-短期记忆轨迹，相关数只包含默认局部接触窗内可威胁玩家的轨迹，以及可进入自动武器锁定区的可见轨迹。它减少的
+短期记忆轨迹，相关数只包含完整可预测局部接触窗内可威胁玩家的轨迹，以及可进入自动武器锁定区的可见轨迹。它减少的
 是经几何证明不会影响当前动作的重复精算，不影响导航、敌人完成价值或波内完成预测所覆盖的机会。比较
 优化前后性能时，应同时按可见敌人数、相关轨迹数和输入轨迹数分层；只按总轨迹数会把交互域收益误判为
 候选降级。
@@ -183,9 +184,16 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 `phase_duration_usec.action_evaluation`。同一轮保留的候选应使用同一期望语义；若以后重新引入近似，误差
 边界和启用范围必须独立验证，不能让预算状态改变候选间的比较口径。
 
-截止目标访问机会只投影统一目标的采样位置，再根据玩家速度与稳定目标响应以常数时间估算清理前仍需玩家
-运动闭合的锁定区间缺口；每次场采样为 `O(N)`，并复用采样位置的敌人运动预测。它不排序目标、不展开攻击容量，也不
-扫描贯穿、弹射或范围机制；这些工作只在局部动作结果中执行。
+截止目标访问机会只投影统一目标的采样位置，再根据玩家速度、预测时刻的径向运动与稳定目标响应以常数
+时间估算进入锁定区间所需时间及其清理截止折现。向区间运动会增加合成闭合速度，远离区间则扣减；目标
+逃逸速度不低于玩家追赶速度时，不可达方向不再占用额外搜索工作。每次场采样为 `O(N)`，并复用采样位置
+的敌人运动预测。它不排序目标、不展开攻击容量，也不扫描贯穿、弹射或范围机制；这些工作只在局部动作
+结果中执行。
+
+几何接触前视在近端动作窗之后只保留玩家、敌人与投射物的运动预测。直线段与圆形接触域使用连续交会，
+速度增大不会增加敌人采样数；敌人路径增加一个中点以保留追踪响应产生的曲率，解析曲线弹道则继续按
+相位上界提高采样数。这样完整局部前视的成本由路径曲率而非控制 tick 数主导，避免为直线高速运动重复
+付费。
 
 性能退化时应先核对 `baseline_field_sample_evaluation_count`、`extra_field_sample_evaluation_count` 与导航
 目标数，不应切换为会改变候选语义的随机退火质量档。
@@ -216,19 +224,20 @@ human 分段不运行规划器，约每秒记录一次公共观察与原版已�
 ### 统一时空派生
 
 `PlanningTimingModel` 与 `MovementGeometryModel` 统一拥有时间和空间派生关系。设物理频率为 `f`、玩家
-碰撞半径为 `r`、当前可执行移动速度为 `v`，控制、动作、接触、近端、默认局部、局部上限和导航
-时域分别为 `Tc`、`Taction`、`Tcontact`、`Tnear`、`Tdefault`、`Tlocal_max`、`Tnav`，当前关系为：
+碰撞半径为 `r`、当前可执行移动速度为 `v`，控制、近端动作、默认局部、局部上限和导航时域分别为
+`Tc`、`Tnear`、`Tdefault`、`Tlocal_max`、`Tnav`；经本波剩余时间裁剪后的动作、接触、有效局部和有效导航
+时域分别为 `Taction`、`Tcontact`、`Tlocal_effective`、`Tnav_effective`。当前关系为：
 
 ```text
 Tc                            = 3 / f
 Tnear                         = 4Tc
 Taction                       = min(Tnear, wave_seconds_remaining)
-Tcontact                      = min(Tdefault, wave_seconds_remaining)
 Tdefault                      = max(8Tc, 4r / v)
 Tlocal_max                    = Tdefault + 6Tc
 Tnav                          = Tlocal_max + 10Tc
 Tlocal_effective              = min(Tlocal_max, wave_seconds_remaining)
 Tnav_effective                = min(Tnav, wave_seconds_remaining)
+Tcontact                      = Tlocal_effective
 control_distance              = v × Tc
 enemy_pressure_clearance      = max(3r, v × Tdefault)
 projectile_pressure_clearance = max(2r, v × Tnear)
@@ -426,7 +435,7 @@ expected_run_continuation_value_loss = pf × C × u
 `trajectory_value_gain` 与动作结果中的预测窗兑现值 `navigation_trajectory_value_gain`：后者应先将相邻
 `trajectory_value_samples` 的单位距离聚合价值作环形线性插值，再乘以输入相对零输入在动作预测窗内
 造成的位移。它与输出、环境暴露和拾取规则使用同一近端动作时域，不能缩短为提交期后再与完整动作窗收益
-比较；碰撞生命结果另由默认局部接触窗结算。
+比较；碰撞生命结果另由完整可预测局部接触窗结算。
 材料密集或路线穿过多个材料簇时，重点比较逐控制期反转率。出现 `material_assimilation.active` 的敌人时，
 还应比较材料与玩家、敌人的预计到达次序、后续实际材料消失及候选排序；没有可争夺材料时，该画像本身
 不应形成固定击杀优先级。
@@ -515,10 +524,13 @@ expected_run_continuation_value_loss = pf × C × u
 和剩余清理窗口约束。
 
 每把武器的最小和最大锁定距离应形成独立区间；生命目标按主路径伤害率、命中上限目标按主路径命中率
-归一化各区间份额。访问值按玩家仍需闭合的距离连续衰减，并在清理截止处归零。目标会自行靠近时，先把
-剩余窗口内有证据的自主闭合计入零输入访问：若目标本来就会及时进入区间，等待或主动接近都不应产生访问
-差；只有候选移动使它无法及时进入时，才失去访问价值。静止树木没有自主闭合，位于最大距离外时接近应
-为正，位于最小距离内时远离应为正，反向移动应为负。进入区间后访问项饱和。
+归一化各区间份额。访问值按进入武器区间所需时间连续折现，并在清理截止处归零。目标会自行靠近或在
+武器死区内自行远离时，有证据的自主径向速度与玩家速度共同缩短到达时间；目标沿相反方向运动时则从
+闭合能力中扣除。不能把“波末前最终会进入”直接当作当前已经拥有攻击窗口；主动移动提前攻击仍应产生
+连续差值，反向移动则损失该时间价值。静止树木没有自主闭合，位于最大距离外时接近应为正，位于最小
+距离内时远离应为正，反向移动应为负。进入区间后访问项饱和。混合武器不选取代表距离：每个区间的
+访问差分别乘以该武器对生命目标的伤害能力份额或对命中上限目标的命中能力份额后求和，因此站位由整套
+武器的边际投送能力涌现。
 
 这项检查只覆盖截止访问。最近目标次序、贯穿、弹射、范围容量和实际完成价值属于局部武器结果；轨迹
 采样时刻到达或越过波末后，尚未兑现的访问结果必须为零。
@@ -580,7 +592,7 @@ expected_run_continuation_value_loss = pf × C × u
 `field_utility_breakdown.expected_run_continuation_value_loss`。联合检查
 `context.state_factors.run_continuation_value`、
 `selection_diagnostics.excluded_certain_terminal_candidate_count`、`viable_candidate_count` 和
-`selected_committed_terminal_health_risk`。确定且可避免的提交期终止应被排除；默认局部接触窗内的碰撞
+`selected_committed_terminal_health_risk`。确定且可避免的提交期终止应被排除；完整可预测局部接触窗内的碰撞
 终止概率与近端动作窗内的其他生命变化，必须和该动作的负担解除、目标完成、生命窃取、恢复及导航收益
 一起按当前对局延续价值交换。提交期只决定候选能否安全执行到下一次重规划，不能替代组合生命结算窗的
 价值账本。
@@ -602,7 +614,7 @@ expected_run_continuation_value_loss = pf × C × u
 `terminal_health_loss_unit_value`。确认即时命中储备覆盖玩家完整动作集合与威胁运动的联合可达域；动作
 窗内碰撞按 `immediate_survival_buffer` 和剩余延续时域计价，局部与导航环境暴露使用同一单位损失价值，
 未来补充只改变补给库存与波次尺度敌人负担的边际价格；超过即时缓冲的部分仍按终止价值计价。复盘时还应
-确认所有候选共享近端动作时域和默认局部接触时域，且两者只随波末裁剪，不随敌人密度或单条威胁扩张；
+确认所有候选共享近端动作时域和完整可预测局部接触时域，且两者只随波末裁剪，不随敌人密度或单条威胁扩张；
 后一个时域只能增加几何接触扫掠，不能重新扩大武器、拾取、规则或完整环境采样。联合检查
 `decision.model.timing`、`decision.model.derived.action_forecast_seconds`、
 `decision.outcome.contact_forecast_seconds`、

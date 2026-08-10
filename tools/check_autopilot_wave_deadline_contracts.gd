@@ -118,7 +118,8 @@ func _check_autonomous_target_access_counterfactual() -> void:
 		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0}),
 		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 1.0}),
 	}
-	var spatial: Reference = load(PLANNING_PATH + "spatial_opportunity_value_model.gd").new()
+	var spatial_script: Script = load(PLANNING_PATH + "spatial_opportunity_value_model.gd")
+	var spatial: Reference = spatial_script.new()
 	var approach: Dictionary = spatial.point_value_delta(
 		observation, context, Vector2(100.0, 0.0), 1.0
 	)
@@ -129,16 +130,34 @@ func _check_autonomous_target_access_counterfactual() -> void:
 		observation, context, Vector2(-1000.0, 0.0), 1.0
 	)
 	var candidates: Array = spatial.candidate_directions(observation, context)
+	var stationary: Dictionary = _fixtures.enemy_track(Vector2(900.0, 0.0), Vector2.ZERO, false)
+	var stationary_observation: Dictionary = _fixtures.planning_observation([stationary])
+	stationary_observation.player_state.weapons = observation.player_state.weapons.duplicate(true)
+	var stationary_spatial: Reference = spatial_script.new()
+	var stationary_approach: Dictionary = stationary_spatial.point_value_delta(
+		stationary_observation, context, Vector2(100.0, 0.0), 1.0
+	)
+	var fleeing: Dictionary = _fixtures.enemy_track(Vector2(900.0, 0.0), Vector2(100.0, 0.0), false)
+	var fleeing_observation: Dictionary = _fixtures.planning_observation([fleeing])
+	fleeing_observation.player_state.weapons = observation.player_state.weapons.duplicate(true)
+	var fleeing_spatial: Reference = spatial_script.new()
+	var fleeing_approach: Dictionary = fleeing_spatial.point_value_delta(
+		fleeing_observation, context, Vector2(100.0, 0.0), 1.0
+	)
 	_expect(
 		(
-			abs(approach.target_access_opportunity) < 0.0001
-			and abs(retreat.target_access_opportunity) < 0.0001
+			approach.target_access_opportunity > 0.0
+			and retreat.target_access_opportunity < 0.0
 			and escape.target_access_opportunity < 0.0
-			and candidates.empty()
+			and stationary_approach.target_access_opportunity > 0.0
+			and abs(fleeing_approach.target_access_opportunity) < 0.0001
+			and not candidates.empty()
+			and candidates[0].direction.dot(Vector2.RIGHT) > 0.99
+			and fleeing_spatial.candidate_directions(fleeing_observation, context).empty()
 		),
 		(
-			"a target that autonomously enters weapon range before cleanup must already be "
-			+ "accessible in the zero-input counterfactual; only losing that access has value"
+			"target access must price autonomous approach, player-created stationary closure, "
+			+ "and unreachable radial escape without an identity-specific pursuit rule"
 		)
 	)
 
@@ -173,6 +192,42 @@ func _check_target_specific_interval_capacity() -> void:
 		(
 			"targeting intervals must use damage capacity for health targets and hit "
 			+ "capacity for hit-limited neutrals"
+		)
+	)
+	var enemy: Dictionary = _fixtures.enemy_track(Vector2(400.0, 0.0), Vector2.ZERO, false)
+	var observation: Dictionary = _fixtures.planning_observation([enemy])
+	observation.player_state.runtime_stats.move_speed = 200.0
+	observation.player_state.weapons = weapons
+	var context := {
+		"state_factors":
+		{
+			"health_inventory_value":
+			{"maximum_consumable_recovery": 0.0, "replenishment_unit_value": 0.0},
+			"continuation_horizon_seconds": 1.0,
+		},
+		"enemy_completion_value_ledger": _completion_value_ledger({1: 10.0}),
+		"wave_completion_forecast": _fixtures.wave_completion_forecast({1: 1.0}),
+	}
+	var spatial_script: Script = load(PLANNING_PATH + "spatial_opportunity_value_model.gd")
+	var high_near_spatial: Reference = spatial_script.new()
+	var high_near_value: Dictionary = high_near_spatial.point_value_delta(
+		observation, context, Vector2(200.0, 0.0), 1.0
+	)
+	observation.physics_frame += 1
+	observation.player_state.weapons[0].attack_model.impact.damage = 1.0
+	observation.player_state.weapons[1].attack_model.impact.damage = 10.0
+	var high_far_spatial: Reference = spatial_script.new()
+	var high_far_value: Dictionary = high_far_spatial.point_value_delta(
+		observation, context, Vector2(200.0, 0.0), 1.0
+	)
+	_expect(
+		(
+			high_near_value.target_access_opportunity > 0.0
+			and high_far_value.target_access_opportunity < 0.0
+		),
+		(
+			"mixed-range movement must maximize aggregate weapon capacity instead of using "
+			+ "one representative targeting distance"
 		)
 	)
 

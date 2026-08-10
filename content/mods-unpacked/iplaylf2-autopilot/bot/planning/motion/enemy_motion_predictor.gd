@@ -49,19 +49,10 @@ func predict_position(
 	var target_response: Dictionary = track.behavior_profile.get("target_position_response", {})
 	if not target_response.get("responds_to_target_position", false) or time <= 0.0:
 		return _observed_position(track, time)
-	var charge_attack: Dictionary = track.behavior_profile.get("charge_attack", {})
 	var baseline_movement_speed: float = target_response.movement_speed
 	# Vanilla locks the heading during a high-speed charge. Visible velocity is
 	# then more authoritative than ordinary target-position response.
-	var maximum_charge_speed: float = charge_attack.get(
-		"maximum_charge_speed", baseline_movement_speed
-	)
-	var charge_speed_threshold := (baseline_movement_speed + maximum_charge_speed) * 0.5
-	if (
-		charge_attack.get("active", false)
-		and baseline_movement_speed > 0.0
-		and track.estimated_velocity.length() > charge_speed_threshold
-	):
+	if _uses_observed_charge_motion(track, baseline_movement_speed):
 		return _observed_position(track, time)
 	var movement_speed: float = max(baseline_movement_speed, track.estimated_velocity.length())
 	if movement_speed <= 0.0:
@@ -85,6 +76,40 @@ func predict_position(
 		return position
 	return _predict_response_position(
 		track, player_displacement, time, movement_speed, target_response
+	)
+
+
+func predict_velocity(track: Dictionary, relative_position: Vector2, time: float = 0.0) -> Vector2:
+	var observed_velocity: Vector2 = _observed_motion_predictor.predict_velocity(
+		track.estimated_velocity, track.estimated_acceleration, track.motion_confidence, time
+	)
+	var target_response: Dictionary = track.behavior_profile.get("target_position_response", {})
+	if not target_response.get("responds_to_target_position", false):
+		return observed_velocity
+	var baseline_movement_speed: float = target_response.movement_speed
+	if _uses_observed_charge_motion(track, baseline_movement_speed):
+		return observed_velocity
+	var movement_speed: float = max(baseline_movement_speed, observed_velocity.length())
+	if movement_speed <= 0.0:
+		return observed_velocity
+	var response_velocity: Vector2 = _target_directed_velocity(
+		relative_position, Vector2.ZERO, movement_speed, target_response
+	)
+	return observed_velocity.linear_interpolate(
+		response_velocity, clamp(target_response.get("confidence", 0.0), 0.0, 1.0)
+	)
+
+
+func _uses_observed_charge_motion(track: Dictionary, baseline_movement_speed: float) -> bool:
+	var charge_attack: Dictionary = track.behavior_profile.get("charge_attack", {})
+	var maximum_charge_speed: float = charge_attack.get(
+		"maximum_charge_speed", baseline_movement_speed
+	)
+	var charge_speed_threshold := (baseline_movement_speed + maximum_charge_speed) * 0.5
+	return (
+		charge_attack.get("active", false)
+		and baseline_movement_speed > 0.0
+		and track.estimated_velocity.length() > charge_speed_threshold
 	)
 
 

@@ -252,12 +252,13 @@ func _check_collision_evidence_ownership(fixtures: Reference) -> void:
 
 func _check_contact_lookahead(fixtures: Reference) -> void:
 	var projector: Reference = load(PLANNING_PATH + "collision/contact_lookahead_projector.gd").new()
-	var enemy: Dictionary = fixtures.enemy_track(Vector2(120.0, 0.0), Vector2(-300.0, 0.0), false)
+	var enemy: Dictionary = fixtures.enemy_track(Vector2(200.0, 0.0), Vector2(-300.0, 0.0), false)
 	var observation: Dictionary = fixtures.planning_observation([enemy])
+	observation.player_state.health = {"current": 1.0, "maximum": 20.0, "ratio": 0.05}
 	var stationary_action := {
 		"movement": Vector2.ZERO,
 		"forecast_seconds": 0.2,
-		"contact_forecast_seconds": 0.4,
+		"contact_forecast_seconds": 0.7,
 	}
 	var stationary: Dictionary = projector.project(observation, stationary_action)
 	var escape_action: Dictionary = stationary_action.duplicate(false)
@@ -271,8 +272,8 @@ func _check_contact_lookahead(fixtures: Reference) -> void:
 			and escape.contact_opportunities.empty()
 		),
 		(
-			"the body-traversal contact horizon must expose an imminent post-action hit "
-			+ "while preserving a geometrically clear escape"
+			"the full local contact horizon must expose a resolved lethal convergence beyond "
+			+ "one body traversal while preserving a geometrically clear escape"
 		)
 	)
 

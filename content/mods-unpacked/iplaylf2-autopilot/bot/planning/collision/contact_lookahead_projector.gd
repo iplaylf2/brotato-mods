@@ -3,12 +3,9 @@ extends Reference
 # Extends only geometric contact evidence beyond the detailed action forecast.
 # Tactical rewards, weapon outcomes, rules, and environmental channels retain
 # the shorter controllability window; this projector supplies the lookahead
-# contact cost needed to avoid entering a path that cannot clear one local body
-# traversal before the next observations arrive.
+# contact cost needed to avoid entering a path whose already-observed motion
+# converges inside the locally predictable horizon.
 
-const PlanningTimingModel := preload(
-	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/planning_timing_model.gd"
-)
 const PlayerKinematicsModel := preload(
 	"res://mods-unpacked/iplaylf2-autopilot/bot/planning/player_kinematics_model.gd"
 )
@@ -42,18 +39,7 @@ func project(observation: Dictionary, action: Dictionary) -> Dictionary:
 	if horizon_seconds <= start_seconds + 0.0001:
 		return result
 
-	var timing: Dictionary = PlanningTimingModel.derive(observation)
-	var step_count := int(
-		max(
-			1,
-			ceil(
-				(
-					(horizon_seconds - start_seconds)
-					/ max(0.001, timing.tactical_control_interval_seconds)
-				)
-			)
-		)
-	)
+	var step_count := _enemy_contact_step_count(observation)
 	# Preserve the same curved-projectile resolution contract as the detailed
 	# action lattice. A cheap extension is still a continuous geometry forecast,
 	# not a chord approximation across an arbitrary amount of trajectory phase.
@@ -114,6 +100,14 @@ func project(observation: Dictionary, action: Dictionary) -> Dictionary:
 		)
 		previous_time = time
 	return result
+
+
+func _enemy_contact_step_count(observation: Dictionary) -> int:
+	# Segment-circle intersection resolves arbitrary linear travel continuously;
+	# speed therefore does not require more samples. One midpoint is the smallest
+	# extension that also retains curvature from target-responsive enemy prediction.
+	# Projectile-specific phase resolution may raise this count afterward.
+	return 2 if not observation.enemy_tracks.empty() else 1
 
 
 func _project_enemy_contacts(

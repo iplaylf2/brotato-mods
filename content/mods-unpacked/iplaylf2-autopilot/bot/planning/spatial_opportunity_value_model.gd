@@ -208,6 +208,7 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 	if physics_frame >= 0 and physics_frame == _prepared_physics_frame:
 		return
 	_prepared_physics_frame = physics_frame
+	_enemy_motion_predictor.begin_physics_frame(physics_frame)
 	_prepared_geometry = _movement_geometry.derive(observation)
 	_prepared_pickups = []
 	_prepared_spawn_warnings = []
@@ -296,14 +297,41 @@ func _prepare_inputs(observation: Dictionary, context: Dictionary) -> void:
 		for interval in targeting_intervals:
 			var interval_value: float = value * interval.capacity_share
 			var current_accessibility: float = _target_accessibility(
-				target, target.relative_position, observation.wave_state.seconds_remaining, interval
+				target,
+				target.relative_position,
+				observation.wave_state.seconds_remaining,
+				interval,
+				0.0
 			)
 			var access_direction: Vector2 = _weapon_targeting_interval_model.access_direction(
 				target.relative_position, interval
 			)
 			if current_accessibility < 1.0 and access_direction != Vector2.ZERO:
+				var setup_seconds: float = min(
+					observation.wave_state.seconds_remaining,
+					(
+						_prepared_geometry.opportunity_reach_distance
+						/ max(1.0, _prepared_geometry.command_speed)
+					)
+				)
+				var setup_displacement: Vector2 = (
+					access_direction.normalized()
+					* _prepared_geometry.command_speed
+					* setup_seconds
+				)
+				var setup_target_position: Vector2 = _enemy_motion_predictor.predict_position(
+					target.motion_track, setup_seconds, setup_displacement
+				)
+				var setup_accessibility: float = _target_accessibility(
+					target,
+					setup_target_position - setup_displacement,
+					max(0.0, observation.wave_state.seconds_remaining - setup_seconds),
+					interval,
+					setup_seconds
+				)
 				_append_prepared_candidate(
-					access_direction, interval_value * (1.0 - current_accessibility)
+					access_direction,
+					interval_value * max(0.0, setup_accessibility - current_accessibility)
 				)
 			_prepared_target_access_entries.push_back(
 				{
@@ -327,20 +355,29 @@ func _target_access_delta(
 			target.motion_track, forecast_seconds, player_displacement
 		)
 		var stationary_accessibility: float = _target_accessibility(
-			target, stationary_position, seconds_until_deadline, entry.targeting_interval
+			target,
+			stationary_position,
+			seconds_until_deadline,
+			entry.targeting_interval,
+			forecast_seconds
 		)
 		var candidate_accessibility: float = _target_accessibility(
 			target,
 			candidate_position - player_displacement,
 			seconds_until_deadline,
-			entry.targeting_interval
+			entry.targeting_interval,
+			forecast_seconds
 		)
 		result += entry.value * (candidate_accessibility - stationary_accessibility)
 	return result
 
 
 func _target_accessibility(
-	target: Dictionary, relative_position: Vector2, seconds: float, targeting_interval: Dictionary
+	target: Dictionary,
+	relative_position: Vector2,
+	seconds: float,
+	targeting_interval: Dictionary,
+	motion_seconds: float
 ) -> float:
 	var current_distance := relative_position.length()
 	var current_gap: float = _weapon_targeting_interval_model.distance_gap(
@@ -352,35 +389,31 @@ func _target_accessibility(
 		return 0.0
 	var player_speed: float = max(0.0, _prepared_geometry.command_speed)
 	var motion_track: Dictionary = target.motion_track
-	var response: Dictionary = motion_track.behavior_profile.get("target_position_response", {})
-	var assisted_gap := 0.0
-	var autonomous_closure_distance := 0.0
-	if response.get("responds_to_target_position", false):
-		var preferred_distance: float = max(0.0, response.get("preferred_distance", 0.0))
-		if current_distance > targeting_interval.maximum_distance:
-			assisted_gap = min(current_gap, max(0.0, current_distance - preferred_distance))
-		elif (
-			current_distance < targeting_interval.minimum_distance
-			and response.get("moves_away_inside_preferred_distance", false)
-		):
-			assisted_gap = min(current_gap, max(0.0, preferred_distance - current_distance))
-		var response_confidence: float = clamp(response.get("confidence", 0.0), 0.0, 1.0)
-		var response_speed: float = (
-			max(
-				max(0.0, response.get("movement_speed", 0.0)),
-				motion_track.get("estimated_velocity", Vector2.ZERO).length()
-			)
-			* response_confidence
-		)
-		autonomous_closure_distance = min(assisted_gap, response_speed * seconds)
-	# Access is the option to create an attack window before cleanup, not a reward
-	# for meeting a target sooner. Autonomous target motion therefore settles its
-	# supported part of the gap in the zero-input counterfactual before player reach
-	# is priced. Stationary targets retain their full player-created access gradient.
-	var player_required_gap: float = max(0.0, current_gap - autonomous_closure_distance)
-	return _deadline_accessibility(
-		player_required_gap, player_speed * seconds, _prepared_geometry.opportunity_reach_distance
+	var autonomous_velocity: Vector2 = _enemy_motion_predictor.predict_velocity(
+		motion_track, relative_position, motion_seconds
 	)
+	var radial_velocity := 0.0
+	if current_distance > 0.0001:
+		radial_velocity = autonomous_velocity.dot(relative_position / current_distance)
+	var autonomous_gap_closure_speed := (
+		-radial_velocity
+		if current_distance > targeting_interval.maximum_distance
+		else radial_velocity
+	)
+	# Accessibility is discounted by time to the weapon interval, even when the
+	# target will eventually close the gap by itself. Autonomous closure contributes
+	# to closing speed instead of completing access immediately, preserving the
+	# marginal value of an earlier attack window. This estimate does not choose a
+	# target or prescribe an approach direction.
+	var combined_closure_speed := max(0.0, player_speed + autonomous_gap_closure_speed)
+	if combined_closure_speed <= 0.0:
+		return 0.0
+	var reach_scale: float = (
+		_prepared_geometry.opportunity_reach_distance
+		* combined_closure_speed
+		/ max(1.0, player_speed)
+	)
+	return _deadline_accessibility(current_gap, combined_closure_speed * seconds, reach_scale)
 
 
 func _pickup_value(

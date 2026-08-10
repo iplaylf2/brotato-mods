@@ -31,7 +31,7 @@
           "enabled": {
             "title": "Enable Autopilot",
             "description": "Allow Autopilot to control your battle movement.",
-            "tooltip": "This setting is independent from battle sample recording.",
+            "tooltip": "This setting is independent of battle sample recording.",
             "type": "boolean",
             "default": false
           },
