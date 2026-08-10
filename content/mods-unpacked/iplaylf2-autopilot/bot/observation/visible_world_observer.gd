@@ -58,14 +58,19 @@ func _init(main: Node, players: Array) -> void:
 func observe(player_index: int, player: Node2D, delta_seconds: float) -> Dictionary:
 	var visible_rect := _get_visible_rect()
 	var origin: Vector2 = player.global_position
-	var enemy_batch := _observe_enemy_batch(player, visible_rect)
+	var enemies_by_disposition := _partition_enemy_nodes(
+		_main._entity_spawner.get_all_enemies(true), _main._entity_spawner.get_all_enemies(false)
+	)
+	var enemy_batch := _observe_enemy_batch(player, visible_rect, enemies_by_disposition.hostile)
 	var enemies: Array = enemy_batch.enemy_observations
 	var enemy_projectiles := _observe_enemy_projectiles(origin, visible_rect, enemies)
 	var trees := _observe_trees(origin, visible_rect)
 	var materials := _observe_materials(origin, visible_rect)
 	var consumables := _observe_consumables(origin, visible_rect)
 	var structures := _observe_structures(origin, visible_rect)
-	var allied_agents := _observe_allied_agents(player_index, origin, visible_rect)
+	var allied_agents := _observe_allied_agents(
+		player_index, origin, visible_rect, enemies_by_disposition.allied
+	)
 	var moving_observations := []
 	moving_observations.append_array(enemies)
 	moving_observations.append_array(enemy_projectiles)
@@ -84,6 +89,7 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	return {
 		# Internal inputs for observed world memory; never expose them through the service.
 		"enemy_observations": enemies,
+		"non_hostile_enemy_sources": enemies_by_disposition.allied,
 		"persistent_enemy_health_observations": enemy_batch.persistent_health_observations,
 		"persistent_enemy_health_snapshot_complete": ProgressData.settings.hp_bar_on_bosses,
 		"entity_memory_observations": trees + materials + consumables + structures,
@@ -107,13 +113,25 @@ func observe(player_index: int, player: Node2D, delta_seconds: float) -> Diction
 	}
 
 
-func _observe_enemy_batch(player: Node2D, visible_rect: Rect2) -> Dictionary:
+func _partition_enemy_nodes(all_enemies: Array, hostile_enemies: Array) -> Dictionary:
+	var allied := []
+	var hostile_instance_ids := {}
+	for enemy in hostile_enemies:
+		hostile_instance_ids[enemy.get_instance_id()] = true
+	for enemy in all_enemies:
+		if not hostile_instance_ids.has(enemy.get_instance_id()):
+			allied.push_back(enemy)
+	return {"hostile": hostile_enemies, "allied": allied}
+
+
+func _observe_enemy_batch(
+	player: Node2D, visible_rect: Rect2, hostile_enemies: Array
+) -> Dictionary:
 	var observations := []
 	var persistent_health_observations := []
-	# Vanilla stores bosses separately from ordinary enemies. Its public spawner
-	# query merges both domains and is also the collection used by weapon target
-	# behaviors; observing only `enemies` made bosses absent from every bot model.
-	for enemy in _main._entity_spawner.get_all_enemies():
+	# The spawner query merges bosses with ordinary enemies. The caller has already
+	# restricted that complete set to vanilla's current automatic-weapon target domain.
+	for enemy in hostile_enemies:
 		if _has_persistent_health_observation(enemy):
 			persistent_health_observations.push_back(
 				{
@@ -260,7 +278,9 @@ func _append_projectile_emission(
 	projectiles_by_source[source].push_back(projectile)
 
 
-func _observe_allied_agents(player_index: int, origin: Vector2, visible_rect: Rect2) -> Array:
+func _observe_allied_agents(
+	player_index: int, origin: Vector2, visible_rect: Rect2, converted_enemies: Array
+) -> Array:
 	var observations := []
 	for index in _players.size():
 		if index == player_index:
@@ -274,6 +294,16 @@ func _observe_allied_agents(player_index: int, origin: Vector2, visible_rect: Re
 		var relationship := "owned_companion" if owner_index == player_index else "party_companion"
 		_append_allied_agent(
 			observations, pet, origin, visible_rect, "pet", owner_index, relationship
+		)
+	for enemy in converted_enemies:
+		var owner_index: int = enemy.get_charmed_by_player_index()
+		var relationship := (
+			"converted_companion"
+			if owner_index == player_index
+			else "party_converted_companion"
+		)
+		_append_allied_agent(
+			observations, enemy, origin, visible_rect, "converted_enemy", owner_index, relationship
 		)
 	return observations
 

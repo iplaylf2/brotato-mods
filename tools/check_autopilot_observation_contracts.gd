@@ -9,6 +9,8 @@ var _failed := false
 
 func run() -> bool:
 	_check_local_pickup_existence_evidence()
+	_check_enemy_disposition_partition()
+	_check_enemy_disposition_transition()
 	return not _failed
 
 
@@ -35,6 +37,33 @@ func _check_local_pickup_existence_evidence() -> void:
 	record.odometry_position = Vector2(20.0, 0.0)
 	var collected: Dictionary = estimator.estimate(record, solo, geometry, {})
 	_expect(collected.absence_confirmed, "the solo player's collection circle must prove absence")
+
+
+func _check_enemy_disposition_partition() -> void:
+	var observer: Reference = load(OBSERVATION_PATH + "visible_world_observer.gd").new(null, [])
+	var hostile := Reference.new()
+	var converted := Reference.new()
+	var partition: Dictionary = observer.call(
+		"_partition_enemy_nodes", [hostile, converted], [hostile]
+	)
+	_expect(
+		partition.hostile == [hostile] and partition.allied == [converted],
+		(
+			"the vanilla attackable-enemy domain must remain hostile while converted "
+			+ "enemies enter the allied-agent domain"
+		)
+	)
+
+
+func _check_enemy_disposition_transition() -> void:
+	var source := Reference.new()
+	var memory: Reference = load(OBSERVATION_PATH + "observed_world_memory.gd").new()
+	memory.set("_tracks", {1: {"source_id": source.get_instance_id()}})
+	memory.call("_retire_non_hostile_source_tracks", [source])
+	_expect(
+		memory.get("_tracks").empty(),
+		"a converted source must immediately retire its prior hostile track"
+	)
 
 
 func _expect(condition: bool, message: String) -> void:

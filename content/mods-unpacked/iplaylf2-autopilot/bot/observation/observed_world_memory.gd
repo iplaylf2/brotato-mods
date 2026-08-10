@@ -2,8 +2,9 @@ extends Reference
 
 # Battle-local memory of the world observed by one player. Hidden enemy positions
 # are short-lived motion estimates; persistent health observations may preserve
-# life and existence without refreshing position. Remembered entities are permanent
-# observation records; only belief in their current existence may change.
+# life and existence without refreshing position. A same-source disposition change
+# retires a hostile track immediately. Remembered entities are permanent observation
+# records; only belief in their current existence may change.
 
 const TRACK_MEMORY_SECONDS := 4.0
 const BASE_UNCERTAINTY := 24.0
@@ -65,6 +66,7 @@ func update(
 	)
 	_update_enemy_tracks(
 		memory_inputs.enemy_observations,
+		memory_inputs.non_hostile_enemy_sources,
 		memory_inputs.persistent_enemy_health_observations,
 		memory_inputs.persistent_enemy_health_snapshot_complete,
 		death_product_observations,
@@ -298,11 +300,13 @@ func _record_visible_edges(visible_edges: Dictionary) -> void:
 
 func _update_enemy_tracks(
 	visible_enemies: Array,
+	non_hostile_enemy_sources: Array,
 	persistent_health_observations: Array,
 	persistent_health_snapshot_complete: bool,
 	death_product_observations: Array,
 	visibility: Dictionary
 ) -> void:
+	_retire_non_hostile_source_tracks(non_hostile_enemy_sources)
 	for track in _tracks.values():
 		track.visible = false
 		track.persistent_health_observation_active = false
@@ -336,6 +340,19 @@ func _update_enemy_tracks(
 	_remove_tracks_confirmed_absent(visibility)
 	_expire_old_tracks()
 	_prune_persistent_health_source_track_ids()
+
+
+func _retire_non_hostile_source_tracks(sources: Array) -> void:
+	if sources.empty():
+		return
+	var source_ids := {}
+	for source in sources:
+		source_ids[source.get_instance_id()] = true
+	for track_id in _tracks.keys():
+		if source_ids.has(_tracks[track_id].get("source_id", -1)):
+			_tracks.erase(track_id)
+	for source_id in source_ids:
+		_persistent_health_source_track_ids.erase(source_id)
 
 
 func _apply_persistent_enemy_health_snapshot(
@@ -567,6 +584,7 @@ func _create_track() -> int:
 
 
 func _update_track(track: Dictionary, observation: Dictionary) -> void:
+	track.source_id = observation._source.get_instance_id()
 	track.visible = true
 	track.last_seen_at_seconds = _elapsed_seconds
 	track.last_seen_odometry_position = _odometry_position + observation.relative_position

@@ -116,6 +116,7 @@ func _capture_observations(delta: float) -> void:
 			world_observation.visible_edges,
 			{
 				"enemy_observations": world_observation.enemy_observations,
+				"non_hostile_enemy_sources": world_observation.non_hostile_enemy_sources,
 				"persistent_enemy_health_observations":
 				world_observation.persistent_enemy_health_observations,
 				"persistent_enemy_health_snapshot_complete":

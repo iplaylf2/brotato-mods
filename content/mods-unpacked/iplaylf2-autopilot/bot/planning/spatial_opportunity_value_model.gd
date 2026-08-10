@@ -354,7 +354,7 @@ func _target_accessibility(
 	var motion_track: Dictionary = target.motion_track
 	var response: Dictionary = motion_track.behavior_profile.get("target_position_response", {})
 	var assisted_gap := 0.0
-	var response_speed := 0.0
+	var autonomous_closure_distance := 0.0
 	if response.get("responds_to_target_position", false):
 		var preferred_distance: float = max(0.0, response.get("preferred_distance", 0.0))
 		if current_distance > targeting_interval.maximum_distance:
@@ -365,40 +365,21 @@ func _target_accessibility(
 		):
 			assisted_gap = min(current_gap, max(0.0, preferred_distance - current_distance))
 		var response_confidence: float = clamp(response.get("confidence", 0.0), 0.0, 1.0)
-		response_speed = (
+		var response_speed: float = (
 			max(
 				max(0.0, response.get("movement_speed", 0.0)),
 				motion_track.get("estimated_velocity", Vector2.ZERO).length()
 			)
 			* response_confidence
 		)
-	# Player motion and supported target response close the part of the gap on which
-	# they agree. If the target stops at its preferred distance, only player motion
-	# pays the remainder. This is an arrival-time estimate, not a pursuit policy.
-	var arrival_seconds := 0.0
-	if assisted_gap > 0.0:
-		if player_speed + response_speed <= 0.0:
-			return 0.0
-		arrival_seconds += assisted_gap / (player_speed + response_speed)
-	var unassisted_gap: float = current_gap - assisted_gap
-	if unassisted_gap > 0.0:
-		if player_speed <= 0.0:
-			return 0.0
-		arrival_seconds += unassisted_gap / player_speed
-	if arrival_seconds >= seconds:
-		return 0.0
-	var characteristic_seconds: float = (
-		_prepared_geometry.opportunity_reach_distance
-		/ max(1.0, player_speed)
-	)
-	var deadline_floor := exp(-seconds / max(0.01, characteristic_seconds))
-	return clamp(
-		(
-			(exp(-arrival_seconds / max(0.01, characteristic_seconds)) - deadline_floor)
-			/ max(0.0001, 1.0 - deadline_floor)
-		),
-		0.0,
-		1.0
+		autonomous_closure_distance = min(assisted_gap, response_speed * seconds)
+	# Access is the option to create an attack window before cleanup, not a reward
+	# for meeting a target sooner. Autonomous target motion therefore settles its
+	# supported part of the gap in the zero-input counterfactual before player reach
+	# is priced. Stationary targets retain their full player-created access gradient.
+	var player_required_gap: float = max(0.0, current_gap - autonomous_closure_distance)
+	return _deadline_accessibility(
+		player_required_gap, player_speed * seconds, _prepared_geometry.opportunity_reach_distance
 	)
 
 

@@ -108,5 +108,5 @@ README 只提供安装、使用和诊断概览。维护事实按下表各归一�
 | [架构文档](docs/architecture.md) | 运行链路、公共观察、机制语义、规划结果和算法适用边界 |
 | [模块边界与责任](docs/module-boundaries.md) | 目录归属、依赖方向、公共入口和组件角色；不重复算法定义 |
 | [战斗采样与模型校准](docs/model-calibration.md) | 采样格式、参数证据等级、验证指标和复盘方法；不重定义字段语义 |
-| [原版敌人、树木与投射物机制参考](docs/vanilla-enemy-mechanics.md) | 目标版本的敌人运动、攻击与死亡奖励、树木完成机制及投射物证据 |
+| [原版敌人、树木与投射物机制参考](docs/vanilla-enemy-mechanics.md) | 目标版本的敌人阵营、运动、攻击与死亡奖励、树木完成机制及投射物证据 |
 | [原版玩家效果与武器机制审计](docs/vanilla-item-weapon-mechanics.md) | 目标版本的非常规玩家效果与武器机制证据及升级复核清单 |

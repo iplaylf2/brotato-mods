@@ -974,10 +974,12 @@ func _memory_inputs(
 	enemy_observations: Array,
 	persistent_health_observations := [],
 	entity_observations := [],
-	persistent_health_snapshot_complete := false
+	persistent_health_snapshot_complete := false,
+	non_hostile_enemy_sources := []
 ) -> Dictionary:
 	return {
 		"enemy_observations": enemy_observations,
+		"non_hostile_enemy_sources": non_hostile_enemy_sources,
 		"persistent_enemy_health_observations": persistent_health_observations,
 		"persistent_enemy_health_snapshot_complete": persistent_health_snapshot_complete,
 		"entity_observations": entity_observations,

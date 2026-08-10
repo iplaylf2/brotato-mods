@@ -14,7 +14,7 @@ func run(fixtures: Reference) -> bool:
 	_fixtures = fixtures
 	_check_short_deadline_combat_setup()
 	_check_pickup_deadline()
-	_check_time_sensitive_autonomous_target_access()
+	_check_autonomous_target_access_counterfactual()
 	_check_target_specific_interval_capacity()
 	_check_minimum_targeting_distance_access()
 	_check_long_range_access_gradients()
@@ -100,7 +100,7 @@ func _check_pickup_deadline() -> void:
 	)
 
 
-func _check_time_sensitive_autonomous_target_access() -> void:
+func _check_autonomous_target_access_counterfactual() -> void:
 	var follower: Dictionary = _fixtures.enemy_track(
 		Vector2(900.0, 0.0), Vector2(-100.0, 0.0), true
 	)
@@ -131,15 +131,14 @@ func _check_time_sensitive_autonomous_target_access() -> void:
 	var candidates: Array = spatial.candidate_directions(observation, context)
 	_expect(
 		(
-			approach.target_access_opportunity > 0.0
-			and retreat.target_access_opportunity < 0.0
+			abs(approach.target_access_opportunity) < 0.0001
+			and abs(retreat.target_access_opportunity) < 0.0001
 			and escape.target_access_opportunity < 0.0
-			and not candidates.empty()
-			and candidates[0].direction.dot(Vector2.RIGHT) > 0.99
+			and candidates.empty()
 		),
 		(
-			"movement must value how soon attack capacity becomes usable even when a target "
-			+ "would eventually approach on its own"
+			"a target that autonomously enters weapon range before cleanup must already be "
+			+ "accessible in the zero-input counterfactual; only losing that access has value"
 		)
 	)
 
